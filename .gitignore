@@ -1,0 +1,32 @@
+# Go
+backend/bin/
+backend/vendor/
+backend/proto/gen/
+*.test
+*.out
+coverage.out
+
+# Node / Vue
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# Docker volumes
+postgres_data/
+redis_data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets (never commit these)
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key

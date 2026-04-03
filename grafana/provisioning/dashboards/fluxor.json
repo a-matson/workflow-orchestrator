@@ -1,0 +1,88 @@
+{
+  "title": "Fluxor Orchestrator",
+  "uid": "fluxor-main",
+  "version": 1,
+  "schemaVersion": 38,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "title": "Workflows Started", "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "workflow_executions_started_total", "legendFormat": "Started" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } } }
+    },
+    {
+      "id": 2, "title": "Workflows Completed", "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "workflow_executions_completed_total", "legendFormat": "Completed" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" } } }
+    },
+    {
+      "id": 3, "title": "Workflows Failed", "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "workflow_executions_failed_total", "legendFormat": "Failed" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" } } }
+    },
+    {
+      "id": 4, "title": "Success Rate", "type": "gauge",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "workflow_executions_completed_total / (workflow_executions_completed_total + workflow_executions_failed_total) * 100",
+        "legendFormat": "Success %"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 100, "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5, "title": "Task Throughput (rate)", "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "rate(tasks_completed_total[1m]) * 60", "legendFormat": "Completed/min" },
+        { "expr": "rate(tasks_failed_total[1m]) * 60", "legendFormat": "Failed/min" },
+        { "expr": "rate(tasks_retried_total[1m]) * 60", "legendFormat": "Retried/min" }
+      ]
+    },
+    {
+      "id": 6, "title": "Queue Depth", "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "task_queue_depth", "legendFormat": "Task Queue" },
+        { "expr": "retry_queue_depth", "legendFormat": "Retry Queue" }
+      ]
+    },
+    {
+      "id": 7, "title": "Task Duration (p50/p95/p99)", "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(task_duration_seconds_bucket[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(task_duration_seconds_bucket[5m]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(task_duration_seconds_bucket[5m]))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 8, "title": "Active Workflows + WS Clients", "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "active_workflow_executions", "legendFormat": "Active Workflows" },
+        { "expr": "websocket_clients_connected", "legendFormat": "WS Clients" }
+      ]
+    },
+    {
+      "id": 9, "title": "Dead Letter Queue", "type": "stat",
+      "gridPos": { "x": 0, "y": 20, "w": 6, "h": 4 },
+      "targets": [{ "expr": "tasks_dead_lettered_total", "legendFormat": "Dead Lettered" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "dark-red" } } }
+    }
+  ]
+}

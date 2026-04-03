@@ -1,0 +1,223 @@
+syntax = "proto3";
+
+package orchestrator.v1;
+option go_package = "github.com/workflow-platform/backend/proto/orchestratorv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ──────────────────────────────────────────────────────────
+// OrchestratorService — gRPC API for workflow management
+// ──────────────────────────────────────────────────────────
+service OrchestratorService {
+  // Workflow definitions
+  rpc CreateWorkflow(CreateWorkflowRequest) returns (WorkflowDefinition);
+  rpc GetWorkflow(GetWorkflowRequest)       returns (WorkflowDefinition);
+  rpc ListWorkflows(ListWorkflowsRequest)   returns (ListWorkflowsResponse);
+  rpc DeleteWorkflow(DeleteWorkflowRequest) returns (DeleteWorkflowResponse);
+
+  // Execution lifecycle
+  rpc TriggerWorkflow(TriggerWorkflowRequest)  returns (WorkflowExecution);
+  rpc CancelExecution(CancelExecutionRequest)  returns (CancelExecutionResponse);
+  rpc GetExecution(GetExecutionRequest)        returns (WorkflowExecution);
+  rpc ListExecutions(ListExecutionsRequest)    returns (ListExecutionsResponse);
+  rpc RetryExecution(RetryExecutionRequest)    returns (WorkflowExecution);
+
+  // Streaming
+  rpc WatchExecution(WatchExecutionRequest)    returns (stream ExecutionEvent);
+  rpc StreamLogs(StreamLogsRequest)            returns (stream LogEvent);
+
+  // Worker protocol
+  rpc ReportTaskStarted(ReportTaskStartedRequest)   returns (ReportTaskStartedResponse);
+  rpc ReportTaskCompleted(ReportTaskCompletedRequest) returns (ReportTaskCompletedResponse);
+
+  // System
+  rpc GetMetrics(GetMetricsRequest)  returns (PlatformMetrics);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ──────────────────────────────────────────────────────────
+// Core domain types
+// ──────────────────────────────────────────────────────────
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING     = 1;
+  TASK_STATUS_QUEUED      = 2;
+  TASK_STATUS_RUNNING     = 3;
+  TASK_STATUS_COMPLETED   = 4;
+  TASK_STATUS_FAILED      = 5;
+  TASK_STATUS_RETRYING    = 6;
+  TASK_STATUS_SKIPPED     = 7;
+  TASK_STATUS_DEAD_LETTER = 8;
+}
+
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED = 0;
+  WORKFLOW_STATUS_PENDING     = 1;
+  WORKFLOW_STATUS_RUNNING     = 2;
+  WORKFLOW_STATUS_COMPLETED   = 3;
+  WORKFLOW_STATUS_FAILED      = 4;
+  WORKFLOW_STATUS_CANCELLED   = 5;
+  WORKFLOW_STATUS_PAUSED      = 6;
+}
+
+message RetryPolicy {
+  int32  max_retries       = 1;
+  int64  initial_delay_ns  = 2;
+  int64  max_delay_ns      = 3;
+  double backoff_multiplier = 4;
+  bool   jitter            = 5;
+}
+
+message TaskDefinition {
+  string                  id           = 1;
+  string                  name         = 2;
+  string                  type         = 3;
+  repeated string         dependencies = 4;
+  google.protobuf.Struct  config       = 5;
+  RetryPolicy             retry_policy = 6;
+  int64                   timeout_ns   = 7;
+  int32                   max_parallel = 8;
+  map<string, string>     metadata     = 9;
+}
+
+message WorkflowDefinition {
+  string                  id           = 1;
+  string                  name         = 2;
+  string                  description  = 3;
+  string                  version      = 4;
+  repeated TaskDefinition tasks        = 5;
+  RetryPolicy             global_retry = 6;
+  int32                   max_parallel = 7;
+  map<string, string>     tags         = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message TaskExecution {
+  string                  id                  = 1;
+  string                  workflow_exec_id    = 2;
+  string                  task_definition_id  = 3;
+  string                  task_name           = 4;
+  string                  task_type           = 5;
+  TaskStatus              status              = 6;
+  int32                   retry_count         = 7;
+  int32                   max_retries         = 8;
+  string                  worker_id           = 9;
+  google.protobuf.Timestamp queued_at         = 10;
+  google.protobuf.Timestamp started_at        = 11;
+  google.protobuf.Timestamp completed_at      = 12;
+  google.protobuf.Timestamp next_retry_at     = 13;
+  bytes                   output              = 14;
+  string                  error               = 15;
+  repeated LogEntry       logs                = 16;
+  map<string, string>     metadata            = 17;
+  int64                   duration_ns         = 18;
+}
+
+message WorkflowExecution {
+  string                  id              = 1;
+  string                  workflow_id     = 2;
+  string                  workflow_name   = 3;
+  WorkflowStatus          status          = 4;
+  repeated TaskExecution  tasks           = 5;
+  google.protobuf.Timestamp started_at    = 6;
+  google.protobuf.Timestamp completed_at  = 7;
+  google.protobuf.Struct  trigger_payload = 8;
+  string                  error           = 9;
+  map<string, string>     metadata        = 10;
+  google.protobuf.Timestamp created_at    = 11;
+  google.protobuf.Timestamp updated_at    = 12;
+}
+
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  string                    level     = 2;
+  string                    message   = 3;
+  google.protobuf.Struct    fields    = 4;
+}
+
+// ──────────────────────────────────────────────────────────
+// Request / Response types
+// ──────────────────────────────────────────────────────────
+
+message CreateWorkflowRequest  { WorkflowDefinition workflow = 1; }
+message GetWorkflowRequest     { string id = 1; }
+message ListWorkflowsRequest   { int32 limit = 1; int32 offset = 2; }
+message ListWorkflowsResponse  { repeated WorkflowDefinition workflows = 1; int32 total = 2; }
+message DeleteWorkflowRequest  { string id = 1; }
+message DeleteWorkflowResponse { bool success = 1; }
+
+message TriggerWorkflowRequest {
+  string                 workflow_id     = 1;
+  google.protobuf.Struct trigger_payload = 2;
+}
+
+message CancelExecutionRequest  { string execution_id = 1; }
+message CancelExecutionResponse { bool success = 1; }
+message GetExecutionRequest     { string id = 1; }
+message ListExecutionsRequest   { int32 limit = 1; int32 offset = 2; string workflow_id = 3; }
+message ListExecutionsResponse  { repeated WorkflowExecution executions = 1; int32 total = 2; }
+message RetryExecutionRequest   { string execution_id = 1; }
+
+message WatchExecutionRequest { string execution_id = 1; }
+
+message ExecutionEvent {
+  string           type         = 1;
+  WorkflowExecution execution  = 2;
+  TaskExecution    task        = 3;
+  google.protobuf.Timestamp ts = 4;
+}
+
+message StreamLogsRequest {
+  string execution_id = 1;
+  string task_id      = 2;
+  string level_filter = 3;
+}
+
+message LogEvent {
+  string   task_exec_id = 1;
+  string   task_name    = 2;
+  LogEntry entry        = 3;
+}
+
+message ReportTaskStartedRequest {
+  string task_exec_id = 1;
+  string worker_id    = 2;
+}
+message ReportTaskStartedResponse { bool accepted = 1; }
+
+message ReportTaskCompletedRequest {
+  string    task_exec_id    = 1;
+  string    worker_id       = 2;
+  bool      success         = 3;
+  bytes     output          = 4;
+  string    error           = 5;
+  repeated  LogEntry logs   = 6;
+}
+message ReportTaskCompletedResponse { bool accepted = 1; }
+
+message GetMetricsRequest {}
+
+message PlatformMetrics {
+  int64 workflows_started    = 1;
+  int64 workflows_completed  = 2;
+  int64 workflows_failed     = 3;
+  int64 tasks_dispatched     = 4;
+  int64 tasks_completed      = 5;
+  int64 tasks_failed         = 6;
+  int64 tasks_retried        = 7;
+  int64 tasks_dead_lettered  = 8;
+  int64 active_workflows     = 9;
+  int64 queue_depth          = 10;
+  int64 retry_queue_depth    = 11;
+  int64 ws_clients           = 12;
+}
+
+message HealthCheckRequest {}
+message HealthCheckResponse {
+  string status    = 1;
+  string timestamp = 2;
+  map<string, string> components = 3;
+}

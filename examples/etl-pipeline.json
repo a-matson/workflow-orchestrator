@@ -1,0 +1,126 @@
+# Fluxor API — Example Workflow Definitions
+# Use these with: curl -X POST http://localhost:8080/api/workflows -d @examples/etl-pipeline.json
+
+# ──────────────────────────────────────────────────────────────────
+# 1. ETL Pipeline
+# ──────────────────────────────────────────────────────────────────
+{
+  "name": "ETL Pipeline",
+  "description": "Extract, validate, transform, and load data to the warehouse",
+  "version": "1.2.0",
+  "max_parallel": 8,
+  "global_retry": {
+    "max_retries": 3,
+    "initial_delay": 2000000000,
+    "max_delay": 300000000000,
+    "backoff_multiplier": 2.0,
+    "jitter": true
+  },
+  "tags": {
+    "category": "data",
+    "schedule": "0 2 * * *",
+    "owner": "data-platform"
+  },
+  "tasks": [
+    {
+      "id": "ingest",
+      "name": "Ingest Raw Data",
+      "type": "database_query",
+      "dependencies": [],
+      "config": {
+        "host": "postgres.internal",
+        "query": "SELECT * FROM raw_events WHERE created_at >= NOW() - INTERVAL '1 day'",
+        "output_table": "staging.raw_events_today"
+      },
+      "timeout": 300000000000
+    },
+    {
+      "id": "validate",
+      "name": "Validate Schema",
+      "type": "data_transform",
+      "dependencies": ["ingest"],
+      "config": {
+        "schema_version": "v3",
+        "fail_on_unknown_fields": true,
+        "null_threshold": 0.05
+      },
+      "timeout": 120000000000
+    },
+    {
+      "id": "clean",
+      "name": "Clean & Deduplicate",
+      "type": "data_transform",
+      "dependencies": ["validate"],
+      "config": {
+        "dedup_key": "event_id",
+        "drop_nulls": ["user_id", "timestamp"],
+        "normalize_timestamps": true
+      },
+      "timeout": 180000000000
+    },
+    {
+      "id": "enrich",
+      "name": "Enrich with Geo Data",
+      "type": "http_request",
+      "dependencies": ["validate"],
+      "config": {
+        "url": "http://geo-service.internal/enrich/batch",
+        "method": "POST",
+        "batch_size": 1000,
+        "timeout_per_batch_ms": 5000
+      },
+      "retry_policy": {
+        "max_retries": 5,
+        "initial_delay": 1000000000,
+        "max_delay": 60000000000,
+        "backoff_multiplier": 2.0,
+        "jitter": true
+      },
+      "timeout": 600000000000
+    },
+    {
+      "id": "transform",
+      "name": "Apply Business Transforms",
+      "type": "data_transform",
+      "dependencies": ["clean", "enrich"],
+      "config": {
+        "rules_version": "v4.2",
+        "aggregation_window": "1h",
+        "output_partitions": 32
+      },
+      "timeout": 300000000000
+    },
+    {
+      "id": "load",
+      "name": "Load to Warehouse",
+      "type": "database_query",
+      "dependencies": ["transform"],
+      "config": {
+        "target": "analytics.events_daily",
+        "write_mode": "upsert",
+        "primary_key": ["event_id", "date"],
+        "batch_size": 50000
+      },
+      "retry_policy": {
+        "max_retries": 3,
+        "initial_delay": 5000000000,
+        "max_delay": 120000000000,
+        "backoff_multiplier": 2.0,
+        "jitter": true
+      },
+      "timeout": 900000000000
+    },
+    {
+      "id": "notify",
+      "name": "Notify Data Team",
+      "type": "notification",
+      "dependencies": ["transform"],
+      "config": {
+        "channel": "#data-platform",
+        "template": "etl_success",
+        "include_stats": true
+      },
+      "timeout": 30000000000
+    }
+  ]
+}
