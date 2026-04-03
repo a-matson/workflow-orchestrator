@@ -1,61 +1,62 @@
 import * as globals from 'globals'
-import * as pluginJs from '@eslint/js'
-import tseslint from 'typescript-eslint'
-import * as pluginVue from 'eslint-plugin-vue'
+import { defineConfig } from 'eslint/config'
+import tsParser from '@typescript-eslint/parser'
 
-export default tseslint.config(
-  // Base JS rules
-  pluginJs.configs.recommended,
-
-  // TypeScript rules
-  ...tseslint.configs.recommended,
-
-  // Vue 3 rules
-  ...pluginVue.configs['flat/recommended'],
-
+export default defineConfig([
+  // Base for JS/TS files
   {
+    files: ['**/*.{ts,tsx,js,jsx}'],
+    extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
     languageOptions: {
-      globals: { ...globals.browser, ...globals.es2022 },
+      parser: tsParser,
       parserOptions: {
-        parser: tseslint.parser,
-        extraFileExtensions: ['.vue'],
+        ecmaVersion: 2022,
         sourceType: 'module',
       },
+      globals: { ...globals.browser, ...globals.es2022 },
     },
-
     rules: {
-      // TypeScript
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
       ],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
-
-      // Vue
-      'vue/multi-word-component-names': 'off',
-      'vue/no-unused-vars': 'error',
-      'vue/html-self-closing': ['error', { html: { void: 'always', normal: 'never', component: 'always' } }],
-      'vue/component-name-in-template-casing': ['error', 'PascalCase'],
-      'vue/no-v-html': 'off', // we use v-html for log highlighting
-      'vue/require-default-prop': 'off',
-      'vue/define-macros-order': ['error', { order: ['defineProps', 'defineEmits'] }],
-
-      // General
       'no-console': ['warn', { allow: ['warn', 'error'] }],
       'prefer-const': 'error',
       'no-var': 'error',
     },
   },
 
+  // Vue files
   {
-    files: ['*.config.ts', '*.config.js', 'eslint.config.js'],
+    files: ['**/*.vue'],
+    languageOptions: {
+      parser: 'vue-eslint-parser',
+      parserOptions: {
+        parser: tsParser,
+        extraFileExtensions: ['.vue'],
+        ecmaVersion: 2022,
+        sourceType: 'module',
+      },
+    },
+    extends: ['plugin:vue/flat/recommended'],
     rules: {
-      '@typescript-eslint/no-require-imports': 'off',
+      // **Disable TS unused-vars completely for Vue**
+      '@typescript-eslint/no-unused-vars': 'off',
+      // Use Vue-aware rule
+      'vue/no-unused-vars': 'error',
+      'vue/multi-word-component-names': 'off',
+      'vue/html-self-closing': [
+        'error',
+        { html: { void: 'always', normal: 'never', component: 'always' } },
+      ],
+      'vue/component-name-in-template-casing': ['error', 'PascalCase'],
+      'vue/no-v-html': 'off',
+      'vue/require-default-prop': 'off',
+      'vue/define-macros-order': ['error', { order: ['defineProps', 'defineEmits'] }],
     },
   },
 
-  {
-    ignores: ['dist/**', 'node_modules/**', '*.d.ts'],
-  },
-)
+  { ignores: ['dist/**', 'node_modules/**', '*.d.ts'] },
+])

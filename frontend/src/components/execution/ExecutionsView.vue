@@ -329,10 +329,7 @@ const props = defineProps<{
   selectedId?: string | null
 }>()
 
-const emit = defineEmits<{
-  (e: 'select', id: string): void
-  (e: 'retry', id: string): void
-}>()
+defineEmits<{ (e: 'select', id: string): void; (e: 'retry', id: string): void }>()
 
 // ── Constants ─────────────────────────────────────────────
 const NODE_W = 155
