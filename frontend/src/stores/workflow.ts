@@ -14,11 +14,11 @@ export const useWorkflowStore = defineStore('workflows', () => {
 
   // Getters
   const activeExecutions = computed(() =>
-    executions.value.filter(e => e.status === 'running' || e.status === 'pending')
+    executions.value.filter((e) => e.status === 'running' || e.status === 'pending'),
   )
 
   const completedExecutions = computed(() =>
-    executions.value.filter(e => e.status === 'completed' || e.status === 'failed')
+    executions.value.filter((e) => e.status === 'completed' || e.status === 'failed'),
   )
 
   const successRate = computed(() => {
@@ -42,7 +42,9 @@ export const useWorkflowStore = defineStore('workflows', () => {
     }
   }
 
-  async function createDefinition(def: Omit<WorkflowDefinition, 'id' | 'created_at' | 'updated_at'>) {
+  async function createDefinition(
+    def: Omit<WorkflowDefinition, 'id' | 'created_at' | 'updated_at'>,
+  ) {
     try {
       const created = await api.post<WorkflowDefinition>('/api/workflows', def)
       definitions.value.unshift(created)
@@ -56,7 +58,9 @@ export const useWorkflowStore = defineStore('workflows', () => {
   async function fetchExecutions(limit = 50, offset = 0) {
     try {
       loading.value = true
-      const data = await api.get<{ executions: WorkflowExecution[] }>(`/api/executions?limit=${limit}&offset=${offset}`)
+      const data = await api.get<{ executions: WorkflowExecution[] }>(
+        `/api/executions?limit=${limit}&offset=${offset}`,
+      )
       executions.value = data.executions || []
     } catch (err) {
       error.value = 'Failed to load executions'
@@ -72,7 +76,7 @@ export const useWorkflowStore = defineStore('workflows', () => {
       selectedExecution.value = exec
 
       // Update in list if present
-      const idx = executions.value.findIndex(e => e.id === id)
+      const idx = executions.value.findIndex((e) => e.id === id)
       if (idx >= 0) {
         executions.value[idx] = exec
       }
@@ -85,7 +89,10 @@ export const useWorkflowStore = defineStore('workflows', () => {
 
   async function triggerWorkflow(workflowId: string, payload?: Record<string, unknown>) {
     try {
-      const exec = await api.post<WorkflowExecution>(`/api/workflows/${workflowId}/trigger`, payload || {})
+      const exec = await api.post<WorkflowExecution>(
+        `/api/workflows/${workflowId}/trigger`,
+        payload || {},
+      )
       executions.value.unshift(exec)
       selectedExecution.value = exec
       return exec
@@ -117,11 +124,11 @@ export const useWorkflowStore = defineStore('workflows', () => {
 
   // Update from WebSocket events
   function updateFromWsEvent(type: string, payload: unknown) {
-    const p = payload as Record<string, unknown>
+    // const p = payload as Record<string, unknown>
 
     if (type.startsWith('workflow.')) {
       const exec = payload as WorkflowExecution
-      const idx = executions.value.findIndex(e => e.id === exec.id)
+      const idx = executions.value.findIndex((e) => e.id === exec.id)
       if (idx >= 0) {
         executions.value[idx] = { ...executions.value[idx], ...exec }
       } else {
@@ -136,16 +143,16 @@ export const useWorkflowStore = defineStore('workflows', () => {
       const task = payload as { id: string; workflow_exec_id: string; status: string }
       // Update task in selectedExecution if it matches
       if (selectedExecution.value?.id === task.workflow_exec_id) {
-        const taskIdx = selectedExecution.value.tasks.findIndex(t => t.id === task.id)
+        const taskIdx = selectedExecution.value.tasks.findIndex((t) => t.id === task.id)
         if (taskIdx >= 0) {
           Object.assign(selectedExecution.value.tasks[taskIdx], task)
         }
       }
 
       // Also update in the executions list
-      const exec = executions.value.find(e => e.id === task.workflow_exec_id)
+      const exec = executions.value.find((e) => e.id === task.workflow_exec_id)
       if (exec) {
-        const tIdx = exec.tasks.findIndex(t => t.id === task.id)
+        const tIdx = exec.tasks.findIndex((t) => t.id === task.id)
         if (tIdx >= 0) {
           Object.assign(exec.tasks[tIdx], task)
         }

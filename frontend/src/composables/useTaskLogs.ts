@@ -12,7 +12,10 @@ export interface UseTaskLogsOptions {
  * Reactive task-scoped log state with WS-driven live updates.
  * Combines static logs from the API with streaming entries from WS events.
  */
-export function useTaskLogs(execution: () => WorkflowExecution | null, options: UseTaskLogsOptions = {}) {
+export function useTaskLogs(
+  execution: () => WorkflowExecution | null,
+  // options: UseTaskLogsOptions = {},
+) {
   const staticLogs = ref<Array<LogEntry & { _taskId: string; _taskName: string }>>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -36,7 +39,7 @@ export function useTaskLogs(execution: () => WorkflowExecution | null, options: 
     const merged = [...fromTasks, ...staticLogs.value]
     const seen = new Set<string>()
     return merged
-      .filter(l => {
+      .filter((l) => {
         const key = `${l.timestamp}:${l.message}:${l._taskId}`
         if (seen.has(key)) return false
         seen.add(key)
@@ -45,7 +48,7 @@ export function useTaskLogs(execution: () => WorkflowExecution | null, options: 
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
   })
 
-  const filteredLogs = ref<typeof allLogs.value>([])
+  // const filteredLogs = ref<typeof allLogs.value>([])
 
   // Level filter
   const levelFilter = ref<'all' | 'info' | 'warn' | 'error' | 'debug'>('all')
@@ -53,14 +56,18 @@ export function useTaskLogs(execution: () => WorkflowExecution | null, options: 
   const taskFilter = ref<string>('')
 
   const displayLogs = computed(() => {
-    return allLogs.value.filter(l => {
+    return allLogs.value.filter((l) => {
       if (levelFilter.value !== 'all' && l.level !== levelFilter.value) return false
       if (taskFilter.value && l._taskId !== taskFilter.value) return false
       if (searchQuery.value) {
         const q = searchQuery.value.toLowerCase()
-        return l.message?.toLowerCase().includes(q) ||
+        return (
+          l.message?.toLowerCase().includes(q) ||
           l._taskName?.toLowerCase().includes(q) ||
-          JSON.stringify(l.fields ?? {}).toLowerCase().includes(q)
+          JSON.stringify(l.fields ?? {})
+            .toLowerCase()
+            .includes(q)
+        )
       }
       return true
     })
@@ -71,16 +78,18 @@ export function useTaskLogs(execution: () => WorkflowExecution | null, options: 
     loading.value = true
     error.value = null
     try {
-      const res = await api.get<{ logs: LogEntry[]; task_id: string }>(`/api/tasks/${taskExecId}/logs`)
+      const res = await api.get<{ logs: LogEntry[]; task_id: string }>(
+        `/api/tasks/${taskExecId}/logs`,
+      )
       const exec = execution()
-      const task = exec?.tasks.find(t => t.id === taskExecId)
-      const enriched = (res.logs ?? []).map(l => ({
+      const task = exec?.tasks.find((t) => t.id === taskExecId)
+      const enriched = (res.logs ?? []).map((l) => ({
         ...l,
         _taskId: taskExecId,
         _taskName: task?.task_name ?? taskExecId,
       }))
       // Merge into static logs
-      staticLogs.value = [...staticLogs.value.filter(l => l._taskId !== taskExecId), ...enriched]
+      staticLogs.value = [...staticLogs.value.filter((l) => l._taskId !== taskExecId), ...enriched]
     } catch (e) {
       error.value = `Failed to fetch logs: ${e}`
     } finally {
@@ -98,22 +107,26 @@ export function useTaskLogs(execution: () => WorkflowExecution | null, options: 
         // displayLogs will automatically recompute from execution()
       }
     },
-    { deep: false }
+    { deep: false },
   )
 
   onUnmounted(unwatch)
 
-  function setLevelFilter(level: typeof levelFilter.value) { levelFilter.value = level }
-  function setTaskFilter(id: string) { taskFilter.value = id }
-  function setSearchQuery(q: string) { searchQuery.value = q }
+  function setLevelFilter(level: typeof levelFilter.value) {
+    levelFilter.value = level
+  }
+  function setTaskFilter(id: string) {
+    taskFilter.value = id
+  }
+  function setSearchQuery(q: string) {
+    searchQuery.value = q
+  }
 
   function exportLogs(): string {
     return displayLogs.value
-      .map(l => {
+      .map((l) => {
         const ts = new Date(l.timestamp).toISOString()
-        const fields = Object.keys(l.fields ?? {}).length
-          ? ' ' + JSON.stringify(l.fields)
-          : ''
+        const fields = Object.keys(l.fields ?? {}).length ? ' ' + JSON.stringify(l.fields) : ''
         return `[${ts}] ${l.level?.toUpperCase().padEnd(5)} [${l._taskName}] ${l.message}${fields}`
       })
       .join('\n')

@@ -12,7 +12,7 @@
       </nav>
       <div class="topbar-end">
         <WorkflowSearch @navigate-execution="onSearchExecution" @navigate-workflow="onSearchWorkflow" />
-        <div class="ws-status" :class="wsStore.connectionState">
+        <div class="ws-status" :class="wsStore.status">
           <div class="ws-dot"></div>
           <span class="ws-label">{{ wsLabel }}</span>
         </div>
@@ -132,7 +132,7 @@ const recentRuns = computed(() => store.executions.slice(0, 8))
 const selectedExecution = computed(() => store.executions.find(e => e.id === selectedExecId.value) ?? store.selectedExecution)
 const activeCount = computed(() => store.executions.filter(e => e.status === 'running' || e.status === 'pending').length)
 const wsLabel = computed(() => {
-  switch (wsStore.connectionState) {
+  switch (wsStore.status) {
     case 'connected': return `Live · ${metrics.value?.ws_clients ?? 1} clients`
     case 'connecting': return 'Connecting…'
     case 'disconnected': return `Reconnect ${wsStore.reconnectAttempts}`
