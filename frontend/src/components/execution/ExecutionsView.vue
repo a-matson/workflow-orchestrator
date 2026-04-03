@@ -401,7 +401,9 @@ const dagNodePositions = computed(() => {
   byLevel.forEach((lvTasks, level) => {
     const totalW = lvTasks.length * COL_GAP
     lvTasks.forEach((t, i) => {
-      const typeInfo = TASK_TYPES.find((ti) => ti.value === t.task_type)
+      const typeInfo = TASK_TYPES.find((ti) => ti.value === t.task_type) as
+        | ((typeof TASK_TYPES)[number] & { icon?: string })
+        | undefined
       const label = t.task_name.length > 14 ? t.task_name.slice(0, 13) + '…' : t.task_name
       positions.push({
         id: t.task_definition_id,
