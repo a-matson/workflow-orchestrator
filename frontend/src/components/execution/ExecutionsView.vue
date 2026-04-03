@@ -387,7 +387,7 @@ const dagNodePositions = computed(() => {
     byLevel.get(lv)!.push(t)
   })
 
-  const positions: Array<{
+  const positions: {
     id: string
     x: number
     y: number
@@ -396,7 +396,7 @@ const dagNodePositions = computed(() => {
     status: string
     color: string
     retryCount: number
-  }> = []
+  }[] = []
 
   byLevel.forEach((lvTasks, level) => {
     const totalW = lvTasks.length * COL_GAP
