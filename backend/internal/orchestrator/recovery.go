@@ -7,7 +7,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/workflow-platform/backend/internal/dag"
 	"github.com/workflow-platform/backend/internal/models"
-	// "github.com/workflow-platform/backend/internal/persistence"
 )
 
 // RecoverInFlightExecutions reloads all RUNNING workflow executions from PostgreSQL
@@ -75,20 +74,37 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 			// In production, check worker heartbeat first — if the worker is alive,
 			// leave the task. If the worker is gone, reset to pending and re-queue.
 			running[task.TaskDefinitionID] = true
-			log.Warn().
+			log.Info().
 				Str("exec_id", exec.ID).
 				Str("task_id", task.TaskDefinitionID).
 				Str("worker_id", task.WorkerID).
 				Msg("recovering in-flight task — checking worker liveness")
 
-			// For simplicity: reset running tasks to queued and re-dispatch
-			task.Status = models.TaskStatusQueued
-			task.WorkerID = ""
-			task.StartedAt = nil
-			task.UpdatedAt = time.Now()
-			o.store.UpdateTaskExecution(ctx, task)
-			queued[task.TaskDefinitionID] = true
-			delete(running, task.TaskDefinitionID)
+			// Check whether the worker that owned this task is still alive.
+			// IsWorkerAlive looks for a Redis heartbeat key set by the worker every 15s with a 45s TTL.
+			alive, liveErr := o.redis.IsWorkerAlive(ctx, task.WorkerID)
+			if liveErr != nil {
+				log.Warn().Err(liveErr).Str("worker_id", task.WorkerID).
+					Msg("could not check worker liveness — assuming dead, resetting task")
+				alive = false
+			}
+
+			if alive {
+				// Worker is still alive: leave in running state, it will publish a result.
+				log.Info().Str("task_id", task.TaskDefinitionID).Str("worker_id", task.WorkerID).
+					Msg("worker still alive — leaving task in running state")
+				running[task.TaskDefinitionID] = true
+			} else {
+				// Worker is dead: reset to queued so the dispatcher re-sends it.
+				log.Warn().Str("task_id", task.TaskDefinitionID).Str("worker_id", task.WorkerID).
+					Msg("worker heartbeat expired — resetting task to queued")
+				task.Status = models.TaskStatusQueued
+				task.WorkerID = ""
+				task.StartedAt = nil
+				task.UpdatedAt = time.Now()
+				o.store.UpdateTaskExecution(ctx, task) //nolint:errcheck — best-effort on recovery
+				queued[task.TaskDefinitionID] = true
+			}
 
 		case models.TaskStatusQueued, models.TaskStatusRetrying:
 			queued[task.TaskDefinitionID] = true
