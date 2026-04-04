@@ -56,6 +56,18 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
+
+      - name: Run database migrations
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          psql -h localhost -U workflow -d workflow_test <<EOF
+          $(cat migrations/001_initial_schema.sql)
+          $(cat migrations/002_performance_indexes.sql)
+          EOF
+        env:
+          PGPASSWORD: workflow
+        working-directory: backend
+
       - name: Run unit tests
         run: go test ./... -race -count=1 -coverprofile=coverage.out
         env:
