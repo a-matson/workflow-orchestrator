@@ -1,14 +1,14 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const BASE_URL = import.meta.env.VITE_API_URL || ''
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || `HTTP ${res.status}`)
+    throw new Error((err as { error?: string }).error || `HTTP ${res.status}`)
   }
   return res.json()
 }
@@ -21,9 +21,11 @@ export const api = {
 }
 
 export function wsUrl(path = '/ws'): string {
-  const base = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/^http/, 'ws')
+  const base = BASE_URL
+    ? BASE_URL.replace(/^https?/, 'ws')
+    : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
   return `${base}${path}`
 }
 
 // Named alias used by App.vue
-export const WS_URL = wsUrl('/ws')
+export const WS_URL = wsUrl()

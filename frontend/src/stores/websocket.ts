@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { WebSocketEvent } from '../types'
+import { WS_URL } from '../composables/useApi'
 import { useWorkflowStore } from './workflow'
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -16,21 +17,24 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
   const isConnected = computed(() => status.value === 'connected')
 
-  function connect(url: string) {
+  function connect(url?: string) {
+    const currentUrl = url ?? WS_URL
     if (ws.value?.readyState === WebSocket.OPEN) return
 
     status.value = 'connecting'
 
     try {
-      ws.value = new WebSocket(url)
+      const socket = new WebSocket(currentUrl)
+      ws.value = socket
 
-      ws.value.onopen = () => {
+      socket.onopen = () => {
         status.value = 'connected'
         reconnectAttempts.value = 0
-        console.log('[WS] Connected to', url)
+        ws.value = socket
+        console.log('[WS] Connected to', currentUrl)
       }
 
-      ws.value.onmessage = (event) => {
+      socket.onmessage = (event: MessageEvent<string>) => {
         try {
           const data: WebSocketEvent = JSON.parse(event.data)
           lastEvent.value = data
@@ -45,15 +49,17 @@ export const useWebSocketStore = defineStore('websocket', () => {
         }
       }
 
-      ws.value.onclose = (event) => {
+      socket.onclose = (event) => {
         status.value = 'disconnected'
+        ws.value = null
         console.log('[WS] Disconnected:', event.code, event.reason)
-        scheduleReconnect(url)
+        scheduleReconnect(currentUrl)
       }
 
-      ws.value.onerror = (err) => {
+      socket.onerror = (err) => {
         status.value = 'error'
         console.error('[WS] Error:', err)
+        // onclose fires after onerror, which will trigger reconnect
       }
     } catch (err) {
       status.value = 'error'
@@ -66,6 +72,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     ws.value?.close(1000, 'Client disconnect')
     ws.value = null
     status.value = 'disconnected'
+    reconnectAttempts.value = 0
   }
 
   function subscribe(workflowExecId: string) {
@@ -84,5 +91,14 @@ export const useWebSocketStore = defineStore('websocket', () => {
     reconnectTimer = setTimeout(() => connect(url), delay)
   }
 
-  return { status, isConnected, lastEvent, eventLog, reconnectAttempts, connect, disconnect, subscribe }
+  return {
+    status,
+    isConnected,
+    lastEvent,
+    eventLog,
+    reconnectAttempts,
+    connect,
+    disconnect,
+    subscribe,
+  }
 })
