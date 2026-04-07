@@ -15,7 +15,6 @@ import (
 func (o *Orchestrator) RecoverInFlightExecutions(ctx context.Context) error {
 	log.Info().Msg("scanning for in-flight workflow executions to recover...")
 
-	// Load all executions that were running when we crashed
 	execs, err := o.store.ListWorkflowExecutions(ctx, 200, 0)
 	if err != nil {
 		return err
@@ -26,7 +25,6 @@ func (o *Orchestrator) RecoverInFlightExecutions(ctx context.Context) error {
 		if exec.Status != models.WorkflowStatusRunning && exec.Status != models.WorkflowStatusPending {
 			continue
 		}
-
 		if err := o.recoverExecution(ctx, exec); err != nil {
 			log.Error().Err(err).Str("exec_id", exec.ID).Msg("failed to recover execution")
 			continue
@@ -45,13 +43,11 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		return err
 	}
 
-	// Reload workflow definition
 	def, err := o.store.GetWorkflowDefinition(ctx, exec.WorkflowID)
 	if err != nil {
 		return err
 	}
 
-	// Re-parse DAG
 	graph, err := dag.Parse(def)
 	if err != nil {
 		return err
@@ -69,11 +65,8 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		switch task.Status {
 		case models.TaskStatusCompleted:
 			completed[task.TaskDefinitionID] = true
+
 		case models.TaskStatusRunning:
-			// Tasks that were "running" when we crashed need to be re-dispatched.
-			// In production, check worker heartbeat first — if the worker is alive,
-			// leave the task. If the worker is gone, reset to pending and re-queue.
-			running[task.TaskDefinitionID] = true
 			log.Info().
 				Str("exec_id", exec.ID).
 				Str("task_id", task.TaskDefinitionID).
@@ -108,6 +101,7 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 
 		case models.TaskStatusQueued, models.TaskStatusRetrying:
 			queued[task.TaskDefinitionID] = true
+
 		case models.TaskStatusFailed, models.TaskStatusDeadLetter:
 			failed[task.TaskDefinitionID] = true
 		}
@@ -146,7 +140,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		Int("running", len(running)).
 		Msg("execution recovered — resuming dispatch")
 
-	// Resume dispatching ready tasks
 	go o.dispatchReadyTasks(ctx, execCtx)
 	return nil
 }
