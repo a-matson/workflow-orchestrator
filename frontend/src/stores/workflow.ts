@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import type { WorkflowDefinition, WorkflowExecution, PlatformMetrics } from '../types'
 import { api } from '../composables/useApi'
 
@@ -11,22 +11,6 @@ export const useWorkflowStore = defineStore('workflows', () => {
   const metrics = ref<PlatformMetrics | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
-
-  // Getters
-  const activeExecutions = computed(() =>
-    executions.value.filter((e) => e.status === 'running' || e.status === 'pending'),
-  )
-
-  const completedExecutions = computed(() =>
-    executions.value.filter((e) => e.status === 'completed' || e.status === 'failed'),
-  )
-
-  const successRate = computed(() => {
-    if (!metrics.value) return 0
-    const total = metrics.value.workflows_completed + metrics.value.workflows_failed
-    if (total === 0) return 100
-    return Math.round((metrics.value.workflows_completed / total) * 100)
-  })
 
   // Actions
   async function fetchDefinitions() {
@@ -114,6 +98,17 @@ export const useWorkflowStore = defineStore('workflows', () => {
     }
   }
 
+  async function cancelExecution(execId: string) {
+    try {
+      await api.post<void>(`/api/executions/${execId}/cancel`, {})
+      const exec = executions.value.find((e) => e.id === execId)
+      if (exec) exec.status = 'cancelled'
+    } catch (err) {
+      error.value = 'Failed to cancel execution'
+      throw err
+    }
+  }
+
   async function fetchMetrics() {
     try {
       metrics.value = await api.get<PlatformMetrics>('/api/metrics')
@@ -124,8 +119,6 @@ export const useWorkflowStore = defineStore('workflows', () => {
 
   // Update from WebSocket events
   function updateFromWsEvent(type: string, payload: unknown) {
-    // const p = payload as Record<string, unknown>
-
     if (type.startsWith('workflow.')) {
       const exec = payload as WorkflowExecution
       const idx = executions.value.findIndex((e) => e.id === exec.id)
@@ -171,15 +164,13 @@ export const useWorkflowStore = defineStore('workflows', () => {
     metrics,
     loading,
     error,
-    activeExecutions,
-    completedExecutions,
-    successRate,
     fetchDefinitions,
     createDefinition,
     fetchExecutions,
     fetchExecution,
     triggerWorkflow,
     retryExecution,
+    cancelExecution,
     fetchMetrics,
     updateFromWsEvent,
   }

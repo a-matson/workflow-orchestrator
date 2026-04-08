@@ -4,34 +4,61 @@
     :class="[`status-${data.status || 'pending'}`, { selected: selected }]"
   >
     <!-- Status indicator bar -->
-    <div class="status-bar" :style="{ background: statusColor }"></div>
+    <div
+      class="status-bar"
+      :style="{ background: statusColor }"
+    ></div>
 
     <!-- Header -->
     <div class="node-header">
       <span class="task-type-badge">{{ taskTypeLabel }}</span>
-      <span v-if="data.status" class="status-dot" :style="{ background: statusColor }"></span>
+      <span
+        v-if="data.status"
+        class="status-dot"
+        :style="{ background: statusColor }"
+      ></span>
     </div>
 
     <!-- Name -->
-    <div class="node-name">{{ data.taskDef.name }}</div>
+    <div class="node-name">
+      {{ data.taskDef.name }}
+    </div>
 
     <!-- Meta row -->
     <div class="node-meta">
-      <span v-if="data.taskExec?.retry_count && data.taskExec.retry_count > 0" class="retry-badge">
+      <span
+        v-if="data.taskExec?.retry_count && data.taskExec.retry_count > 0"
+        class="retry-badge"
+      >
         ↺ {{ data.taskExec.retry_count }}
       </span>
-      <span v-if="data.taskExec?.worker_id" class="worker-badge">
+      <span
+        v-if="data.taskExec?.worker_id"
+        class="worker-badge"
+      >
         {{ data.taskExec.worker_id.slice(-8) }}
       </span>
-      <span v-if="duration" class="duration-badge">{{ duration }}</span>
+      <span
+        v-if="duration"
+        class="duration-badge"
+      >{{ duration }}</span>
     </div>
 
     <!-- Running pulse -->
-    <div v-if="data.status === 'running'" class="running-pulse"></div>
+    <div
+      v-if="data.status === 'running'"
+      class="running-pulse"
+    ></div>
 
     <!-- Handles rendered by VueFlow -->
-    <Handle type="target" :position="Position.Top" />
-    <Handle type="source" :position="Position.Bottom" />
+    <Handle
+      type="target"
+      :position="Position.Top"
+    />
+    <Handle
+      type="source"
+      :position="Position.Bottom"
+    />
   </div>
 </template>
 
@@ -54,7 +81,7 @@ const { data, selected } = props
 const statusColor = computed(() => STATUS_COLORS[data.status || 'pending'])
 
 const taskTypeLabel = computed(() => {
-  const found = TASK_TYPES.find(t => t.value === data.taskDef.type)
+  const found = TASK_TYPES.find((t) => t.value === data.taskDef.type)
   return found ? found.label : data.taskDef.type
 })
 
@@ -79,20 +106,26 @@ const duration = computed(() => {
   min-width: 160px;
   max-width: 200px;
   cursor: grab;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
   overflow: hidden;
 }
 
 .task-node.selected {
   border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 }
 
-.task-node:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+.task-node:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
 
 .status-bar {
   position: absolute;
-  top: 0; left: 0; right: 0;
+  top: 0;
+  left: 0;
+  right: 0;
   height: 3px;
   border-radius: 10px 10px 0 0;
 }
@@ -113,7 +146,8 @@ const duration = computed(() => {
 }
 
 .status-dot {
-  width: 7px; height: 7px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -133,16 +167,27 @@ const duration = computed(() => {
   flex-wrap: wrap;
 }
 
-.retry-badge, .worker-badge, .duration-badge {
+.retry-badge,
+.worker-badge,
+.duration-badge {
   font-size: 9px;
   padding: 1px 5px;
   border-radius: 4px;
   font-family: monospace;
 }
 
-.retry-badge { background: #fef3c7; color: #b45309; }
-.worker-badge { background: #ede9fe; color: #6d28d9; }
-.duration-badge { background: #f0fdf4; color: #166534; }
+.retry-badge {
+  background: #fef3c7;
+  color: #b45309;
+}
+.worker-badge {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+.duration-badge {
+  background: #f0fdf4;
+  color: #166534;
+}
 
 .running-pulse {
   position: absolute;
@@ -153,13 +198,27 @@ const duration = computed(() => {
 }
 
 @keyframes pulse-border {
-  0%, 100% { box-shadow: inset 0 0 0 1.5px rgba(59,130,246,0.4); }
-  50% { box-shadow: inset 0 0 0 1.5px rgba(59,130,246,0.9); }
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1.5px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1.5px rgba(59, 130, 246, 0.9);
+  }
 }
 
 /* Status variants */
-.status-completed { border-color: #86efac; }
-.status-failed { border-color: #fca5a5; }
-.status-running { border-color: #93c5fd; }
-.status-dead_letter { border-color: #fca5a5; background: #fff5f5; }
+.status-completed {
+  border-color: #86efac;
+}
+.status-failed {
+  border-color: #fca5a5;
+}
+.status-running {
+  border-color: #93c5fd;
+}
+.status-dead_letter {
+  border-color: #fca5a5;
+  background: #fff5f5;
+}
 </style>

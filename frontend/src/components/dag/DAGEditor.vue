@@ -3,106 +3,249 @@
     <!-- Toolbar -->
     <div class="dag-toolbar">
       <div class="toolbar-left">
-        <input v-model="workflowName" placeholder="Workflow name..." class="name-input" />
-        <select v-model="selectedTaskType" class="type-select">
-          <option value="">Add task type...</option>
-          <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">
+        <input
+          v-model="workflowName"
+          placeholder="Workflow name…"
+          class="name-input"
+        />
+        <select
+          v-model="selectedTaskType"
+          class="type-select"
+        >
+          <option value="">
+            Add task…
+          </option>
+          <option
+            v-for="t in TASK_TYPES"
+            :key="t.value"
+            :value="t.value"
+          >
             {{ t.label }}
           </option>
         </select>
-        <button @click="addNode" :disabled="!selectedTaskType" class="btn-add">+ Add Task</button>
+        <button
+          :disabled="!selectedTaskType"
+          class="btn-add"
+          @click="addNode"
+        >
+          + Add Task
+        </button>
       </div>
       <div class="toolbar-right">
-        <button @click="autoLayout" class="btn-secondary">Auto Layout</button>
-        <button @click="validateDAG" class="btn-secondary">Validate</button>
-        <button @click="saveWorkflow" class="btn-primary" :disabled="saving">
-          {{ saving ? 'Saving...' : 'Save Workflow' }}
+        <button
+          class="btn-secondary"
+          @click="autoLayout"
+        >
+          Auto Layout
         </button>
-        <button v-if="workflowId" @click="triggerRun" class="btn-run">▶ Run</button>
+        <button
+          class="btn-secondary"
+          @click="runValidation"
+        >
+          Validate
+        </button>
+        <button
+          class="btn-primary"
+          :disabled="saving"
+          @click="saveWorkflow"
+        >
+          {{ saving ? 'Saving…' : 'Save' }}
+        </button>
+        <button
+          v-if="savedWorkflowId"
+          class="btn-run"
+          @click="triggerRun"
+        >
+          ▶ Run
+        </button>
       </div>
     </div>
 
-    <!-- Validation messages -->
-    <div v-if="validationMsg" class="validation-banner" :class="validationMsg.type">
-      {{ validationMsg.text }}
-    </div>
+    <!-- Validation banner -->
+    <Transition name="banner">
+      <div
+        v-if="banner"
+        class="banner"
+        :class="banner.type"
+      >
+        {{ banner.text }}
+      </div>
+    </Transition>
 
-    <!-- Canvas -->
-    <div class="flow-canvas">
+    <!-- Flow canvas -->
+    <div class="flow-wrap">
       <VueFlow
         v-model:nodes="nodes"
         v-model:edges="edges"
-        :nodeTypes="nodeTypes"
-        :defaultEdgeOptions="defaultEdgeOptions"
+        :node-types="nodeTypes"
+        :default-edge-options="defaultEdgeOptions"
+        :connect-on-click="false"
         fit-view-on-init
+        class="dark-flow"
         @connect="onConnect"
         @node-click="onNodeClick"
         @edge-click="onEdgeClick"
+        @pane-click="onPaneClick"
       >
-        <Background />
-        <Controls />
-        <MiniMap />
+        <Background
+          pattern-color="#2a2a40"
+          :gap="20"
+        />
+        <Controls :show-fit-view="false" />
+        <MiniMap
+          node-color="#3a3a5a"
+          mask-color="rgba(12,12,20,0.7)"
+          :style="{ background: '#13131f' }"
+        />
+
+        <!-- Hint when canvas is empty -->
+        <Panel position="top-center">
+          <div
+            v-if="nodes.length === 0"
+            class="empty-hint"
+          >
+            Use <kbd>Add Task</kbd> above or drag from the sidebar to start building
+          </div>
+        </Panel>
       </VueFlow>
     </div>
 
-    <!-- Node config panel -->
-    <Transition name="slide">
-      <div v-if="selectedNode" class="config-panel">
+    <!-- Right config panel -->
+    <Transition name="slide-right">
+      <div
+        v-if="selectedNode"
+        class="config-panel"
+      >
         <div class="config-header">
-          <h3>Configure Task</h3>
-          <button @click="selectedNode = null" class="btn-close">✕</button>
+          <span class="config-title">Configure Task</span>
+          <button
+            class="config-close"
+            @click="selectedNode = null"
+          >
+            ✕
+          </button>
         </div>
         <div class="config-body">
+          <!-- Basic fields -->
           <div class="field">
             <label>Task Name</label>
-            <input v-model="selectedNode.data.taskDef.name" class="config-input" />
+            <input
+              v-model="selectedNode.data.taskDef.name"
+              class="cf-input"
+            />
           </div>
           <div class="field">
             <label>Type</label>
-            <select v-model="selectedNode.data.taskDef.type" class="config-input">
-              <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+            <select
+              v-model="selectedNode.data.taskDef.type"
+              class="cf-input"
+            >
+              <option
+                v-for="t in TASK_TYPES"
+                :key="t.value"
+                :value="t.value"
+              >
+                {{ t.label }}
+              </option>
             </select>
           </div>
-          <div class="field">
-            <label>Dependencies</label>
-            <div class="deps-list">
-              <span
-                v-for="dep in selectedNode.data.taskDef.dependencies"
-                :key="dep"
-                class="dep-tag"
-              >
-                {{ getNodeName(dep) }}
-                <button @click="removeDep(dep)">×</button>
-              </span>
-              <span v-if="!selectedNode.data.taskDef.dependencies.length" class="no-deps">
-                None (root task)
-              </span>
-            </div>
+
+          <!-- Per-type configuration -->
+          <div class="section-label">
+            Task Config
+          </div>
+          <TaskConfigFields
+            :type="selectedNode.data.taskDef.type"
+            :config="selectedNode.data.taskDef.config"
+            @update="updateConfig"
+          />
+
+          <!-- Retry policy -->
+          <div class="section-label">
+            Retry Policy
           </div>
           <div class="field">
             <label>Max Retries</label>
             <input
               type="number"
               min="0"
-              max="10"
+              max="20"
+              class="cf-input"
               :value="selectedNode.data.taskDef.retry_policy?.max_retries ?? 3"
-              @input="setMaxRetries($event)"
-              class="config-input"
+              @change="setRetryField('max_retries', +($event.target as HTMLInputElement).value)"
             />
           </div>
           <div class="field">
-            <label>Timeout (seconds)</label>
+            <label>Initial Delay (s)</label>
             <input
               type="number"
               min="0"
-              :value="
-                selectedNode.data.taskDef.timeout ? selectedNode.data.taskDef.timeout / 1e9 : 300
+              step="0.5"
+              class="cf-input"
+              :value="(selectedNode.data.taskDef.retry_policy?.initial_delay ?? 2e9) / 1e9"
+              @change="
+                setRetryField('initial_delay', +($event.target as HTMLInputElement).value * 1e9)
               "
-              @input="setTimeout_($event)"
-              class="config-input"
             />
           </div>
-          <button @click="deleteNode" class="btn-delete">Delete Task</button>
+          <div class="field">
+            <label>Backoff Multiplier</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              step="0.5"
+              class="cf-input"
+              :value="selectedNode.data.taskDef.retry_policy?.backoff_multiplier ?? 2"
+              @change="
+                setRetryField('backoff_multiplier', +($event.target as HTMLInputElement).value)
+              "
+            />
+          </div>
+          <div class="field">
+            <label>Timeout (s)</label>
+            <input
+              type="number"
+              min="0"
+              class="cf-input"
+              :value="(selectedNode.data.taskDef.timeout ?? 300e9) / 1e9"
+              @change="
+                selectedNode!.data.taskDef.timeout =
+                  +($event.target as HTMLInputElement).value * 1e9
+              "
+            />
+          </div>
+
+          <!-- Dependencies -->
+          <div class="section-label">
+            Dependencies
+          </div>
+          <div class="deps-list">
+            <span
+              v-for="dep in selectedNode.data.taskDef.dependencies"
+              :key="dep"
+              class="dep-tag"
+            >
+              {{ nodeLabel(dep) }}
+              <button @click="removeDep(dep)">×</button>
+            </span>
+            <span
+              v-if="!selectedNode.data.taskDef.dependencies.length"
+              class="no-deps"
+            >
+              No dependencies — this is a root task
+            </span>
+          </div>
+          <p class="deps-hint">
+            Connect nodes on the canvas to add dependencies
+          </p>
+
+          <button
+            class="btn-delete"
+            @click="deleteSelectedNode"
+          >
+            Delete Task
+          </button>
         </div>
       </div>
     </Transition>
@@ -110,60 +253,100 @@
 </template>
 
 <script setup lang="ts">
-import { ref, markRaw } from 'vue'
-import { VueFlow, useVueFlow, type EdgeMouseEvent, type NodeMouseEvent } from '@vue-flow/core'
+import { ref, markRaw, nextTick } from 'vue'
+import { VueFlow, Panel, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
+import type { Connection, EdgeMouseEvent, NodeMouseEvent } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
 import { v4 as uuidv4 } from 'uuid'
 import { useWorkflowStore } from '../../stores/workflow'
 import { TASK_TYPES } from '../../types'
 import type { DAGNode, DAGEdge, TaskDefinition } from '../../types'
 import TaskNode from './TaskNode.vue'
+import TaskConfigFields from './TaskConfigFields.vue'
 
-const emit = defineEmits<{ (e: 'triggered', execId: string): void }>()
+const emit = defineEmits<{
+  (e: 'triggered', execId: string): void
+}>()
 
 const store = useWorkflowStore()
 const { fitView } = useVueFlow()
 
-const nodes = ref<DAGNode[]>([])
-const edges = ref<DAGEdge[]>([])
-const workflowName = ref('My Workflow')
+// ── State ──────────────────────────────────────────────────────
+const workflowName = ref('New Workflow')
 const selectedTaskType = ref('')
 const selectedNode = ref<DAGNode | null>(null)
 const saving = ref(false)
-const workflowId = ref<string | null>(null)
-const validationMsg = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+const savedWorkflowId = ref<string | null>(null)
+const banner = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
 const nodeTypes = { taskNode: markRaw(TaskNode) }
-
 const defaultEdgeOptions = {
   type: 'smoothstep',
   animated: false,
-  style: { stroke: '#94a3b8', strokeWidth: 2 },
+  style: { stroke: '#4a4a6a', strokeWidth: 1.5 },
 }
 
+// Start with ONE empty generic node so the canvas is never blank
+const initialId = uuidv4()
+const nodes = ref<DAGNode[]>([
+  {
+    id: initialId,
+    type: 'taskNode',
+    position: { x: 300, y: 200 },
+    data: {
+      taskDef: {
+        id: initialId,
+        name: 'Start Task',
+        type: 'generic',
+        dependencies: [],
+        config: {},
+        retry_policy: {
+          max_retries: 3,
+          initial_delay: 2e9,
+          max_delay: 300e9,
+          backoff_multiplier: 2,
+          jitter: true,
+        },
+        timeout: 300e9,
+      },
+    },
+  },
+])
+const edges = ref<DAGEdge[]>([])
+
+// ── Helpers ────────────────────────────────────────────────────
+function nodeLabel(id: string) {
+  return nodes.value.find((n) => n.id === id)?.data.taskDef.name ?? id
+}
+
+function showBanner(type: 'success' | 'error', text: string) {
+  banner.value = { type, text }
+  setTimeout(() => {
+    banner.value = null
+  }, 3500)
+}
+
+// ── Node actions ───────────────────────────────────────────────
 function addNode() {
   if (!selectedTaskType.value) return
-  const id = uuidv4()
   const typeLabel =
-    TASK_TYPES.find((t) => t.value === selectedTaskType.value)?.label || selectedTaskType.value
-
+    TASK_TYPES.find((t) => t.value === selectedTaskType.value)?.label ?? selectedTaskType.value
+  const id = uuidv4()
   const node: DAGNode = {
     id,
     type: 'taskNode',
-    position: {
-      x: 100 + Math.random() * 400,
-      y: 100 + nodes.value.length * 120,
-    },
+    position: { x: 120 + Math.random() * 500, y: 80 + nodes.value.length * 130 },
     data: {
       taskDef: {
         id,
         name: `${typeLabel} Task`,
         type: selectedTaskType.value,
         dependencies: [],
-        config: {},
+        config: defaultConfigForType(selectedTaskType.value),
         retry_policy: {
           max_retries: 3,
           initial_delay: 2e9,
@@ -177,21 +360,23 @@ function addNode() {
   }
   nodes.value.push(node)
   selectedTaskType.value = ''
+  selectedNode.value = node
 }
 
-function onConnect(connection: { source: string; target: string }) {
-  const edge: DAGEdge = {
-    id: `e-${connection.source}-${connection.target}`,
-    source: connection.source,
-    target: connection.target,
-    type: 'smoothstep',
-  }
-  edges.value.push(edge)
-
-  // Update dependency in target node
-  const targetNode = nodes.value.find((n) => n.id === connection.target)
-  if (targetNode && !targetNode.data.taskDef.dependencies.includes(connection.source)) {
-    targetNode.data.taskDef.dependencies.push(connection.source)
+function defaultConfigForType(type: string): Record<string, unknown> {
+  switch (type) {
+    case 'http_request':
+      return { url: '', method: 'GET', headers: {}, body: '' }
+    case 'database_query':
+      return { query: '', connection_string: '' }
+    case 'data_transform':
+      return { script: '', input_format: 'json', output_format: 'json' }
+    case 'ml_inference':
+      return { model_name: '', input_path: '', output_path: '' }
+    case 'notification':
+      return { channel: '', message: '' }
+    default:
+      return { command: '', args: [] }
   }
 }
 
@@ -199,17 +384,11 @@ function onNodeClick({ node }: NodeMouseEvent) {
   selectedNode.value = node as DAGNode
 }
 
-function onEdgeClick({ edge }: EdgeMouseEvent) {
-  edges.value = edges.value.filter((e) => e.id !== edge.id)
-  const targetNode = nodes.value.find((n) => n.id === edge.target)
-  if (targetNode) {
-    targetNode.data.taskDef.dependencies = targetNode.data.taskDef.dependencies.filter(
-      (d) => d !== edge.source,
-    )
-  }
+function onPaneClick() {
+  selectedNode.value = null
 }
 
-function deleteNode() {
+function deleteSelectedNode() {
   if (!selectedNode.value) return
   const id = selectedNode.value.id
   nodes.value = nodes.value.filter((n) => n.id !== id)
@@ -218,6 +397,43 @@ function deleteNode() {
     n.data.taskDef.dependencies = n.data.taskDef.dependencies.filter((d) => d !== id)
   })
   selectedNode.value = null
+}
+
+// ── Edge / connection ──────────────────────────────────────────
+function onConnect(connection: Connection) {
+  if (!connection.source || !connection.target) return
+  // Prevent self-loops
+  if (connection.source === connection.target) return
+  // Prevent duplicate edges
+  const exists = edges.value.some(
+    (e) => e.source === connection.source && e.target === connection.target,
+  )
+  if (exists) return
+
+  const edge: DAGEdge = {
+    id: `e-${connection.source}-${connection.target}`,
+    source: connection.source,
+    target: connection.target,
+    type: 'smoothstep',
+  }
+  edges.value.push(edge)
+
+  // Keep task dependencies in sync with edges
+  const targetNode = nodes.value.find((n) => n.id === connection.target)
+  if (targetNode && !targetNode.data.taskDef.dependencies.includes(connection.source)) {
+    targetNode.data.taskDef.dependencies.push(connection.source)
+  }
+}
+
+function onEdgeClick({ edge }: EdgeMouseEvent) {
+  // Click an edge to delete it
+  edges.value = edges.value.filter((e) => e.id !== edge.id)
+  const targetNode = nodes.value.find((n) => n.id === edge.target)
+  if (targetNode) {
+    targetNode.data.taskDef.dependencies = targetNode.data.taskDef.dependencies.filter(
+      (d) => d !== edge.source,
+    )
+  }
 }
 
 function removeDep(depId: string) {
@@ -229,37 +445,27 @@ function removeDep(depId: string) {
   )
 }
 
-function setMaxRetries(event: Event) {
-  if (!selectedNode.value) return
-  const val = parseInt((event.target as HTMLInputElement).value)
-  if (!selectedNode.value.data.taskDef.retry_policy) {
-    selectedNode.value.data.taskDef.retry_policy = {
-      max_retries: val,
-      initial_delay: 2e9,
-      max_delay: 300e9,
-      backoff_multiplier: 2,
-      jitter: true,
-    }
-  } else {
-    selectedNode.value.data.taskDef.retry_policy.max_retries = val
+// ── Config helpers ─────────────────────────────────────────────
+function updateConfig(newConfig: Record<string, unknown>) {
+  if (selectedNode.value) {
+    selectedNode.value.data.taskDef.config = newConfig
   }
 }
 
-function setTimeout_(event: Event) {
+function setRetryField(field: keyof NonNullable<TaskDefinition['retry_policy']>, value: number) {
   if (!selectedNode.value) return
-  const secs = parseInt((event.target as HTMLInputElement).value)
-  selectedNode.value.data.taskDef.timeout = secs * 1e9
+  const policy = selectedNode.value.data.taskDef.retry_policy ?? {
+    max_retries: 3,
+    initial_delay: 2e9,
+    max_delay: 300e9,
+    backoff_multiplier: 2,
+    jitter: true,
+  }
+  selectedNode.value.data.taskDef.retry_policy = { ...policy, [field]: value }
 }
 
-function getNodeName(id: string) {
-  return nodes.value.find((n) => n.id === id)?.data.taskDef.name || id
-}
-
+// ── Layout ─────────────────────────────────────────────────────
 function autoLayout() {
-  const levelMap = new Map<string, number>()
-  const topologicalOrder: string[] = []
-
-  // Kahn's BFS
   const inDegree = new Map<string, number>()
   const adjList = new Map<string, string[]>()
   nodes.value.forEach((n) => {
@@ -267,55 +473,52 @@ function autoLayout() {
     adjList.set(n.id, [])
   })
   edges.value.forEach((e) => {
-    inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1)
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1)
     adjList.get(e.source)?.push(e.target)
   })
 
-  const queue = nodes.value.filter((n) => inDegree.get(n.id) === 0).map((n) => n.id)
+  const queue = nodes.value.filter((n) => (inDegree.get(n.id) ?? 0) === 0).map((n) => n.id)
+  const levelMap = new Map<string, number>()
+  const order: string[] = []
+
   while (queue.length) {
     const id = queue.shift()!
-    topologicalOrder.push(id)
-    for (const dep of adjList.get(id) || []) {
-      const newDeg = (inDegree.get(dep) || 1) - 1
-      inDegree.set(dep, newDeg)
-      if (newDeg === 0) queue.push(dep)
+    order.push(id)
+    for (const next of adjList.get(id) ?? []) {
+      const deg = (inDegree.get(next) ?? 1) - 1
+      inDegree.set(next, deg)
+      if (deg === 0) queue.push(next)
     }
   }
 
-  // Assign levels
-  topologicalOrder.forEach((id) => {
+  order.forEach((id) => {
     const node = nodes.value.find((n) => n.id === id)!
-    const maxDepLevel = Math.max(
+    const depLevel = Math.max(
       0,
-      ...node.data.taskDef.dependencies.map((d) => (levelMap.get(d) || 0) + 1),
+      ...node.data.taskDef.dependencies.map((d) => (levelMap.get(d) ?? 0) + 1),
     )
-    levelMap.set(id, maxDepLevel)
+    levelMap.set(id, depLevel)
   })
 
-  // Group by level
   const byLevel = new Map<number, string[]>()
-  levelMap.forEach((level, id) => {
-    if (!byLevel.has(level)) byLevel.set(level, [])
-    byLevel.get(level)!.push(id)
+  levelMap.forEach((lv, id) => {
+    if (!byLevel.has(lv)) byLevel.set(lv, [])
+    byLevel.get(lv)!.push(id)
   })
 
-  // Position nodes
   byLevel.forEach((ids, level) => {
     ids.forEach((id, i) => {
       const node = nodes.value.find((n) => n.id === id)!
-      const totalWidth = ids.length * 220
-      node.position = {
-        x: -totalWidth / 2 + i * 220 + 110,
-        y: level * 160 + 40,
-      }
+      const totalW = ids.length * 240
+      node.position = { x: -totalW / 2 + i * 240 + 120, y: level * 160 + 60 }
     })
   })
 
-  setTimeout(() => fitView({ padding: 0.2 }), 50)
+  nextTick(() => fitView({ padding: 0.2 }))
 }
 
-function validateDAG(): boolean {
-  // Check for cycles using DFS
+// ── Validate ───────────────────────────────────────────────────
+function runValidation(): boolean {
   const visited = new Set<string>()
   const inStack = new Set<string>()
   const adj = new Map<string, string[]>()
@@ -325,12 +528,9 @@ function validateDAG(): boolean {
   function hasCycle(id: string): boolean {
     visited.add(id)
     inStack.add(id)
-    for (const neighbor of adj.get(id) || []) {
-      if (!visited.has(neighbor)) {
-        if (hasCycle(neighbor)) return true
-      } else if (inStack.has(neighbor)) {
-        return true
-      }
+    for (const nbr of adj.get(id) ?? []) {
+      if (!visited.has(nbr) && hasCycle(nbr)) return true
+      if (inStack.has(nbr)) return true
     }
     inStack.delete(id)
     return false
@@ -338,19 +538,17 @@ function validateDAG(): boolean {
 
   for (const node of nodes.value) {
     if (!visited.has(node.id) && hasCycle(node.id)) {
-      validationMsg.value = { type: 'error', text: '⚠ Cycle detected in workflow graph' }
-      setTimeout(() => (validationMsg.value = null), 4000)
+      showBanner('error', '⚠ Cycle detected — DAG is invalid')
       return false
     }
   }
-
-  validationMsg.value = { type: 'success', text: '✓ DAG is valid — no cycles detected' }
-  setTimeout(() => (validationMsg.value = null), 3000)
+  showBanner('success', `✓ Valid DAG — ${nodes.value.length} tasks, ${edges.value.length} edges`)
   return true
 }
 
+// ── Save & run ─────────────────────────────────────────────────
 async function saveWorkflow() {
-  if (!validateDAG()) return
+  if (!runValidation()) return
   saving.value = true
   try {
     const def = {
@@ -361,37 +559,38 @@ async function saveWorkflow() {
       max_parallel: 10,
     }
     const created = await store.createDefinition(def)
-    workflowId.value = created.id
-    validationMsg.value = { type: 'success', text: `✓ Workflow "${created.name}" saved` }
-    setTimeout(() => (validationMsg.value = null), 3000)
-  } catch (e) {
-    validationMsg.value = { type: 'error', text: 'Failed to save workflow' }
+    savedWorkflowId.value = created.id
+    showBanner('success', `✓ Saved "${created.name}"`)
+  } catch {
+    showBanner('error', 'Save failed — check backend connection')
   } finally {
     saving.value = false
   }
 }
 
 async function triggerRun() {
-  if (!workflowId.value) return
+  if (!savedWorkflowId.value) return
   try {
-    const exec = await store.triggerWorkflow(workflowId.value, {})
+    const exec = await store.triggerWorkflow(savedWorkflowId.value, {})
     emit('triggered', exec.id)
-  } catch (e) {
-    validationMsg.value = { type: 'error', text: 'Failed to trigger workflow' }
+    showBanner('success', `▶ Run started: ${exec.id.slice(0, 8)}…`)
+  } catch {
+    showBanner('error', 'Failed to trigger run')
   }
 }
 
-// Expose load function for populating from templates
+// ── Expose for parent (e.g. BuilderPage loading an existing wf) ─
 defineExpose({
-  loadWorkflow(tasks: TaskDefinition[]) {
+  loadWorkflow(wfName: string, tasks: TaskDefinition[]) {
+    workflowName.value = wfName
     nodes.value = tasks.map((t, i) => ({
       id: t.id,
       type: 'taskNode' as const,
-      position: { x: 100 + (i % 3) * 220, y: Math.floor(i / 3) * 160 + 40 },
-      data: { taskDef: t },
+      position: { x: 120 + (i % 3) * 240, y: Math.floor(i / 3) * 160 + 60 },
+      data: { taskDef: { ...t } },
     }))
     edges.value = tasks.flatMap((t) =>
-      (t.dependencies || []).map((dep) => ({
+      (t.dependencies ?? []).map((dep) => ({
         id: `e-${dep}-${t.id}`,
         source: dep,
         target: t.id,
@@ -399,30 +598,66 @@ defineExpose({
         animated: false,
       })),
     )
-    setTimeout(() => fitView({ padding: 0.2 }), 100)
+    nextTick(() => fitView({ padding: 0.2 }))
+  },
+  resetToEmpty() {
+    workflowName.value = 'New Workflow'
+    const id = uuidv4()
+    nodes.value = [
+      {
+        id,
+        type: 'taskNode',
+        position: { x: 300, y: 200 },
+        data: {
+          taskDef: {
+            id,
+            name: 'Start Task',
+            type: 'generic',
+            dependencies: [],
+            config: { command: '', args: [] },
+            retry_policy: {
+              max_retries: 3,
+              initial_delay: 2e9,
+              max_delay: 300e9,
+              backoff_multiplier: 2,
+              jitter: true,
+            },
+            timeout: 300e9,
+          },
+        },
+      },
+    ]
+    edges.value = []
+    savedWorkflowId.value = null
+    selectedNode.value = null
   },
 })
 </script>
 
-<style scoped>
+<style>
+@import '../../../node_modules/@vue-flow/core/dist/style.css';
+@import '../../../node_modules/@vue-flow/controls/dist/style.css';
+
 .dag-editor {
   display: flex;
   flex-direction: column;
   height: 100%;
   position: relative;
+  background: var(--bg3);
 }
 
+/* Toolbar */
 .dag-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
-  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
-
 .toolbar-left,
 .toolbar-right {
   display: flex;
@@ -431,70 +666,71 @@ defineExpose({
 }
 
 .name-input {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: var(--r-sm);
   padding: 6px 10px;
   outline: none;
   width: 200px;
 }
 .name-input:focus {
-  border-color: #6366f1;
+  border-color: var(--accent);
 }
 
 .type-select {
-  font-size: 13px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text2);
+  border-radius: var(--r-sm);
   padding: 6px 10px;
   outline: none;
-  background: #fff;
 }
 
 .btn-add {
-  padding: 6px 14px;
-  background: #f0f0ff;
-  color: #4f46e5;
-  border: 1px solid #c7d2fe;
-  border-radius: 6px;
-  font-size: 13px;
+  padding: 6px 13px;
+  background: rgba(124, 106, 255, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(124, 106, 255, 0.3);
+  border-radius: var(--r-sm);
+  font-size: 12px;
   font-weight: 500;
-  cursor: pointer;
 }
 .btn-add:hover {
-  background: #e0e7ff;
+  background: rgba(124, 106, 255, 0.25);
 }
 .btn-add:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .btn-secondary {
-  padding: 6px 14px;
-  background: #f9fafb;
-  color: #374151;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
+  padding: 6px 13px;
+  background: var(--surface);
+  color: var(--text2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-sm);
+  font-size: 12px;
 }
 .btn-secondary:hover {
-  background: #f3f4f6;
+  background: var(--surface2);
+  color: var(--text);
 }
 
 .btn-primary {
-  padding: 6px 16px;
-  background: #4f46e5;
+  padding: 6px 15px;
+  background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
   font-weight: 500;
-  cursor: pointer;
 }
 .btn-primary:hover {
-  background: #4338ca;
+  background: #5b4bd4;
 }
 .btn-primary:disabled {
   opacity: 0.6;
@@ -502,171 +738,222 @@ defineExpose({
 }
 
 .btn-run {
-  padding: 6px 16px;
-  background: #059669;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
+  padding: 6px 15px;
+  background: rgba(34, 211, 160, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(34, 211, 160, 0.3);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 600;
 }
 .btn-run:hover {
-  background: #047857;
+  background: rgba(34, 211, 160, 0.25);
 }
 
-.validation-banner {
-  padding: 8px 16px;
-  font-size: 13px;
+/* Banner */
+.banner {
+  padding: 7px 16px;
+  font-size: 12px;
   font-weight: 500;
-  animation: slideDown 0.2s ease;
+  flex-shrink: 0;
 }
-.validation-banner.success {
-  background: #f0fdf4;
-  color: #166534;
-  border-bottom: 1px solid #86efac;
+.banner.success {
+  background: rgba(34, 211, 160, 0.1);
+  color: var(--green);
+  border-bottom: 1px solid rgba(34, 211, 160, 0.2);
 }
-.validation-banner.error {
-  background: #fef2f2;
-  color: #991b1b;
-  border-bottom: 1px solid #fca5a5;
+.banner.error {
+  background: rgba(255, 95, 87, 0.1);
+  color: var(--red);
+  border-bottom: 1px solid rgba(255, 95, 87, 0.2);
+}
+.banner-enter-active,
+.banner-leave-active {
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+.banner-enter-from,
+.banner-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+.banner-enter-to,
+.banner-leave-from {
+  max-height: 40px;
 }
 
-.flow-canvas {
+/* Canvas */
+.flow-wrap {
   flex: 1;
+  overflow: hidden;
+}
+.dark-flow {
+  background: #0c0c14;
+}
+
+/* Empty hint */
+.empty-hint {
+  background: rgba(124, 106, 255, 0.1);
+  border: 1px dashed rgba(124, 106, 255, 0.3);
+  color: var(--text3);
+  font-size: 12px;
+  padding: 8px 16px;
+  border-radius: var(--r);
+  margin-top: 12px;
+}
+.empty-hint kbd {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: var(--text2);
 }
 
 /* Config panel */
 .config-panel {
   position: absolute;
   right: 0;
-  top: 58px;
+  top: 0;
   bottom: 0;
-  width: 280px;
-  background: #fff;
-  border-left: 1px solid #e5e7eb;
-  z-index: 10;
+  width: 290px;
+  background: var(--bg2);
+  border-left: 1px solid var(--border2);
+  z-index: 20;
   overflow-y: auto;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.4);
 }
-
 .config-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
-.config-header h3 {
-  margin: 0;
-  font-size: 14px;
+.config-title {
+  font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
 }
-
-.btn-close {
+.config-close {
   background: none;
   border: none;
-  font-size: 16px;
+  color: var(--text3);
+  font-size: 15px;
   cursor: pointer;
-  color: #6b7280;
 }
-.btn-close:hover {
-  color: #111827;
+.config-close:hover {
+  color: var(--text);
 }
 
 .config-body {
-  padding: 16px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  flex: 1;
+}
+
+.section-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+  margin-top: 4px;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 .field label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #6b7280;
+  letter-spacing: 0.06em;
+  color: var(--text3);
 }
-
-.config-input {
-  font-size: 13px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 7px 10px;
+.cf-input {
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: var(--r-sm);
+  padding: 6px 9px;
   outline: none;
 }
-.config-input:focus {
-  border-color: #6366f1;
+.cf-input:focus {
+  border-color: var(--accent);
 }
 
 .deps-list {
   display: flex;
-  gap: 4px;
+  gap: 5px;
   flex-wrap: wrap;
-  padding: 6px 0;
+  min-height: 28px;
 }
 .dep-tag {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: #ede9fe;
-  color: #5b21b6;
+  background: rgba(124, 106, 255, 0.12);
+  color: var(--accent);
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 2px 7px;
   font-size: 11px;
 }
 .dep-tag button {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 12px;
-  color: #7c3aed;
+  color: var(--accent);
   padding: 0;
+  font-size: 13px;
   line-height: 1;
 }
 .no-deps {
-  font-size: 12px;
-  color: #9ca3af;
+  font-size: 11px;
+  color: var(--text3);
+}
+.deps-hint {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.4;
 }
 
 .btn-delete {
   padding: 7px 14px;
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fca5a5;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  margin-top: 8px;
+  background: rgba(255, 95, 87, 0.08);
+  color: var(--red);
+  border: 1px solid rgba(255, 95, 87, 0.25);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  margin-top: 6px;
 }
 .btn-delete:hover {
-  background: #fee2e2;
+  background: rgba(255, 95, 87, 0.15);
 }
 
-.slide-enter-active,
-.slide-leave-active {
+/* Slide transition */
+.slide-right-enter-active,
+.slide-right-leave-active {
   transition: transform 0.2s ease;
 }
-.slide-enter-from,
-.slide-leave-to {
+.slide-right-enter-from,
+.slide-right-leave-to {
   transform: translateX(100%);
 }
 
-@keyframes slideDown {
-  from {
-    transform: translateY(-8px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
+/* Flow control buttons */
+.vue-flow__controls {
+  display: flex;
+}
+.vue-flow__controls-button {
+  width: 16px !important;
 }
 </style>

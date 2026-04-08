@@ -8,13 +8,24 @@
         <StatusBadge :status="execution.status" />
       </div>
       <div class="exec-actions">
-        <button @click="$emit('retry')" v-if="execution.status === 'failed'" class="btn-retry">
+        <button
+          v-if="execution.status === 'failed'"
+          class="btn-retry"
+          @click="$emit('retry')"
+        >
           ↺ Retry
         </button>
-        <button @click="$emit('cancel')" v-if="execution.status === 'running'" class="btn-cancel">
+        <button
+          v-if="execution.status === 'running'"
+          class="btn-cancel"
+          @click="$emit('cancel')"
+        >
           ◼ Cancel
         </button>
-        <button @click="expanded = !expanded" class="btn-toggle">
+        <button
+          class="btn-toggle"
+          @click="expanded = !expanded"
+        >
           {{ expanded ? '▲ Collapse' : '▼ Expand' }}
         </button>
       </div>
@@ -47,17 +58,20 @@
     </div>
 
     <!-- DAG graph visualization -->
-    <div v-if="expanded" class="dag-visualization">
+    <div
+      v-if="expanded"
+      class="dag-visualization"
+    >
       <VueFlow
         :nodes="dagNodes"
         :edges="dagEdges"
-        :nodeTypes="nodeTypes"
+        :node-types="nodeTypes"
         :edges-updatable="false"
         :nodes-connectable="false"
         :elements-selectable="true"
         fit-view-on-init
-        @node-click="onNodeClick"
         class="exec-flow"
+        @node-click="onNodeClick"
       >
         <Background />
         <Controls :show-interactive="false" />
@@ -66,13 +80,21 @@
 
     <!-- Selected task detail drawer -->
     <Transition name="fade">
-      <div v-if="selectedTask" class="task-detail">
+      <div
+        v-if="selectedTask"
+        class="task-detail"
+      >
         <div class="detail-header">
           <div class="detail-name">
             <StatusBadge :status="selectedTask.status" />
             <span>{{ selectedTask.task_name }}</span>
           </div>
-          <button @click="selectedTask = null" class="close-btn">✕</button>
+          <button
+            class="close-btn"
+            @click="selectedTask = null"
+          >
+            ✕
+          </button>
         </div>
         <div class="detail-body">
           <div class="detail-row">
@@ -81,23 +103,33 @@
           </div>
           <div class="detail-row">
             <span class="detail-key">Retries</span>
-            <span class="detail-val"
-              >{{ selectedTask.retry_count }} / {{ selectedTask.max_retries }}</span
-            >
+            <span class="detail-val">{{ selectedTask.retry_count }} / {{ selectedTask.max_retries }}</span>
           </div>
-          <div class="detail-row" v-if="selectedTask.started_at">
+          <div
+            v-if="selectedTask.started_at"
+            class="detail-row"
+          >
             <span class="detail-key">Started</span>
             <span class="detail-val">{{ formatTime(selectedTask.started_at) }}</span>
           </div>
-          <div class="detail-row" v-if="selectedTask.completed_at">
+          <div
+            v-if="selectedTask.completed_at"
+            class="detail-row"
+          >
             <span class="detail-key">Completed</span>
             <span class="detail-val">{{ formatTime(selectedTask.completed_at) }}</span>
           </div>
-          <div v-if="selectedTask.error" class="error-block">
+          <div
+            v-if="selectedTask.error"
+            class="error-block"
+          >
             <span class="detail-key">Error</span>
             <pre class="error-text">{{ selectedTask.error }}</pre>
           </div>
-          <div v-if="selectedTask.logs?.length" class="logs-preview">
+          <div
+            v-if="selectedTask.logs?.length"
+            class="logs-preview"
+          >
             <span class="detail-key">Logs ({{ selectedTask.logs.length }})</span>
             <div class="log-lines">
               <div

@@ -32,7 +32,7 @@ export function useWorkflowValidator(tasks: () => TaskDefinition[]) {
 
 export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
   const issues: ValidationIssue[] = []
-  const taskMap = new Map(tasks.map(t => [t.id, t]))
+  const taskMap = new Map(tasks.map((t) => [t.id, t]))
 
   // ── 1. Duplicate IDs ─────────────────────────────────────────
   const idCounts = new Map<string, number>()
@@ -41,7 +41,12 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
   }
   idCounts.forEach((count, id) => {
     if (count > 1) {
-      issues.push({ type: 'error', code: 'DUPLICATE_ID', message: `Duplicate task ID: "${id}"`, taskId: id })
+      issues.push({
+        type: 'error',
+        code: 'DUPLICATE_ID',
+        message: `Duplicate task ID: "${id}"`,
+        taskId: id,
+      })
     }
   })
 
@@ -50,7 +55,8 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
     for (const dep of t.dependencies ?? []) {
       if (!taskMap.has(dep)) {
         issues.push({
-          type: 'error', code: 'UNKNOWN_DEP',
+          type: 'error',
+          code: 'UNKNOWN_DEP',
           message: `Task "${t.name}" depends on unknown task "${dep}"`,
           taskId: t.id,
         })
@@ -61,7 +67,12 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
   // ── 3. Self-dependencies ─────────────────────────────────────
   for (const t of tasks) {
     if ((t.dependencies ?? []).includes(t.id)) {
-      issues.push({ type: 'error', code: 'SELF_DEP', message: `Task "${t.name}" depends on itself`, taskId: t.id })
+      issues.push({
+        type: 'error',
+        code: 'SELF_DEP',
+        message: `Task "${t.name}" depends on itself`,
+        taskId: t.id,
+      })
     }
   }
 
@@ -93,7 +104,8 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
 
   if (cycleNodes.size > 0) {
     issues.push({
-      type: 'error', code: 'CYCLE',
+      type: 'error',
+      code: 'CYCLE',
       message: `Cycle detected involving tasks: ${[...cycleNodes].join(', ')}`,
     })
   }
@@ -106,22 +118,35 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
   // ── 6. Missing task names ────────────────────────────────────
   for (const t of tasks) {
     if (!t.name?.trim()) {
-      issues.push({ type: 'warning', code: 'NO_NAME', message: `Task "${t.id}" has no name`, taskId: t.id })
+      issues.push({
+        type: 'warning',
+        code: 'NO_NAME',
+        message: `Task "${t.id}" has no name`,
+        taskId: t.id,
+      })
     }
   }
 
   // ── 7. Missing task types ────────────────────────────────────
   for (const t of tasks) {
     if (!t.type?.trim()) {
-      issues.push({ type: 'warning', code: 'NO_TYPE', message: `Task "${t.name || t.id}" has no type`, taskId: t.id })
+      issues.push({
+        type: 'warning',
+        code: 'NO_TYPE',
+        message: `Task "${t.name || t.id}" has no type`,
+        taskId: t.id,
+      })
     }
   }
 
   // ── Stats ────────────────────────────────────────────────────
   const inDegree = new Map<string, number>()
   const outDegree = new Map<string, number>()
-  tasks.forEach(t => { inDegree.set(t.id, 0); outDegree.set(t.id, 0) })
-  tasks.forEach(t => {
+  tasks.forEach((t) => {
+    inDegree.set(t.id, 0)
+    outDegree.set(t.id, 0)
+  })
+  tasks.forEach((t) => {
     for (const dep of t.dependencies ?? []) {
       if (taskMap.has(dep)) {
         inDegree.set(t.id, (inDegree.get(t.id) ?? 0) + 1)
@@ -130,9 +155,11 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
     }
   })
 
-  const rootCount = [...inDegree.values()].filter(d => d === 0).length
-  const leafCount = [...outDegree.values()].filter(d => d === 0).length
-  const isolatedCount = tasks.filter(t => (inDegree.get(t.id) ?? 0) === 0 && (outDegree.get(t.id) ?? 0) === 0).length
+  const rootCount = [...inDegree.values()].filter((d) => d === 0).length
+  const leafCount = [...outDegree.values()].filter((d) => d === 0).length
+  const isolatedCount = tasks.filter(
+    (t) => (inDegree.get(t.id) ?? 0) === 0 && (outDegree.get(t.id) ?? 0) === 0,
+  ).length
   const edgeCount = tasks.reduce((sum, t) => sum + (t.dependencies?.length ?? 0), 0)
 
   // Max depth via topological sort
@@ -140,31 +167,33 @@ export function validateDAG(tasks: TaskDefinition[]): ValidationResult {
   function getLevel(id: string): number {
     if (levels.has(id)) return levels.get(id)!
     const t = taskMap.get(id)
-    const deps = (t?.dependencies ?? []).filter(d => taskMap.has(d))
-    const level = deps.length === 0 ? 0 : Math.max(...deps.map(d => getLevel(d) + 1))
+    const deps = (t?.dependencies ?? []).filter((d) => taskMap.has(d))
+    const level = deps.length === 0 ? 0 : Math.max(...deps.map((d) => getLevel(d) + 1))
     levels.set(id, level)
     return level
   }
-  tasks.forEach(t => getLevel(t.id))
+  tasks.forEach((t) => getLevel(t.id))
   const maxDepth = tasks.length > 0 ? Math.max(...[...levels.values()]) : 0
 
   // ── 8. Warnings ──────────────────────────────────────────────
   if (isolatedCount > 0 && tasks.length > 1) {
     issues.push({
-      type: 'warning', code: 'ISOLATED',
+      type: 'warning',
+      code: 'ISOLATED',
       message: `${isolatedCount} task(s) have no dependencies or dependents`,
     })
   }
 
   if (maxDepth > 20) {
     issues.push({
-      type: 'warning', code: 'DEEP_CHAIN',
+      type: 'warning',
+      code: 'DEEP_CHAIN',
       message: `Workflow has a very deep dependency chain (${maxDepth} levels) — consider parallelising`,
     })
   }
 
   return {
-    valid: issues.filter(i => i.type === 'error').length === 0,
+    valid: issues.filter((i) => i.type === 'error').length === 0,
     issues,
     stats: { taskCount: tasks.length, edgeCount, maxDepth, rootCount, leafCount, isolatedCount },
   }

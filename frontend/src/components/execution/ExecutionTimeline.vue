@@ -28,7 +28,10 @@
         @mouseenter="hoveredTaskId = task.id"
         @mouseleave="hoveredTaskId = null"
       >
-        <div class="tl-row-label" :title="task.task_name">
+        <div
+          class="tl-row-label"
+          :title="task.task_name"
+        >
           {{ task.task_name }}
         </div>
         <div class="tl-row-track">
@@ -55,24 +58,48 @@
             :title="`${task.status}: ${segmentDuration(task, 'running')}`"
           ></div>
         </div>
-        <div class="tl-row-dur">{{ taskDuration(task) }}</div>
+        <div class="tl-row-dur">
+          {{ taskDuration(task) }}
+        </div>
       </div>
     </div>
 
     <!-- Hover tooltip -->
     <Transition name="fade">
-      <div v-if="hoveredTask" class="tl-tooltip">
-        <div class="tt-name">{{ hoveredTask.task_name }}</div>
-        <div class="tt-row"><span>Status</span><StatusBadge :status="hoveredTask.status" /></div>
-        <div class="tt-row"><span>Worker</span><span>{{ hoveredTask.worker_id?.slice(-8) || '—' }}</span></div>
-        <div class="tt-row"><span>Retries</span><span>{{ hoveredTask.retry_count }}/{{ hoveredTask.max_retries }}</span></div>
-        <div class="tt-row" v-if="hoveredTask.started_at">
+      <div
+        v-if="hoveredTask"
+        class="tl-tooltip"
+      >
+        <div class="tt-name">
+          {{ hoveredTask.task_name }}
+        </div>
+        <div class="tt-row">
+          <span>Status</span><StatusBadge :status="hoveredTask.status" />
+        </div>
+        <div class="tt-row">
+          <span>Worker</span><span>{{ hoveredTask.worker_id?.slice(-8) || '—' }}</span>
+        </div>
+        <div class="tt-row">
+          <span>Retries</span><span>{{ hoveredTask.retry_count }}/{{ hoveredTask.max_retries }}</span>
+        </div>
+        <div
+          v-if="hoveredTask.started_at"
+          class="tt-row"
+        >
           <span>Started</span><span>{{ fmt(hoveredTask.started_at) }}</span>
         </div>
-        <div class="tt-row" v-if="hoveredTask.completed_at">
+        <div
+          v-if="hoveredTask.completed_at"
+          class="tt-row"
+        >
           <span>Completed</span><span>{{ fmt(hoveredTask.completed_at) }}</span>
         </div>
-        <div v-if="hoveredTask.error" class="tt-error">{{ hoveredTask.error }}</div>
+        <div
+          v-if="hoveredTask.error"
+          class="tt-error"
+        >
+          {{ hoveredTask.error }}
+        </div>
       </div>
     </Transition>
   </div>
@@ -87,8 +114,8 @@ const props = defineProps<{ execution: WorkflowExecution }>()
 
 const hoveredTaskId = ref<string | null>(null)
 
-const hoveredTask = computed(() =>
-  props.execution.tasks?.find(t => t.id === hoveredTaskId.value) ?? null
+const hoveredTask = computed(
+  () => props.execution.tasks?.find((t) => t.id === hoveredTaskId.value) ?? null,
 )
 
 // ── Time boundaries ───────────────────────────────────────────
@@ -170,9 +197,16 @@ function segmentStyle(task: TaskExecution, phase: 'pending' | 'queued' | 'runnin
 function segmentDuration(task: TaskExecution, phase: 'pending' | 'queued' | 'running'): string {
   let start: string | undefined
   let end: string | undefined
-  if (phase === 'pending') { start = props.execution.started_at ?? undefined; end = task.queued_at ?? undefined }
-  else if (phase === 'queued') { start = task.queued_at ?? undefined; end = task.started_at ?? undefined }
-  else { start = task.started_at ?? undefined; end = task.completed_at ?? undefined }
+  if (phase === 'pending') {
+    start = props.execution.started_at ?? undefined
+    end = task.queued_at ?? undefined
+  } else if (phase === 'queued') {
+    start = task.queued_at ?? undefined
+    end = task.started_at ?? undefined
+  } else {
+    start = task.started_at ?? undefined
+    end = task.completed_at ?? undefined
+  }
 
   if (!start) return '—'
   const ms = (end ? new Date(end) : new Date()).getTime() - new Date(start).getTime()
@@ -181,8 +215,9 @@ function segmentDuration(task: TaskExecution, phase: 'pending' | 'queued' | 'run
 
 function taskDuration(task: TaskExecution): string {
   if (!task.started_at) return '—'
-  const ms = (task.completed_at ? new Date(task.completed_at) : new Date()).getTime()
-           - new Date(task.started_at).getTime()
+  const ms =
+    (task.completed_at ? new Date(task.completed_at) : new Date()).getTime() -
+    new Date(task.started_at).getTime()
   return formatMs(ms)
 }
 
@@ -192,92 +227,202 @@ function fmt(ts: string): string {
 </script>
 
 <style scoped>
-.timeline { display: flex; flex-direction: column; gap: 0; font-size: 12px; }
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-size: 12px;
+}
 
 .timeline-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.tl-title { font-size: 12px; font-weight: 600; color: var(--text2); }
-.tl-range { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+.tl-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+}
+.tl-range {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: var(--mono);
+}
 
 /* Time axis */
 .tl-axis {
-  position: relative; height: 24px;
+  position: relative;
+  height: 24px;
   margin: 0 120px 0 160px;
   border-bottom: 1px solid var(--border2);
 }
 .tl-tick {
-  position: absolute; top: 0;
-  display: flex; flex-direction: column; align-items: center;
+  position: absolute;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
-.tick-line { width: 1px; height: 8px; background: var(--border2); }
-.tick-label { font-size: 9px; color: var(--text3); font-family: var(--mono); white-space: nowrap; margin-top: 2px; }
+.tick-line {
+  width: 1px;
+  height: 8px;
+  background: var(--border2);
+}
+.tick-label {
+  font-size: 9px;
+  color: var(--text3);
+  font-family: var(--mono);
+  white-space: nowrap;
+  margin-top: 2px;
+}
 
 /* Task rows */
-.tl-rows { display: flex; flex-direction: column; overflow-y: auto; max-height: 320px; }
-.tl-rows::-webkit-scrollbar { width: 4px; }
-.tl-rows::-webkit-scrollbar-thumb { background: var(--border2); }
+.tl-rows {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: 320px;
+}
+.tl-rows::-webkit-scrollbar {
+  width: 4px;
+}
+.tl-rows::-webkit-scrollbar-thumb {
+  background: var(--border2);
+}
 
 .tl-row {
-  display: flex; align-items: center;
-  height: 32px; border-bottom: 1px solid var(--border);
-  transition: background .1s;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
 }
-.tl-row-active { background: rgba(124,106,255,.05); }
+.tl-row-active {
+  background: rgba(124, 106, 255, 0.05);
+}
 
 .tl-row-label {
-  width: 160px; flex-shrink: 0;
+  width: 160px;
+  flex-shrink: 0;
   padding: 0 12px;
-  font-size: 11px; font-weight: 500;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text2);
 }
 
 .tl-row-track {
-  flex: 1; position: relative; height: 20px;
-  background: var(--surface2); border-radius: 3px; overflow: hidden;
+  flex: 1;
+  position: relative;
+  height: 20px;
+  background: var(--surface2);
+  border-radius: 3px;
+  overflow: hidden;
 }
 
 .tl-segment {
-  position: absolute; top: 0; height: 100%;
-  border-radius: 2px; transition: all .3s;
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  transition: all 0.3s;
   min-width: 2px;
 }
-.tl-segment.pending  { background: rgba(144,144,168,.2); }
-.tl-segment.queued   { background: rgba(192,132,252,.4); }
-.tl-segment.running  { background: rgba(59,158,255,.8); animation: shimmer 1.5s infinite; }
-.tl-segment.completed{ background: rgba(34,211,160,.8); }
-.tl-segment.failed   { background: rgba(255,95,87,.8); }
-.tl-segment.retrying { background: rgba(245,166,35,.7); }
-.tl-segment.dead_letter { background: rgba(197,48,48,.8); }
+.tl-segment.pending {
+  background: rgba(144, 144, 168, 0.2);
+}
+.tl-segment.queued {
+  background: rgba(192, 132, 252, 0.4);
+}
+.tl-segment.running {
+  background: rgba(59, 158, 255, 0.8);
+  animation: shimmer 1.5s infinite;
+}
+.tl-segment.completed {
+  background: rgba(34, 211, 160, 0.8);
+}
+.tl-segment.failed {
+  background: rgba(255, 95, 87, 0.8);
+}
+.tl-segment.retrying {
+  background: rgba(245, 166, 35, 0.7);
+}
+.tl-segment.dead_letter {
+  background: rgba(197, 48, 48, 0.8);
+}
 
-@keyframes shimmer { 0%,100%{opacity:.8} 50%{opacity:1} }
+@keyframes shimmer {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 
 .tl-row-dur {
-  width: 56px; flex-shrink: 0;
-  text-align: right; padding-right: 12px;
-  font-size: 10px; color: var(--text3); font-family: var(--mono);
+  width: 56px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 12px;
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--mono);
 }
 
 /* Tooltip */
 .tl-tooltip {
-  position: absolute; right: 12px; bottom: 12px;
-  background: var(--surface); border: 1px solid var(--border2);
-  border-radius: var(--radius-lg); padding: 10px 14px;
-  min-width: 200px; z-index: 100;
-  box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  min-width: 200px;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
-.tt-name { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.tt-name {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
 .tt-row {
-  display: flex; justify-content: space-between; gap: 12px;
-  font-size: 11px; margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  margin-bottom: 4px;
 }
-.tt-row span:first-child { color: var(--text3); }
-.tt-row span:last-child { font-family: var(--mono); color: var(--text2); }
-.tt-error { margin-top: 6px; font-size: 10px; color: var(--red); font-family: var(--mono); word-break: break-all; }
+.tt-row span:first-child {
+  color: var(--text3);
+}
+.tt-row span:last-child {
+  font-family: var(--mono);
+  color: var(--text2);
+}
+.tt-error {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--red);
+  font-family: var(--mono);
+  word-break: break-all;
+}
 
-.fade-enter-active, .fade-leave-active { transition: opacity .15s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 </style>

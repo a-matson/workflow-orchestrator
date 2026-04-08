@@ -1,0 +1,60 @@
+/* Global design tokens and reset */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0c0c14;
+  --bg2:      #13131f;
+  --bg3:      #1a1a2a;
+  --surface:  #1e1e30;
+  --surface2: #252538;
+  --border:   rgba(255,255,255,0.07);
+  --border2:  rgba(255,255,255,0.13);
+  --text:     #eaeaf5;
+  --text2:    #9494b0;
+  --text3:    #58587a;
+  --accent:   #7c6aff;
+  --green:    #22d3a0;
+  --amber:    #f5a623;
+  --red:      #ff5f57;
+  --blue:     #3b9eff;
+  --purple:   #c084fc;
+  --mono:     'IBM Plex Mono', 'Fira Code', monospace;
+  --sans:     'DM Sans', system-ui, sans-serif;
+  --r-sm:     6px;
+  --r:        9px;
+  --r-lg:     13px;
+}
+
+html, body, #app { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: var(--sans); cursor: pointer; }
+input, select, textarea { font-family: var(--sans); }
+
+/* Status badges */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 20px;
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.badge.pending    { background: rgba(144,144,168,.1); color: #9090a8; }
+.badge.queued     { background: rgba(192,132,252,.1); color: var(--purple); }
+.badge.running    { background: rgba(59,158,255,.1);  color: var(--blue); animation: badgePulse 1.5s infinite; }
+.badge.completed  { background: rgba(34,211,160,.1);  color: var(--green); }
+.badge.failed     { background: rgba(255,95,87,.1);   color: var(--red); }
+.badge.retrying   { background: rgba(245,166,35,.1);  color: var(--amber); }
+.badge.dead_letter{ background: rgba(197,48,48,.08);  color: #c53030; }
+.badge.cancelled  { background: rgba(255,95,87,.08);  color: var(--red); }
+.badge.paused     { background: rgba(245,166,35,.08); color: var(--amber); }
+
+@keyframes badgePulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }

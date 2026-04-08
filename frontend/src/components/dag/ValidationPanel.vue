@@ -1,5 +1,8 @@
 <template>
-  <div v-if="result.issues.length > 0 || showStats" class="validation-panel">
+  <div
+    v-if="result.issues.length > 0 || showStats"
+    class="validation-panel"
+  >
     <!-- Issues list -->
     <div
       v-for="issue in result.issues"
@@ -12,7 +15,10 @@
     </div>
 
     <!-- Stats bar (shown when valid) -->
-    <div v-if="showStats && result.valid" class="stats-bar">
+    <div
+      v-if="showStats && result.valid"
+      class="stats-bar"
+    >
       <span class="stat-item"><span class="stat-val">{{ result.stats.taskCount }}</span> tasks</span>
       <span class="stat-sep">·</span>
       <span class="stat-item"><span class="stat-val">{{ result.stats.edgeCount }}</span> edges</span>
@@ -35,24 +41,55 @@ defineProps<{
 </script>
 
 <style scoped>
-.validation-panel { display: flex; flex-direction: column; gap: 2px; padding: 0 16px 8px; }
+.validation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 16px 8px;
+}
 
 .issue-row {
-  display: flex; align-items: center; gap: 7px;
-  padding: 5px 10px; border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
 }
-.issue-row.error { background: rgba(255,95,87,.08); color: var(--red); }
-.issue-row.warning { background: rgba(245,166,35,.08); color: var(--amber); }
-.issue-icon { flex-shrink: 0; font-size: 11px; }
-.issue-msg { flex: 1; }
+.issue-row.error {
+  background: rgba(255, 95, 87, 0.08);
+  color: var(--red);
+}
+.issue-row.warning {
+  background: rgba(245, 166, 35, 0.08);
+  color: var(--amber);
+}
+.issue-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.issue-msg {
+  flex: 1;
+}
 
 .stats-bar {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 10px; font-size: 10px;
-  color: var(--text3); font-family: var(--mono);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--mono);
 }
-.stat-val { color: var(--text2); font-weight: 600; }
-.stat-sep { color: var(--border2); }
-.valid-check { color: var(--green); font-weight: 600; }
+.stat-val {
+  color: var(--text2);
+  font-weight: 600;
+}
+.stat-sep {
+  color: var(--border2);
+}
+.valid-check {
+  color: var(--green);
+  font-weight: 600;
+}
 </style>

@@ -8,7 +8,11 @@ export function useElapsed(startAt: () => string | undefined, endAt?: () => stri
   const now = ref(Date.now())
   let timer: ReturnType<typeof setInterval>
 
-  onMounted(() => { timer = setInterval(() => { now.value = Date.now() }, 1000) })
+  onMounted(() => {
+    timer = setInterval(() => {
+      now.value = Date.now()
+    }, 1000)
+  })
   onUnmounted(() => clearInterval(timer))
 
   const ms = computed(() => {

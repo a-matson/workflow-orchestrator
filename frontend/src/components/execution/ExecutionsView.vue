@@ -3,24 +3,48 @@
     <!-- ── Left: Run list ──────────────────────────────── -->
     <div class="exec-list-panel">
       <div class="list-header">
-        <h2 class="list-title">Runs</h2>
+        <h2 class="list-title">
+          Runs
+        </h2>
         <div class="list-header-actions">
-          <select v-model="statusFilter" class="filter-select">
-            <option value="">All statuses</option>
-            <option value="running">Running</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
+          <select
+            v-model="statusFilter"
+            class="filter-select"
+          >
+            <option value="">
+              All statuses
+            </option>
+            <option value="running">
+              Running
+            </option>
+            <option value="completed">
+              Completed
+            </option>
+            <option value="failed">
+              Failed
+            </option>
           </select>
         </div>
       </div>
 
-      <div class="list-scroll" ref="listScroll">
-        <div v-if="!filteredExecs.length" class="list-empty">
-          <div class="list-empty-icon">⬡</div>
+      <div
+        ref="listScroll"
+        class="list-scroll"
+      >
+        <div
+          v-if="!filteredExecs.length"
+          class="list-empty"
+        >
+          <div class="list-empty-icon">
+            ⬡
+          </div>
           <div>No executions yet</div>
         </div>
 
-        <TransitionGroup name="exec-item" tag="div">
+        <TransitionGroup
+          name="exec-item"
+          tag="div"
+        >
           <div
             v-for="exec in filteredExecs"
             :key="exec.id"
@@ -41,9 +65,7 @@
                   :style="{ width: completePct(exec) + '%', background: statusColor(exec.status) }"
                 ></div>
               </div>
-              <span class="exec-task-frac"
-                >{{ completedTasks(exec) }}/{{ exec.tasks?.length ?? 0 }}</span
-              >
+              <span class="exec-task-frac">{{ completedTasks(exec) }}/{{ exec.tasks?.length ?? 0 }}</span>
             </div>
 
             <div class="exec-item-row3">
@@ -57,9 +79,16 @@
 
     <!-- ── Right: Detail ──────────────────────────────── -->
     <div class="exec-detail-panel">
-      <div v-if="!selectedExec" class="detail-empty">
-        <div class="detail-empty-icon">◈</div>
-        <div class="detail-empty-text">Select an execution</div>
+      <div
+        v-if="!selectedExec"
+        class="detail-empty"
+      >
+        <div class="detail-empty-icon">
+          ◈
+        </div>
+        <div class="detail-empty-text">
+          Select an execution
+        </div>
       </div>
 
       <template v-else>
@@ -68,8 +97,12 @@
           <div class="detail-header-left">
             <StatusBadge :status="selectedExec.status" />
             <div>
-              <div class="detail-wf-name">{{ selectedExec.workflow_name }}</div>
-              <div class="detail-exec-id">{{ selectedExec.id }}</div>
+              <div class="detail-wf-name">
+                {{ selectedExec.workflow_name }}
+              </div>
+              <div class="detail-exec-id">
+                {{ selectedExec.id }}
+              </div>
             </div>
           </div>
           <div class="detail-header-right">
@@ -86,13 +119,28 @@
 
         <!-- Stats row -->
         <div class="stats-row">
-          <div class="stat-cell" v-for="s in taskStats(selectedExec)" :key="s.label">
-            <div class="stat-val" :style="{ color: s.color }">{{ s.count }}</div>
-            <div class="stat-lbl">{{ s.label }}</div>
+          <div
+            v-for="s in taskStats(selectedExec)"
+            :key="s.label"
+            class="stat-cell"
+          >
+            <div
+              class="stat-val"
+              :style="{ color: s.color }"
+            >
+              {{ s.count }}
+            </div>
+            <div class="stat-lbl">
+              {{ s.label }}
+            </div>
           </div>
           <div class="stat-cell">
-            <div class="stat-val">{{ completePct(selectedExec) }}%</div>
-            <div class="stat-lbl">Progress</div>
+            <div class="stat-val">
+              {{ completePct(selectedExec) }}%
+            </div>
+            <div class="stat-lbl">
+              Progress
+            </div>
           </div>
         </div>
 
@@ -108,7 +156,10 @@
         </div>
 
         <!-- DAG visualization -->
-        <div class="detail-dag" ref="dagContainer">
+        <div
+          ref="dagContainer"
+          class="detail-dag"
+        >
           <svg
             :viewBox="`0 0 ${dagViewBox.w} ${dagViewBox.h}`"
             width="100%"
@@ -124,7 +175,10 @@
                 refY="2.5"
                 orient="auto"
               >
-                <polygon points="0 0,7 2.5,0 5" :fill="COLORS.edge" />
+                <polygon
+                  points="0 0,7 2.5,0 5"
+                  :fill="COLORS.edge"
+                />
               </marker>
             </defs>
 
@@ -191,7 +245,12 @@
                 rx="8"
               />
               <!-- Icon -->
-              <text :x="node.x + 10" :y="node.y + 27" font-size="13" dominant-baseline="middle">
+              <text
+                :x="node.x + 10"
+                :y="node.y + 27"
+                font-size="13"
+                dominant-baseline="middle"
+              >
                 {{ node.icon }}
               </text>
               <!-- Name -->
@@ -241,25 +300,28 @@
 
           <style>
             @keyframes dagPulse {
-              0%,
-              100% {
-                stroke-opacity: 0.4;
-              }
-              50% {
-                stroke-opacity: 0.95;
-              }
+            0%,
+            100% {
+            stroke-opacity: 0.4;
+            }
+            50% {
+            stroke-opacity: 0.95;
+            }
             }
             .dag-node-g {
-              cursor: pointer;
+            cursor: pointer;
             }
             .dag-node-g.selected rect:nth-child(2) {
-              stroke-width: 2 !important;
+            stroke-width: 2 !important;
             }
           </style>
         </div>
 
         <!-- Task list -->
-        <div class="task-list" ref="taskListEl">
+        <div
+          ref="taskListEl"
+          class="task-list"
+        >
           <div
             v-for="t in selectedExec.tasks"
             :key="t.id"
@@ -275,12 +337,18 @@
             <span class="task-type-tag">{{ t.task_type }}</span>
             <span class="task-worker">{{ t.worker_id?.slice(-8) || '' }}</span>
             <span class="task-duration">{{ taskDuration(t) }}</span>
-            <span v-if="t.retry_count > 0" class="task-retry">↺{{ t.retry_count }}</span>
+            <span
+              v-if="t.retry_count > 0"
+              class="task-retry"
+            >↺{{ t.retry_count }}</span>
           </div>
 
           <!-- Expanded task detail -->
           <Transition name="expand">
-            <div v-if="expandedTask" class="task-detail">
+            <div
+              v-if="expandedTask"
+              class="task-detail"
+            >
               <div class="task-detail-grid">
                 <span class="td-key">Worker</span>
                 <span class="td-val">{{ expandedTask.worker_id || '—' }}</span>
@@ -293,12 +361,18 @@
                 <span class="td-key">Duration</span>
                 <span class="td-val">{{ taskDuration(expandedTask) }}</span>
                 <span class="td-key">Retries</span>
-                <span class="td-val"
-                  >{{ expandedTask.retry_count }} / {{ expandedTask.max_retries }}</span
-                >
+                <span class="td-val">{{ expandedTask.retry_count }} / {{ expandedTask.max_retries }}</span>
               </div>
-              <div v-if="expandedTask.error" class="task-error">{{ expandedTask.error }}</div>
-              <div v-if="expandedTask.logs?.length" class="task-mini-logs">
+              <div
+                v-if="expandedTask.error"
+                class="task-error"
+              >
+                {{ expandedTask.error }}
+              </div>
+              <div
+                v-if="expandedTask.logs?.length"
+                class="task-mini-logs"
+              >
                 <div
                   v-for="(log, i) in expandedTask.logs.slice(-6)"
                   :key="i"

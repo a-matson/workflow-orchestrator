@@ -11,8 +11,8 @@ export interface LayoutNode {
 interface LayoutOptions {
   nodeWidth?: number
   nodeHeight?: number
-  levelGap?: number   // vertical space between levels
-  colGap?: number     // horizontal space between siblings
+  levelGap?: number // vertical space between levels
+  colGap?: number // horizontal space between siblings
   startX?: number
   startY?: number
 }
@@ -34,7 +34,10 @@ const DEFAULTS: Required<LayoutOptions> = {
  *
  * Returns a map of taskId → { x, y, level, column }
  */
-export function useDAGLayout(tasks: TaskDefinition[], opts: LayoutOptions = {}): Map<string, LayoutNode> {
+export function useDAGLayout(
+  tasks: TaskDefinition[],
+  opts: LayoutOptions = {},
+): Map<string, LayoutNode> {
   const cfg = { ...DEFAULTS, ...opts }
   const result = new Map<string, LayoutNode>()
 
@@ -42,7 +45,7 @@ export function useDAGLayout(tasks: TaskDefinition[], opts: LayoutOptions = {}):
 
   // ── Step 1: Compute levels (longest path from source) ────────
   const levelMap = new Map<string, number>()
-  const taskMap = new Map(tasks.map(t => [t.id, t]))
+  const taskMap = new Map(tasks.map((t) => [t.id, t]))
 
   function getLevel(id: string): number {
     if (levelMap.has(id)) return levelMap.get(id)!
@@ -51,11 +54,11 @@ export function useDAGLayout(tasks: TaskDefinition[], opts: LayoutOptions = {}):
       levelMap.set(id, 0)
       return 0
     }
-    const level = Math.max(...task.dependencies.map(d => getLevel(d) + 1))
+    const level = Math.max(...task.dependencies.map((d) => getLevel(d) + 1))
     levelMap.set(id, level)
     return level
   }
-  tasks.forEach(t => getLevel(t.id))
+  tasks.forEach((t) => getLevel(t.id))
 
   // ── Step 2: Group by level ────────────────────────────────────
   const byLevel = new Map<number, string[]>()
@@ -74,7 +77,7 @@ export function useDAGLayout(tasks: TaskDefinition[], opts: LayoutOptions = {}):
       const avgX = (parentIds: string[]) => {
         if (!parentIds.length) return 0
         const parentLevelIds = byLevel.get(level - 1) ?? []
-        const positions = parentIds.map(p => parentLevelIds.indexOf(p)).filter(i => i >= 0)
+        const positions = parentIds.map((p) => parentLevelIds.indexOf(p)).filter((i) => i >= 0)
         return positions.length ? positions.reduce((s, v) => s + v, 0) / positions.length : 0
       }
       return avgX(aParents) - avgX(bParents)
@@ -101,10 +104,12 @@ export function useDAGLayout(tasks: TaskDefinition[], opts: LayoutOptions = {}):
 
   // Centre the whole graph around 450px if it has multiple levels
   if (maxLevel > 0) {
-    const xs = [...result.values()].map(n => n.x)
+    const xs = [...result.values()].map((n) => n.x)
     const centreX = (Math.min(...xs) + Math.max(...xs)) / 2
     const shift = 450 - centreX
-    result.forEach(node => { node.x += shift })
+    result.forEach((node) => {
+      node.x += shift
+    })
   }
 
   return result
@@ -116,9 +121,9 @@ export function useDAGLayout(tasks: TaskDefinition[], opts: LayoutOptions = {}):
 export function tasksToFlowNodes(
   tasks: TaskDefinition[],
   layout: Map<string, LayoutNode>,
-  statusMap: Map<string, string> = new Map()
+  statusMap: Map<string, string> = new Map(),
 ) {
-  return tasks.map(t => {
+  return tasks.map((t) => {
     const pos = layout.get(t.id) ?? { x: 100, y: 100 }
     return {
       id: t.id,
@@ -137,10 +142,10 @@ export function tasksToFlowNodes(
  */
 export function tasksToFlowEdges(
   tasks: TaskDefinition[],
-  statusMap: Map<string, string> = new Map()
+  statusMap: Map<string, string> = new Map(),
 ) {
-  return tasks.flatMap(t =>
-    (t.dependencies ?? []).map(depId => {
+  return tasks.flatMap((t) =>
+    (t.dependencies ?? []).map((depId) => {
       const targetStatus = statusMap.get(t.id) ?? 'pending'
       const isRunning = targetStatus === 'running'
       return {
@@ -154,6 +159,6 @@ export function tasksToFlowEdges(
           strokeWidth: '1.5',
         },
       }
-    })
+    }),
   )
 }

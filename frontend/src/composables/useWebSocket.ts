@@ -37,7 +37,9 @@ export function useWebSocket(url: string, opts: UseWebSocketOptions = {}) {
         try {
           const event: WebSocketEvent = JSON.parse(line)
           opts.onEvent?.(event)
-        } catch { /* ignore malformed */ }
+        } catch {
+          /* ignore malformed */
+        }
       }
     }
 

@@ -4,7 +4,9 @@ import type { WorkflowDefinition } from '../types'
  * Pre-built workflow templates the user can load into the DAG editor.
  * Each template is a complete WorkflowDefinition (minus id/timestamps).
  */
-export const WORKFLOW_TEMPLATES: Array<Omit<WorkflowDefinition, 'id' | 'created_at' | 'updated_at'>> = [
+export const WORKFLOW_TEMPLATES: Array<
+  Omit<WorkflowDefinition, 'id' | 'created_at' | 'updated_at'>
+> = [
   // ── ETL Pipeline ────────────────────────────────────────
   {
     name: 'ETL Pipeline',
@@ -19,7 +21,13 @@ export const WORKFLOW_TEMPLATES: Array<Omit<WorkflowDefinition, 'id' | 'created_
         type: 'database_query',
         dependencies: [],
         config: { table: 'raw_events', limit: 100000 },
-        retry_policy: { max_retries: 3, initial_delay: 2e9, max_delay: 60e9, backoff_multiplier: 2, jitter: true },
+        retry_policy: {
+          max_retries: 3,
+          initial_delay: 2e9,
+          max_delay: 60e9,
+          backoff_multiplier: 2,
+          jitter: true,
+        },
         timeout: 300e9,
       },
       {
@@ -28,7 +36,13 @@ export const WORKFLOW_TEMPLATES: Array<Omit<WorkflowDefinition, 'id' | 'created_
         type: 'data_transform',
         dependencies: ['ingest-raw'],
         config: { schema: 'events_v2', strict: true },
-        retry_policy: { max_retries: 2, initial_delay: 1e9, max_delay: 30e9, backoff_multiplier: 2, jitter: true },
+        retry_policy: {
+          max_retries: 2,
+          initial_delay: 1e9,
+          max_delay: 30e9,
+          backoff_multiplier: 2,
+          jitter: true,
+        },
         timeout: 120e9,
       },
       {
@@ -45,7 +59,13 @@ export const WORKFLOW_TEMPLATES: Array<Omit<WorkflowDefinition, 'id' | 'created_
         type: 'http_request',
         dependencies: ['validate-schema'],
         config: { url: 'https://api.geo.internal/enrich', method: 'POST' },
-        retry_policy: { max_retries: 5, initial_delay: 1e9, max_delay: 120e9, backoff_multiplier: 2, jitter: true },
+        retry_policy: {
+          max_retries: 5,
+          initial_delay: 1e9,
+          max_delay: 120e9,
+          backoff_multiplier: 2,
+          jitter: true,
+        },
         timeout: 240e9,
       },
       {
@@ -62,7 +82,13 @@ export const WORKFLOW_TEMPLATES: Array<Omit<WorkflowDefinition, 'id' | 'created_
         type: 'database_query',
         dependencies: ['apply-transform'],
         config: { target: 'analytics.events', mode: 'upsert' },
-        retry_policy: { max_retries: 3, initial_delay: 5e9, max_delay: 300e9, backoff_multiplier: 2, jitter: true },
+        retry_policy: {
+          max_retries: 3,
+          initial_delay: 5e9,
+          max_delay: 300e9,
+          backoff_multiplier: 2,
+          jitter: true,
+        },
         timeout: 600e9,
       },
       {
@@ -114,7 +140,13 @@ export const WORKFLOW_TEMPLATES: Array<Omit<WorkflowDefinition, 'id' | 'created_
         type: 'ml_inference',
         dependencies: ['train-val-split'],
         config: { model: 'xgboost', epochs: 100, early_stopping: 10 },
-        retry_policy: { max_retries: 2, initial_delay: 30e9, max_delay: 300e9, backoff_multiplier: 2, jitter: false },
+        retry_policy: {
+          max_retries: 2,
+          initial_delay: 30e9,
+          max_delay: 300e9,
+          backoff_multiplier: 2,
+          jitter: false,
+        },
         timeout: 3600e9,
       },
       {

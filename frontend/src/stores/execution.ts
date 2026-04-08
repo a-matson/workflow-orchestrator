@@ -10,9 +10,7 @@ export const useExecutionStore = defineStore('executions', () => {
   const taskLogs = ref<Record<string, LogEntry[]>>({}) // taskExecId → logs
 
   // ── Getters ────────────────────────────────────────────
-  const selected = computed(() =>
-    executions.value.find(e => e.id === selectedId.value) ?? null
-  )
+  const selected = computed(() => executions.value.find((e) => e.id === selectedId.value) ?? null)
 
   const byStatus = computed(() => {
     const groups: Record<string, WorkflowExecution[]> = {}
@@ -22,8 +20,8 @@ export const useExecutionStore = defineStore('executions', () => {
     return groups
   })
 
-  const activeCount = computed(() =>
-    executions.value.filter(e => e.status === 'running' || e.status === 'pending').length
+  const activeCount = computed(
+    () => executions.value.filter((e) => e.status === 'running' || e.status === 'pending').length,
   )
 
   // ── Actions ────────────────────────────────────────────
@@ -31,7 +29,7 @@ export const useExecutionStore = defineStore('executions', () => {
     loading.value = true
     try {
       const res = await api.get<{ executions: WorkflowExecution[] }>(
-        `/api/executions?limit=${limit}&offset=${offset}`
+        `/api/executions?limit=${limit}&offset=${offset}`,
       )
       executions.value = res.executions ?? []
     } finally {
@@ -59,9 +57,9 @@ export const useExecutionStore = defineStore('executions', () => {
 
   function handleTaskEvent(payload: unknown) {
     const task = payload as TaskExecution
-    const exec = executions.value.find(e => e.id === task.workflow_exec_id)
+    const exec = executions.value.find((e) => e.id === task.workflow_exec_id)
     if (!exec) return
-    const idx = exec.tasks?.findIndex(t => t.id === task.id) ?? -1
+    const idx = exec.tasks?.findIndex((t) => t.id === task.id) ?? -1
     if (idx >= 0) {
       exec.tasks[idx] = { ...exec.tasks[idx], ...task }
     } else {
@@ -75,7 +73,7 @@ export const useExecutionStore = defineStore('executions', () => {
     ;(taskLogs.value[ev.task_exec_id] ??= []).push(ev.entry)
     // Also append to the in-memory task
     for (const exec of executions.value) {
-      const task = exec.tasks?.find(t => t.id === ev.task_exec_id)
+      const task = exec.tasks?.find((t) => t.id === ev.task_exec_id)
       if (task) {
         task.logs ??= []
         task.logs.push(ev.entry)
@@ -86,7 +84,7 @@ export const useExecutionStore = defineStore('executions', () => {
 
   // ── Internal helpers ────────────────────────────────────
   function upsert(exec: WorkflowExecution) {
-    const idx = executions.value.findIndex(e => e.id === exec.id)
+    const idx = executions.value.findIndex((e) => e.id === exec.id)
     if (idx >= 0) {
       executions.value[idx] = { ...executions.value[idx], ...exec }
     } else {

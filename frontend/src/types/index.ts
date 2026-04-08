@@ -1,6 +1,14 @@
 // Core domain types matching the Go backend models
 
-export type TaskStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'retrying' | 'skipped' | 'dead_letter'
+export type TaskStatus =
+  | 'pending'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'retrying'
+  | 'skipped'
+  | 'dead_letter'
 export type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
 
 export interface RetryPolicy {
