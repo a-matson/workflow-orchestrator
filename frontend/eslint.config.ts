@@ -1,14 +1,20 @@
 import * as globals from 'globals'
+import js from '@eslint/js'
+import ts from 'typescript-eslint'
+import vue from 'eslint-plugin-vue'
+import vueParser from 'vue-eslint-parser'
 import { defineConfig } from 'eslint/config'
-import tsParser from '@typescript-eslint/parser'
 
 export default defineConfig([
-  // Base for JS/TS files
+  // Base configs (replace "extends")
+  js.configs.recommended,
+  ...ts.configs.recommended,
+
+  // JS/TS files
   {
     files: ['**/*.{ts,tsx,js,jsx}'],
-    extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
     languageOptions: {
-      parser: tsParser,
+      parser: ts.parser,
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
@@ -22,29 +28,27 @@ export default defineConfig([
       ],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
       'prefer-const': 'error',
       'no-var': 'error',
     },
   },
 
-  // Vue files
+  // Vue config (replace extends)
+  ...vue.configs['flat/recommended'],
+
   {
     files: ['**/*.vue'],
     languageOptions: {
-      parser: 'vue-eslint-parser',
+      parser: vueParser,
       parserOptions: {
-        parser: tsParser,
+        parser: ts.parser,
         extraFileExtensions: ['.vue'],
         ecmaVersion: 2022,
         sourceType: 'module',
       },
     },
-    extends: ['plugin:vue/flat/recommended'],
     rules: {
-      // **Disable TS unused-vars completely for Vue**
       '@typescript-eslint/no-unused-vars': 'off',
-      // Use Vue-aware rule
       'vue/no-unused-vars': 'error',
       'vue/multi-word-component-names': 'off',
       'vue/html-self-closing': [
