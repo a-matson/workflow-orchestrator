@@ -28,14 +28,17 @@ export default defineConfig({
 		sourcemap: true,
 		rollupOptions: {
 			output: {
-				manualChunks: {
-					'vue-vendor': ['vue', 'vue-router', 'pinia'],
-					vueflow: [
-						'@vue-flow/core',
-						'@vue-flow/background',
-						'@vue-flow/controls',
-						'@vue-flow/minimap',
-					],
+				manualChunks: (id) => {
+					if (
+						id.includes('node_modules/vue') ||
+						id.includes('node_modules/vue-router') ||
+						id.includes('node_modules/pinia')
+					) {
+						return 'vue-vendor'
+					}
+					if (id.includes('node_modules/@vue-flow')) {
+						return 'vueflow'
+					}
 				},
 			},
 		},
