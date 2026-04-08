@@ -4,8 +4,8 @@ import { useWebSocketStore } from '../stores/websocket'
 import type { LogEntry, WorkflowExecution } from '../types'
 
 export interface UseTaskLogsOptions {
-  taskExecId?: string
-  autoRefresh?: boolean
+	taskExecId?: string
+	autoRefresh?: boolean
 }
 
 /**
@@ -13,143 +13,143 @@ export interface UseTaskLogsOptions {
  * Combines static logs from the API with streaming entries from WS events.
  */
 export function useTaskLogs(
-  execution: () => WorkflowExecution | null,
-  // options: UseTaskLogsOptions = {},
+	execution: () => WorkflowExecution | null,
+	// options: UseTaskLogsOptions = {},
 ) {
-  const staticLogs = ref<Array<LogEntry & { _taskId: string; _taskName: string }>>([])
-  const loading = ref(false)
-  const error = ref<string | null>(null)
-  const autoScroll = ref(true)
+	const staticLogs = ref<Array<LogEntry & { _taskId: string; _taskName: string }>>([])
+	const loading = ref(false)
+	const error = ref<string | null>(null)
+	const autoScroll = ref(true)
 
-  const wsStore = useWebSocketStore()
+	const wsStore = useWebSocketStore()
 
-  // Build enriched log list from all tasks in the execution
-  const allLogs = computed(() => {
-    const exec = execution()
-    if (!exec) return staticLogs.value
+	// Build enriched log list from all tasks in the execution
+	const allLogs = computed(() => {
+		const exec = execution()
+		if (!exec) return staticLogs.value
 
-    const fromTasks: Array<LogEntry & { _taskId: string; _taskName: string }> = []
-    for (const task of exec.tasks ?? []) {
-      for (const log of task.logs ?? []) {
-        fromTasks.push({ ...log, _taskId: task.id, _taskName: task.task_name })
-      }
-    }
+		const fromTasks: Array<LogEntry & { _taskId: string; _taskName: string }> = []
+		for (const task of exec.tasks ?? []) {
+			for (const log of task.logs ?? []) {
+				fromTasks.push({ ...log, _taskId: task.id, _taskName: task.task_name })
+			}
+		}
 
-    // Merge static (API-fetched) and task-embedded logs, deduplicate by timestamp+message
-    const merged = [...fromTasks, ...staticLogs.value]
-    const seen = new Set<string>()
-    return merged
-      .filter((l) => {
-        const key = `${l.timestamp}:${l.message}:${l._taskId}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-  })
+		// Merge static (API-fetched) and task-embedded logs, deduplicate by timestamp+message
+		const merged = [...fromTasks, ...staticLogs.value]
+		const seen = new Set<string>()
+		return merged
+			.filter((l) => {
+				const key = `${l.timestamp}:${l.message}:${l._taskId}`
+				if (seen.has(key)) return false
+				seen.add(key)
+				return true
+			})
+			.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+	})
 
-  // const filteredLogs = ref<typeof allLogs.value>([])
+	// const filteredLogs = ref<typeof allLogs.value>([])
 
-  // Level filter
-  const levelFilter = ref<'all' | 'info' | 'warn' | 'error' | 'debug'>('all')
-  const searchQuery = ref('')
-  const taskFilter = ref<string>('')
+	// Level filter
+	const levelFilter = ref<'all' | 'info' | 'warn' | 'error' | 'debug'>('all')
+	const searchQuery = ref('')
+	const taskFilter = ref<string>('')
 
-  const displayLogs = computed(() => {
-    return allLogs.value.filter((l) => {
-      if (levelFilter.value !== 'all' && l.level !== levelFilter.value) return false
-      if (taskFilter.value && l._taskId !== taskFilter.value) return false
-      if (searchQuery.value) {
-        const q = searchQuery.value.toLowerCase()
-        return (
-          l.message?.toLowerCase().includes(q) ||
-          l._taskName?.toLowerCase().includes(q) ||
-          JSON.stringify(l.fields ?? {})
-            .toLowerCase()
-            .includes(q)
-        )
-      }
-      return true
-    })
-  })
+	const displayLogs = computed(() => {
+		return allLogs.value.filter((l) => {
+			if (levelFilter.value !== 'all' && l.level !== levelFilter.value) return false
+			if (taskFilter.value && l._taskId !== taskFilter.value) return false
+			if (searchQuery.value) {
+				const q = searchQuery.value.toLowerCase()
+				return (
+					l.message?.toLowerCase().includes(q) ||
+					l._taskName?.toLowerCase().includes(q) ||
+					JSON.stringify(l.fields ?? {})
+						.toLowerCase()
+						.includes(q)
+				)
+			}
+			return true
+		})
+	})
 
-  // Fetch logs from API for a specific task
-  async function fetchTaskLogs(taskExecId: string) {
-    loading.value = true
-    error.value = null
-    try {
-      const res = await api.get<{ logs: LogEntry[]; task_id: string }>(
-        `/api/tasks/${taskExecId}/logs`,
-      )
-      const exec = execution()
-      const task = exec?.tasks.find((t) => t.id === taskExecId)
-      const enriched = (res.logs ?? []).map((l) => ({
-        ...l,
-        _taskId: taskExecId,
-        _taskName: task?.task_name ?? taskExecId,
-      }))
-      // Merge into static logs
-      staticLogs.value = [...staticLogs.value.filter((l) => l._taskId !== taskExecId), ...enriched]
-    } catch (e) {
-      error.value = `Failed to fetch logs: ${e}`
-    } finally {
-      loading.value = false
-    }
-  }
+	// Fetch logs from API for a specific task
+	async function fetchTaskLogs(taskExecId: string) {
+		loading.value = true
+		error.value = null
+		try {
+			const res = await api.get<{ logs: LogEntry[]; task_id: string }>(
+				`/api/tasks/${taskExecId}/logs`,
+			)
+			const exec = execution()
+			const task = exec?.tasks.find((t) => t.id === taskExecId)
+			const enriched = (res.logs ?? []).map((l) => ({
+				...l,
+				_taskId: taskExecId,
+				_taskName: task?.task_name ?? taskExecId,
+			}))
+			// Merge into static logs
+			staticLogs.value = [...staticLogs.value.filter((l) => l._taskId !== taskExecId), ...enriched]
+		} catch (e) {
+			error.value = `Failed to fetch logs: ${e}`
+		} finally {
+			loading.value = false
+		}
+	}
 
-  // Watch for new log entries arriving via WS
-  const unwatch = watch(
-    () => wsStore.eventLog,
-    (log) => {
-      const latest = log[0]
-      if (latest?.type === 'task.log') {
-        // Re-read from execution store (WS store already merged it in)
-        // displayLogs will automatically recompute from execution()
-      }
-    },
-    { deep: false },
-  )
+	// Watch for new log entries arriving via WS
+	const unwatch = watch(
+		() => wsStore.eventLog,
+		(log) => {
+			const latest = log[0]
+			if (latest?.type === 'task.log') {
+				// Re-read from execution store (WS store already merged it in)
+				// displayLogs will automatically recompute from execution()
+			}
+		},
+		{ deep: false },
+	)
 
-  onUnmounted(unwatch)
+	onUnmounted(unwatch)
 
-  function setLevelFilter(level: typeof levelFilter.value) {
-    levelFilter.value = level
-  }
-  function setTaskFilter(id: string) {
-    taskFilter.value = id
-  }
-  function setSearchQuery(q: string) {
-    searchQuery.value = q
-  }
+	function setLevelFilter(level: typeof levelFilter.value) {
+		levelFilter.value = level
+	}
+	function setTaskFilter(id: string) {
+		taskFilter.value = id
+	}
+	function setSearchQuery(q: string) {
+		searchQuery.value = q
+	}
 
-  function exportLogs(): string {
-    return displayLogs.value
-      .map((l) => {
-        const ts = new Date(l.timestamp).toISOString()
-        const fields = Object.keys(l.fields ?? {}).length ? ' ' + JSON.stringify(l.fields) : ''
-        return `[${ts}] ${l.level?.toUpperCase().padEnd(5)} [${l._taskName}] ${l.message}${fields}`
-      })
-      .join('\n')
-  }
+	function exportLogs(): string {
+		return displayLogs.value
+			.map((l) => {
+				const ts = new Date(l.timestamp).toISOString()
+				const fields = Object.keys(l.fields ?? {}).length ? ' ' + JSON.stringify(l.fields) : ''
+				return `[${ts}] ${l.level?.toUpperCase().padEnd(5)} [${l._taskName}] ${l.message}${fields}`
+			})
+			.join('\n')
+	}
 
-  function copyToClipboard() {
-    navigator.clipboard.writeText(exportLogs())
-  }
+	function copyToClipboard() {
+		navigator.clipboard.writeText(exportLogs())
+	}
 
-  return {
-    allLogs,
-    displayLogs,
-    loading,
-    error,
-    autoScroll,
-    levelFilter,
-    searchQuery,
-    taskFilter,
-    fetchTaskLogs,
-    setLevelFilter,
-    setTaskFilter,
-    setSearchQuery,
-    exportLogs,
-    copyToClipboard,
-  }
+	return {
+		allLogs,
+		displayLogs,
+		loading,
+		error,
+		autoScroll,
+		levelFilter,
+		searchQuery,
+		taskFilter,
+		fetchTaskLogs,
+		setLevelFilter,
+		setTaskFilter,
+		setSearchQuery,
+		exportLogs,
+		copyToClipboard,
+	}
 }
