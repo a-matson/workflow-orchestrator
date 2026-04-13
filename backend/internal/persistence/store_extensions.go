@@ -54,11 +54,16 @@ func (s *Store) GetExecutionByWorkflowAndStatus(ctx context.Context, workflowID 
 
 	exec := &models.WorkflowExecution{}
 	var payloadJSON, metaJSON []byte
+	var errorStr *string // Pointer to handle NULL
 	err := row.Scan(&exec.ID, &exec.WorkflowID, &exec.WorkflowName, &exec.Status,
 		&payloadJSON, &metaJSON, &exec.StartedAt, &exec.CompletedAt,
-		&exec.Error, &exec.CreatedAt, &exec.UpdatedAt)
+		&errorStr, &exec.CreatedAt, &exec.UpdatedAt)
 	if err != nil {
 		return nil, err
+	}
+
+	if errorStr != nil {
+		exec.Error = *errorStr
 	}
 
 	return exec, nil

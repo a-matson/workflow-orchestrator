@@ -155,11 +155,16 @@ func (s *Store) GetWorkflowExecution(ctx context.Context, id string) (*models.Wo
 
 	exec := &models.WorkflowExecution{}
 	var payloadJSON, metaJSON []byte
+	var errorStr *string
 	err := row.Scan(&exec.ID, &exec.WorkflowID, &exec.WorkflowName, &exec.Status,
 		&payloadJSON, &metaJSON, &exec.StartedAt, &exec.CompletedAt,
-		&exec.Error, &exec.CreatedAt, &exec.UpdatedAt)
+		&errorStr, &exec.CreatedAt, &exec.UpdatedAt)
 	if err != nil {
 		return nil, err
+	}
+
+	if errorStr != nil {
+		exec.Error = *errorStr
 	}
 
 	json.Unmarshal(payloadJSON, &exec.TriggerPayload)
@@ -188,9 +193,13 @@ func (s *Store) ListWorkflowExecutions(ctx context.Context, limit, offset int) (
 	var execs []*models.WorkflowExecution
 	for rows.Next() {
 		exec := &models.WorkflowExecution{}
+		var errorStr *string
 		if err := rows.Scan(&exec.ID, &exec.WorkflowID, &exec.WorkflowName, &exec.Status,
-			&exec.StartedAt, &exec.CompletedAt, &exec.Error, &exec.CreatedAt, &exec.UpdatedAt); err != nil {
+			&exec.StartedAt, &exec.CompletedAt, &errorStr, &exec.CreatedAt, &exec.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if errorStr != nil {
+			exec.Error = *errorStr
 		}
 		execs = append(execs, exec)
 	}
@@ -319,14 +328,22 @@ type scannable interface {
 func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 	task := &models.TaskExecution{}
 	var outputJSON, logsJSON, metaJSON []byte
+	var workerID, errorStr *string
 
 	err := row.Scan(
 		&task.ID, &task.WorkflowExecID, &task.TaskDefinitionID, &task.TaskName, &task.TaskType, &task.Status,
-		&task.RetryCount, &task.MaxRetries, &task.WorkerID, &task.QueuedAt, &task.StartedAt, &task.CompletedAt,
-		&task.NextRetryAt, &outputJSON, &task.Error, &logsJSON, &metaJSON, &task.CreatedAt, &task.UpdatedAt,
+		&task.RetryCount, &task.MaxRetries, &workerID, &task.QueuedAt, &task.StartedAt, &task.CompletedAt,
+		&task.NextRetryAt, &outputJSON, &errorStr, &logsJSON, &metaJSON, &task.CreatedAt, &task.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if workerID != nil {
+		task.WorkerID = *workerID
+	}
+	if errorStr != nil {
+		task.Error = *errorStr
 	}
 
 	if outputJSON != nil {
