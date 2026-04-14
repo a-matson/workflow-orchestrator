@@ -37,7 +37,9 @@ type Orchestrator struct {
 	metrics *Metrics
 }
 
-// ExecutionContext holds runtime state for an active workflow execution
+// ExecutionContext holds runtime state for one active workflow execution.
+// The mutex protects Completed/Running/Queued/Failed maps only.
+// Never call any method that re-acquires this mutex while holding it.
 type ExecutionContext struct {
 	Execution  *models.WorkflowExecution
 	Definition *models.WorkflowDefinition
@@ -47,7 +49,7 @@ type ExecutionContext struct {
 	Running    map[string]bool
 	Queued     map[string]bool
 	Failed     map[string]bool
-	mu         sync.RWMutex
+	mu         sync.Mutex
 }
 
 // EventBroadcaster sends real-time updates to connected WebSocket clients
@@ -125,11 +127,9 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
-
 		if err := o.store.CreateTaskExecution(ctx, taskExec); err != nil {
 			return nil, fmt.Errorf("creating task execution %s: %w", taskDef.ID, err)
 		}
-
 		taskMap[taskDef.ID] = taskExec
 		exec.Tasks = append(exec.Tasks, taskExec)
 	}
@@ -172,16 +172,9 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	o.metrics.WorkflowsStarted++
 	o.metrics.mu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{
-		Type:    models.WSEventWorkflowStarted,
-		Payload: exec,
-	})
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowStarted, Payload: exec})
 
-	log.Info().
-		Str("exec_id", exec.ID).
-		Str("workflow_id", def.ID).
-		Str("workflow_name", def.Name).
-		Msg("workflow execution started")
+	log.Info().Str("exec_id", exec.ID).Str("workflow", def.Name).Msg("workflow execution started")
 
 	// Dispatch first wave of tasks (those with no dependencies)
 	go o.dispatchReadyTasks(ctx, execCtx)
@@ -189,7 +182,11 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	return exec, nil
 }
 
-// dispatchReadyTasks finds all tasks whose dependencies are met and enqueues them
+// ── dispatchReadyTasks ─────────────────────────────────────────────────────
+// Acquires the execution context lock, finds all tasks whose dependencies are
+// satisfied, and enqueues them into Redis. Called after start and after each
+// successful task completion.
+
 func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *ExecutionContext) {
 	execCtx.mu.Lock()
 	defer execCtx.mu.Unlock()
@@ -202,6 +199,10 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 
 		// Acquire concurrency slot
 		sem := o.getSemaphore(execCtx.Execution.ID)
+		if sem == nil {
+			// Workflow already cleaned up (cancelled/completed race)
+			return
+		}
 		select {
 		case sem <- struct{}{}:
 		default:
@@ -243,27 +244,50 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 		taskExec.UpdatedAt = now
 
 		if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
-			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to persist task state")
+			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to persist task queued state")
 		}
 
 		o.metrics.mu.Lock()
 		o.metrics.TasksDispatched++
 		o.metrics.mu.Unlock()
 
-		o.broadcaster.Broadcast(models.WebSocketEvent{
-			Type:    models.WSEventTaskQueued,
-			Payload: taskExec,
-		})
-
-		log.Info().
-			Str("task_exec_id", taskExec.ID).
-			Str("task_name", taskDef.Name).
-			Str("workflow_exec_id", execCtx.Execution.ID).
-			Msg("task dispatched to queue")
+		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskQueued, Payload: taskExec})
+		log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskDef.Name).Msg("task dispatched")
 	}
 }
 
-// ProcessResult handles a task completion result from a worker
+// Called by the worker (via the API or directly) when it picks up a task.
+// Moves the task from Queued → Running so dispatchReadyTasks knows the slot
+// is actively occupied and the task won't be re-dispatched.
+func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error {
+	taskExec, err := o.store.GetTaskExecution(ctx, taskExecID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	taskExec.Status = models.TaskStatusRunning
+	taskExec.WorkerID = workerID
+	taskExec.StartedAt = &now
+	taskExec.UpdatedAt = now
+	if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
+		return err
+	}
+
+	o.activeMu.RLock()
+	execCtx, ok := o.active[taskExec.WorkflowExecID]
+	o.activeMu.RUnlock()
+	if ok {
+		execCtx.mu.Lock()
+		execCtx.Running[taskExec.TaskDefinitionID] = true
+		delete(execCtx.Queued, taskExec.TaskDefinitionID)
+		execCtx.mu.Unlock()
+	}
+
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskStarted, Payload: taskExec})
+	return nil
+}
+
 func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskResult) error {
 	o.activeMu.RLock()
 	execCtx, exists := o.active[result.WorkflowExecID]
@@ -282,11 +306,13 @@ func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskRes
 	// Determine task definition ID from task exec
 	taskDefID := taskExec.TaskDefinitionID
 
-	// Release concurrency slot
+	// Release the concurrency slot so the next task can be dispatched
 	sem := o.getSemaphore(result.WorkflowExecID)
-	select {
-	case <-sem:
-	default:
+	if sem != nil {
+		select {
+		case <-sem:
+		default:
+		}
 	}
 
 	if result.Success {
@@ -311,32 +337,30 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 		return fmt.Errorf("persisting task completion: %w", err)
 	}
 
-	// Mark idempotency key as processed
-	_ = o.redis.SetIdempotency(ctx, fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount), 24*time.Hour)
+	// Mark idempotency so re-delivered messages are no-ops
+	_ = o.redis.SetIdempotency(ctx,
+		fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
+		24*time.Hour)
 
+	// Update in-memory state — acquire lock, update maps, release, then act
 	execCtx.mu.Lock()
 	execCtx.Completed[taskDefID] = true
 	delete(execCtx.Running, taskDefID)
 	delete(execCtx.Queued, taskDefID)
+	totalTasks := len(execCtx.Graph.Nodes)
+	completedCount := len(execCtx.Completed)
 	execCtx.mu.Unlock()
+	// Lock is now released — safe to call other methods
 
 	o.metrics.mu.Lock()
 	o.metrics.TasksCompleted++
 	o.metrics.mu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{
-		Type:    models.WSEventTaskCompleted,
-		Payload: taskExec,
-	})
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskCompleted, Payload: taskExec})
+	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskExec.TaskName).Msg("task completed")
 
-	log.Info().
-		Str("task_exec_id", taskExec.ID).
-		Str("task_name", taskExec.TaskName).
-		Str("worker_id", result.WorkerID).
-		Msg("task completed successfully")
-
-	// Check if all tasks are done
-	if o.isWorkflowComplete(execCtx) {
+	// Check completion and dispatch next wave without holding any lock
+	if completedCount == totalTasks {
 		return o.completeWorkflow(ctx, execCtx, false)
 	}
 
@@ -348,7 +372,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *ExecutionContext, taskExec *models.TaskExecution, taskDefID string, result *models.TaskResult) error {
 	now := time.Now()
 
-	// Get retry policy
+	// Resolve retry policy
 	var policy *models.RetryPolicy
 	if node, ok := execCtx.Graph.Nodes[taskDefID]; ok {
 		policy = node.Task.RetryPolicy
@@ -374,6 +398,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		}
 
 		// Schedule retry in Redis
+		taskDef := execCtx.Graph.Nodes[taskDefID].Task
 		msg := &models.TaskMessage{
 			TaskExecID:       taskExec.ID,
 			WorkflowExecID:   execCtx.Execution.ID,
@@ -381,8 +406,10 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 			TaskDefinitionID: taskDefID,
 			TaskName:         taskExec.TaskName,
 			TaskType:         taskExec.TaskType,
+			Config:           taskDef.Config,
 			RetryCount:       taskExec.RetryCount,
 			MaxRetries:       taskExec.MaxRetries,
+			Timeout:          taskDef.Timeout,
 			IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
 		}
 
@@ -394,10 +421,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		o.metrics.TasksRetried++
 		o.metrics.mu.Unlock()
 
-		o.broadcaster.Broadcast(models.WebSocketEvent{
-			Type:    models.WSEventTaskRetrying,
-			Payload: taskExec,
-		})
+		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskRetrying, Payload: taskExec})
 
 		execCtx.mu.Lock()
 		delete(execCtx.Queued, taskDefID)
@@ -405,7 +429,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		execCtx.mu.Unlock()
 
 	} else {
-		// No more retries — dead letter
+		// Exhausted retries → dead letter
 		taskExec.Status = models.TaskStatusDeadLetter
 		taskExec.UpdatedAt = now
 		_ = o.store.UpdateTaskExecution(ctx, taskExec)
@@ -426,24 +450,13 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		o.metrics.TasksDeadLettered++
 		o.metrics.mu.Unlock()
 
-		o.broadcaster.Broadcast(models.WebSocketEvent{
-			Type:    models.WSEventTaskFailed,
-			Payload: taskExec,
-		})
+		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskFailed, Payload: taskExec})
 
 		// Fail the entire workflow
 		return o.completeWorkflow(ctx, execCtx, true)
 	}
 
 	return nil
-}
-
-func (o *Orchestrator) isWorkflowComplete(execCtx *ExecutionContext) bool {
-	execCtx.mu.RLock()
-	defer execCtx.mu.RUnlock()
-
-	totalTasks := len(execCtx.Graph.Nodes)
-	return len(execCtx.Completed) == totalTasks
 }
 
 func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionContext, failed bool) error {
@@ -480,18 +493,12 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	delete(o.semaphores, execCtx.Execution.ID)
 	o.semMu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{
-		Type:    evtType,
-		Payload: execCtx.Execution,
-	})
-
-	log.Info().
-		Str("exec_id", execCtx.Execution.ID).
-		Str("status", string(execCtx.Execution.Status)).
-		Msg("workflow execution completed")
-
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: evtType, Payload: execCtx.Execution})
+	log.Info().Str("exec_id", execCtx.Execution.ID).Str("status", string(execCtx.Execution.Status)).Msg("workflow finished")
 	return nil
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 func (o *Orchestrator) getSemaphore(workflowExecID string) chan struct{} {
 	o.semMu.Lock()
@@ -503,58 +510,20 @@ func (o *Orchestrator) handleOrphanedResult(ctx context.Context, result *models.
 	log.Warn().
 		Str("task_exec_id", result.TaskExecID).
 		Str("workflow_exec_id", result.WorkflowExecID).
-		Msg("received result for non-active workflow — reloading from DB")
+		Msg("result for non-active workflow — checking DB")
 
-	// Reload state from database (after restart recovery)
 	exec, err := o.store.GetWorkflowExecution(ctx, result.WorkflowExecID)
 	if err != nil {
 		return fmt.Errorf("reloading workflow execution: %w", err)
 	}
 
 	if exec.Status == models.WorkflowStatusCompleted || exec.Status == models.WorkflowStatusFailed {
-		return nil // Already done
+		return nil
 	}
-
-	// TODO: Full state reconstruction from DB for crash recovery
 	log.Info().Str("exec_id", exec.ID).Msg("workflow state reloaded from DB")
 	return nil
 }
 
-// MarkTaskRunning updates task state when a worker picks it up
-func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error {
-	taskExec, err := o.store.GetTaskExecution(ctx, taskExecID)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	taskExec.Status = models.TaskStatusRunning
-	taskExec.WorkerID = workerID
-	taskExec.StartedAt = &now
-	taskExec.UpdatedAt = now
-
-	if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
-		return err
-	}
-
-	o.activeMu.RLock()
-	if execCtx, ok := o.active[taskExec.WorkflowExecID]; ok {
-		execCtx.mu.Lock()
-		execCtx.Running[taskExec.TaskDefinitionID] = true
-		delete(execCtx.Queued, taskExec.TaskDefinitionID)
-		execCtx.mu.Unlock()
-	}
-	o.activeMu.RUnlock()
-
-	o.broadcaster.Broadcast(models.WebSocketEvent{
-		Type:    models.WSEventTaskStarted,
-		Payload: taskExec,
-	})
-
-	return nil
-}
-
-// GetMetrics returns current orchestrator metrics
 func (o *Orchestrator) GetMetrics() map[string]int64 {
 	o.metrics.mu.Lock()
 	defer o.metrics.mu.Unlock()

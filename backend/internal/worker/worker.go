@@ -19,12 +19,19 @@ import (
 	"github.com/workflow-platform/backend/internal/persistence"
 )
 
+// TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
+// Using an interface avoids a circular import between worker and orchestrator packages.
+type TaskNotifier interface {
+	MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error
+}
+
 // Worker pulls tasks from Redis, executes them using the config provided by the
 // frontend, and publishes results back. All execution is driven by msg.Config
 // which flows directly from the task definition saved in DB.
 type Worker struct {
 	id          string
 	redis       *persistence.RedisClient
+	notifier    TaskNotifier // optional: notifies orchestrator when a task starts
 	concurrency int
 	semaphore   chan struct{}
 	httpClient  *http.Client
@@ -37,11 +44,16 @@ type Pool struct {
 }
 
 func NewPool(redis *persistence.RedisClient, workerCount, concurrencyPerWorker int) *Pool {
+	return NewPoolWithNotifier(redis, workerCount, concurrencyPerWorker, nil)
+}
+
+func NewPoolWithNotifier(redis *persistence.RedisClient, workerCount, concurrencyPerWorker int, notifier TaskNotifier) *Pool {
 	workers := make([]*Worker, workerCount)
 	for i := 0; i < workerCount; i++ {
 		workers[i] = &Worker{
 			id:          fmt.Sprintf("worker-%s", uuid.New().String()[:8]),
 			redis:       redis,
+			notifier:    notifier,
 			concurrency: concurrencyPerWorker,
 			semaphore:   make(chan struct{}, concurrencyPerWorker),
 			httpClient: &http.Client{
@@ -149,6 +161,15 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		"task_name": msg.TaskName,
 		"retry":     msg.RetryCount,
 	})
+
+	// Notify the orchestrator that this task is now running.
+	// This moves it from Queued→Running in the in-memory state so that
+	// dispatchReadyTasks correctly accounts for in-flight tasks.
+	if w.notifier != nil {
+		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id); err != nil {
+			log.Warn().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to mark task running")
+		}
+	}
 
 	output, execErr := w.dispatch(taskCtx, msg, addLog)
 
