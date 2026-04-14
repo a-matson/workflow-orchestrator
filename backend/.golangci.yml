@@ -45,7 +45,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/a-matson/go-vue-DAG-orchestrator
+        - github.com/a-matson/workflow-orchestrator
 
 issues:
   max-same-issues: 0

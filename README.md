@@ -5,7 +5,7 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/a-matson/go-vue-DAG-orchestrator && cd fluxor
+git clone https://github.com/a-matson/workflow-orchestrator && cd fluxor
 cd frontend && npm install && npm run build && cd ..
 docker compose up -d
 BASE_URL=http://localhost:8080 ./examples/smoke-test.sh
