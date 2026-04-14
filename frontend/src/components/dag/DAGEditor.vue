@@ -496,13 +496,13 @@
 	defineExpose({
 		loadWorkflow(wfName: string, tasks: TaskDefinition[]) {
 			workflowName.value = wfName
-			nodes.value = tasks.map((t, i) => ({
+			nodes.value = tasks?.map((t, i) => ({
 				id: t.id,
 				type: 'taskNode' as const,
 				position: { x: 120 + (i % 3) * 240, y: Math.floor(i / 3) * 160 + 60 },
 				data: { taskDef: { ...t } },
 			}))
-			edges.value = tasks.flatMap((t) =>
+			edges.value = tasks?.flatMap((t) =>
 				(t.dependencies ?? []).map((dep) => ({
 					id: `e-${dep}-${t.id}`,
 					source: dep,
