@@ -9,13 +9,13 @@ import (
 type TaskStatus string
 
 const (
-	TaskStatusPending   TaskStatus = "pending"
-	TaskStatusQueued    TaskStatus = "queued"
-	TaskStatusRunning   TaskStatus = "running"
-	TaskStatusCompleted TaskStatus = "completed"
-	TaskStatusFailed    TaskStatus = "failed"
-	TaskStatusRetrying  TaskStatus = "retrying"
-	TaskStatusSkipped   TaskStatus = "skipped"
+	TaskStatusPending    TaskStatus = "pending"
+	TaskStatusQueued     TaskStatus = "queued"
+	TaskStatusRunning    TaskStatus = "running"
+	TaskStatusCompleted  TaskStatus = "completed"
+	TaskStatusFailed     TaskStatus = "failed"
+	TaskStatusRetrying   TaskStatus = "retrying"
+	TaskStatusSkipped    TaskStatus = "skipped"
 	TaskStatusDeadLetter TaskStatus = "dead_letter"
 )
 
@@ -85,50 +85,50 @@ type WorkflowExecution struct {
 
 // TaskExecution tracks the runtime state of a single task
 type TaskExecution struct {
-	ID              string            `json:"id"`
-	WorkflowExecID  string            `json:"workflow_exec_id"`
-	TaskDefinitionID string           `json:"task_definition_id"`
-	TaskName        string            `json:"task_name"`
-	TaskType        string            `json:"task_type"`
-	Status          TaskStatus        `json:"status"`
-	RetryCount      int               `json:"retry_count"`
-	MaxRetries      int               `json:"max_retries"`
-	WorkerID        string            `json:"worker_id,omitempty"`
-	QueuedAt        *time.Time        `json:"queued_at,omitempty"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
-	NextRetryAt     *time.Time        `json:"next_retry_at,omitempty"`
-	Output          json.RawMessage   `json:"output,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	Logs            []LogEntry        `json:"logs,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
-	Duration        *time.Duration    `json:"duration,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	ID               string            `json:"id"`
+	WorkflowExecID   string            `json:"workflow_exec_id"`
+	TaskDefinitionID string            `json:"task_definition_id"`
+	TaskName         string            `json:"task_name"`
+	TaskType         string            `json:"task_type"`
+	Status           TaskStatus        `json:"status"`
+	RetryCount       int               `json:"retry_count"`
+	MaxRetries       int               `json:"max_retries"`
+	WorkerID         string            `json:"worker_id,omitempty"`
+	QueuedAt         *time.Time        `json:"queued_at,omitempty"`
+	StartedAt        *time.Time        `json:"started_at,omitempty"`
+	CompletedAt      *time.Time        `json:"completed_at,omitempty"`
+	NextRetryAt      *time.Time        `json:"next_retry_at,omitempty"`
+	Output           json.RawMessage   `json:"output,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	Logs             []LogEntry        `json:"logs,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+	Duration         *time.Duration    `json:"duration,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 // LogEntry represents a single log line from a task execution
 type LogEntry struct {
-	Timestamp time.Time         `json:"timestamp"`
-	Level     string            `json:"level"`
-	Message   string            `json:"message"`
-	Fields    map[string]any    `json:"fields,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+	Level     string         `json:"level"`
+	Message   string         `json:"message"`
+	Fields    map[string]any `json:"fields,omitempty"`
 }
 
 // TaskMessage is what gets enqueued in Redis for workers
 type TaskMessage struct {
-	TaskExecID      string         `json:"task_exec_id"`
-	WorkflowExecID  string         `json:"workflow_exec_id"`
-	WorkflowID      string         `json:"workflow_id"`
-	TaskDefinitionID string        `json:"task_def_id"`
-	TaskName        string         `json:"task_name"`
-	TaskType        string         `json:"task_type"`
-	Config          map[string]any `json:"config"`
-	RetryCount      int            `json:"retry_count"`
-	MaxRetries      int            `json:"max_retries"`
-	Timeout         time.Duration  `json:"timeout"`
-	EnqueuedAt      time.Time      `json:"enqueued_at"`
-	IdempotencyKey  string         `json:"idempotency_key"`
+	TaskExecID       string         `json:"task_exec_id"`
+	WorkflowExecID   string         `json:"workflow_exec_id"`
+	WorkflowID       string         `json:"workflow_id"`
+	TaskDefinitionID string         `json:"task_def_id"`
+	TaskName         string         `json:"task_name"`
+	TaskType         string         `json:"task_type"`
+	Config           map[string]any `json:"config"`
+	RetryCount       int            `json:"retry_count"`
+	MaxRetries       int            `json:"max_retries"`
+	Timeout          time.Duration  `json:"timeout"`
+	EnqueuedAt       time.Time      `json:"enqueued_at"`
+	IdempotencyKey   string         `json:"idempotency_key"`
 }
 
 // TaskResult is what workers publish back

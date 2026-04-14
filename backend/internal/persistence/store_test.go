@@ -59,9 +59,15 @@ func TestStore_SaveAndGetWorkflowDefinition(t *testing.T) {
 		t.Fatalf("get failed: %v", err)
 	}
 
-	if got.ID != def.ID { t.Errorf("ID mismatch: %s != %s", got.ID, def.ID) }
-	if got.Name != def.Name { t.Errorf("Name mismatch") }
-	if len(got.Tasks) != 2 { t.Errorf("expected 2 tasks, got %d", len(got.Tasks)) }
+	if got.ID != def.ID {
+		t.Errorf("ID mismatch: %s != %s", got.ID, def.ID)
+	}
+	if got.Name != def.Name {
+		t.Errorf("Name mismatch")
+	}
+	if len(got.Tasks) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(got.Tasks))
+	}
 }
 
 func TestStore_SaveWorkflowDefinition_Upsert(t *testing.T) {
@@ -268,7 +274,10 @@ func TestStore_GetTasksReadyForRetry(t *testing.T) {
 	}
 	found := false
 	for _, r := range ready {
-		if r.ID == task.ID { found = true; break }
+		if r.ID == task.ID {
+			found = true
+			break
+		}
 	}
 	if !found {
 		t.Error("expected task to appear in retry queue")

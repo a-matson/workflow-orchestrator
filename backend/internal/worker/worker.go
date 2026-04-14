@@ -136,7 +136,6 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		defer cancel()
 	}
 
-	
 	locked, err := w.redis.AcquireTaskLock(taskCtx, msg.TaskExecID, 10*time.Minute)
 	if err != nil || !locked {
 		log.Warn().Str("task_exec_id", msg.TaskExecID).Msg("task already locked, skipping")
@@ -267,7 +266,11 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 	if err != nil {
 		return nil, fmt.Errorf("http_request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close response body")
+		}
+	}()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
@@ -323,7 +326,11 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	if err != nil {
 		return nil, fmt.Errorf("database_query: open: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close database connection")
+		}
+	}()
 	db.SetConnMaxLifetime(30 * time.Second)
 	db.SetMaxOpenConns(2)
 
@@ -336,7 +343,11 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	if err != nil {
 		return nil, fmt.Errorf("database_query: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close sql rows")
+		}
+	}()
 
 	cols, _ := rows.Columns()
 	var results []map[string]any
@@ -514,7 +525,11 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 	if err != nil {
 		return nil, fmt.Errorf("slack: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close response body")
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("slack: %d %s", resp.StatusCode, string(raw))
@@ -556,7 +571,11 @@ func (w *Worker) notifyPagerDuty(ctx context.Context, routingKey, message string
 	if err != nil {
 		return nil, fmt.Errorf("pagerduty: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close response body")
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("pagerduty: %d %s", resp.StatusCode, string(raw))
@@ -580,7 +599,11 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 	if err != nil {
 		return nil, fmt.Errorf("webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close response body")
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("webhook: %d %s", resp.StatusCode, truncate(string(raw), 200))

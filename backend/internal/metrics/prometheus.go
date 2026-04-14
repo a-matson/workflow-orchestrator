@@ -13,16 +13,16 @@ type Metrics struct {
 	WorkflowsCompleted prometheus.Counter
 	WorkflowsFailed    prometheus.Counter
 
-	TasksDispatched  prometheus.Counter
-	TasksCompleted   prometheus.Counter
-	TasksFailed      prometheus.Counter
-	TasksRetried     prometheus.Counter
+	TasksDispatched   prometheus.Counter
+	TasksCompleted    prometheus.Counter
+	TasksFailed       prometheus.Counter
+	TasksRetried      prometheus.Counter
 	TasksDeadLettered prometheus.Counter
 
-	ActiveWorkflows  prometheus.Gauge
-	QueueDepth       prometheus.Gauge
-	RetryQueueDepth  prometheus.Gauge
-	WSClients        prometheus.Gauge
+	ActiveWorkflows prometheus.Gauge
+	QueueDepth      prometheus.Gauge
+	RetryQueueDepth prometheus.Gauge
+	WSClients       prometheus.Gauge
 
 	TaskDuration prometheus.Histogram
 }

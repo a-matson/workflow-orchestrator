@@ -145,7 +145,10 @@ func TestRedis_RetryScheduling(t *testing.T) {
 	}
 	found := false
 	for _, m := range msgs {
-		if m.TaskExecID == msg.TaskExecID { found = true; break }
+		if m.TaskExecID == msg.TaskExecID {
+			found = true
+			break
+		}
 	}
 	if found {
 		t.Error("task should not be ready yet")
@@ -157,7 +160,10 @@ func TestRedis_RetryScheduling(t *testing.T) {
 	msgs, _ = client.PopDueRetries(ctx)
 	found = false
 	for _, m := range msgs {
-		if m.TaskExecID == msg.TaskExecID { found = true; break }
+		if m.TaskExecID == msg.TaskExecID {
+			found = true
+			break
+		}
 	}
 	if !found {
 		t.Error("task should be ready after 1s")

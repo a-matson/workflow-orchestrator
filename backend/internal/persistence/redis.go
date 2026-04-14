@@ -11,14 +11,14 @@ import (
 )
 
 const (
-	TaskQueueKey       = "workflow:tasks:queue"
-	ResultQueueKey     = "workflow:results:queue"
-	RetryZSetKey       = "workflow:tasks:retry"
-	DeadLetterKey      = "workflow:tasks:dead_letter"
-	WorkflowStateKey   = "workflow:state:%s"
-	TaskLockKey        = "workflow:task:lock:%s"
-	IdempotencyKey     = "workflow:idempotency:%s"
-	MetricsKey         = "workflow:metrics"
+	TaskQueueKey     = "workflow:tasks:queue"
+	ResultQueueKey   = "workflow:results:queue"
+	RetryZSetKey     = "workflow:tasks:retry"
+	DeadLetterKey    = "workflow:tasks:dead_letter"
+	WorkflowStateKey = "workflow:state:%s"
+	TaskLockKey      = "workflow:task:lock:%s"
+	IdempotencyKey   = "workflow:idempotency:%s"
+	MetricsKey       = "workflow:metrics"
 )
 
 // RedisClient wraps go-redis for workflow broker operations

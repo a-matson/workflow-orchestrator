@@ -104,7 +104,7 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 
 		case models.TaskStatusFailed, models.TaskStatusDeadLetter:
 			failed[task.TaskDefinitionID] = true
-			
+
 		case models.TaskStatusPending, models.TaskStatusSkipped:
 			// Do nothing, handled by regular DAG progression
 		}

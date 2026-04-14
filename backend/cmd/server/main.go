@@ -47,14 +47,14 @@ func main() {
 	defer cancel()
 
 	// ── Configuration ────────────────────────────────────────────
-	postgresURL   := getEnv("POSTGRES_URL",   "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable")
-	redisAddr     := getEnv("REDIS_ADDR",     "localhost:6379")
+	postgresURL := getEnv("POSTGRES_URL", "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable")
+	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
-	httpAddr      := getEnv("HTTP_ADDR",      ":8080")
-	grpcAddr      := getEnv("GRPC_ADDR",      ":9090")
-	metricsAddr   := getEnv("METRICS_ADDR",   ":9091")
-	workerCount   := getEnvInt("WORKER_COUNT",       3)
-	workerConc    := getEnvInt("WORKER_CONCURRENCY", 5)
+	httpAddr := getEnv("HTTP_ADDR", ":8080")
+	grpcAddr := getEnv("GRPC_ADDR", ":9090")
+	metricsAddr := getEnv("METRICS_ADDR", ":9091")
+	workerCount := getEnvInt("WORKER_COUNT", 3)
+	workerConc := getEnvInt("WORKER_CONCURRENCY", 5)
 
 	// ── Prometheus ───────────────────────────────────────────────
 	reg := prometheus.NewRegistry()
@@ -103,9 +103,9 @@ func main() {
 
 	// ── Background services ───────────────────────────────────────
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
-	retryPoller     := scheduler.NewRetryPoller(redisClient, orch)
-	workerPool      := worker.NewPool(redisClient, workerCount, workerConc)
-	watchdog        := worker.NewTaskWatchdog(redisClient)
+	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
+	workerPool := worker.NewPool(redisClient, workerCount, workerConc)
+	watchdog := worker.NewTaskWatchdog(redisClient)
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
@@ -114,7 +114,7 @@ func main() {
 
 	// ── HTTP server ───────────────────────────────────────────────
 	handler := api.NewHandler(store, redisClient, orch, hub)
-	rawMux  := handler.Routes()
+	rawMux := handler.Routes()
 
 	// Compose middleware chain
 	rateLimiter := api.NewRateLimiter(200, time.Minute)

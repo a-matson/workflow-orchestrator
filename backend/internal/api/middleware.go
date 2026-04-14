@@ -144,11 +144,11 @@ func CORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 
 // RateLimiter provides a simple token bucket per IP for DOS protection.
 type RateLimiter struct {
-	mu       sync.Mutex
-	clients  map[string]*tokenBucket
-	rate     int           // requests per window
-	window   time.Duration // time window
-	cleanup  time.Duration
+	mu      sync.Mutex
+	clients map[string]*tokenBucket
+	rate    int           // requests per window
+	window  time.Duration // time window
+	cleanup time.Duration
 }
 
 type tokenBucket struct {

@@ -66,10 +66,18 @@ func TestParse_Diamond(t *testing.T) {
 		}
 		return -1
 	}
-	if pos("a") >= pos("b") { t.Error("a must precede b") }
-	if pos("a") >= pos("c") { t.Error("a must precede c") }
-	if pos("b") >= pos("d") { t.Error("b must precede d") }
-	if pos("c") >= pos("d") { t.Error("c must precede d") }
+	if pos("a") >= pos("b") {
+		t.Error("a must precede b")
+	}
+	if pos("a") >= pos("c") {
+		t.Error("a must precede c")
+	}
+	if pos("b") >= pos("d") {
+		t.Error("b must precede d")
+	}
+	if pos("c") >= pos("d") {
+		t.Error("c must precede d")
+	}
 }
 
 func TestParse_CycleDetected(t *testing.T) {

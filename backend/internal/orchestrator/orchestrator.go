@@ -21,14 +21,14 @@ import (
 // - Processes results and advances workflows
 // - Handles retries and dead-lettering
 type Orchestrator struct {
-	store        *persistence.Store
-	redis        *persistence.RedisClient
-	retryMgr     *retry.Manager
-	broadcaster  EventBroadcaster
+	store       *persistence.Store
+	redis       *persistence.RedisClient
+	retryMgr    *retry.Manager
+	broadcaster EventBroadcaster
 
 	// In-memory state for active executions (keyed by workflow exec ID)
-	activeMu   sync.RWMutex
-	active     map[string]*ExecutionContext
+	activeMu sync.RWMutex
+	active   map[string]*ExecutionContext
 
 	// Concurrency semaphore per workflow (max parallel tasks)
 	semaphores map[string]chan struct{}
@@ -39,15 +39,15 @@ type Orchestrator struct {
 
 // ExecutionContext holds runtime state for an active workflow execution
 type ExecutionContext struct {
-	Execution    *models.WorkflowExecution
-	Definition   *models.WorkflowDefinition
-	Graph        *dag.Graph
-	TaskMap      map[string]*models.TaskExecution // taskDefID -> TaskExecution
-	Completed    map[string]bool
-	Running      map[string]bool
-	Queued       map[string]bool
-	Failed       map[string]bool
-	mu           sync.RWMutex
+	Execution  *models.WorkflowExecution
+	Definition *models.WorkflowDefinition
+	Graph      *dag.Graph
+	TaskMap    map[string]*models.TaskExecution // taskDefID -> TaskExecution
+	Completed  map[string]bool
+	Running    map[string]bool
+	Queued     map[string]bool
+	Failed     map[string]bool
+	mu         sync.RWMutex
 }
 
 // EventBroadcaster sends real-time updates to connected WebSocket clients
@@ -57,15 +57,15 @@ type EventBroadcaster interface {
 
 // Metrics tracks orchestrator performance
 type Metrics struct {
-	WorkflowsStarted    int64
-	WorkflowsCompleted  int64
-	WorkflowsFailed     int64
-	TasksDispatched     int64
-	TasksCompleted      int64
-	TasksFailed         int64
-	TasksRetried        int64
-	TasksDeadLettered   int64
-	mu                  sync.Mutex
+	WorkflowsStarted   int64
+	WorkflowsCompleted int64
+	WorkflowsFailed    int64
+	TasksDispatched    int64
+	TasksCompleted     int64
+	TasksFailed        int64
+	TasksRetried       int64
+	TasksDeadLettered  int64
+	mu                 sync.Mutex
 }
 
 func NewOrchestrator(store *persistence.Store, redis *persistence.RedisClient, broadcaster EventBroadcaster) *Orchestrator {
