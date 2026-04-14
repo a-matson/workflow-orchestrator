@@ -95,7 +95,7 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 				task.WorkerID = ""
 				task.StartedAt = nil
 				task.UpdatedAt = time.Now()
-				o.store.UpdateTaskExecution(ctx, task) //nolint:errcheck — best-effort on recovery
+				o.store.UpdateTaskExecution(ctx, task) // nolint:errcheck // best-effort on recovery
 				queued[task.TaskDefinitionID] = true
 			}
 
@@ -104,6 +104,9 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 
 		case models.TaskStatusFailed, models.TaskStatusDeadLetter:
 			failed[task.TaskDefinitionID] = true
+			
+		case models.TaskStatusPending, models.TaskStatusSkipped:
+			// Do nothing, handled by regular DAG progression
 		}
 	}
 

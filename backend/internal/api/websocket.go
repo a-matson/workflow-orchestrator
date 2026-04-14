@@ -96,9 +96,9 @@ func (h *Hub) Run() {
 			// Ping all clients to detect dead connections
 			h.mu.RLock()
 			for client := range h.clients {
-				client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				_ = client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					client.conn.Close()
+					_ = client.conn.Close()
 				}
 			}
 			h.mu.RUnlock()
@@ -172,7 +172,7 @@ func (c *Client) writePump() {
 		case message, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -180,13 +180,16 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			_, err = w.Write(message)
+			if err != nil {
+				return
+			}
 
 			// Flush any buffered messages
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.send)
+				_, _ = w.Write([]byte{'\n'})
+				_, _ = w.Write(<-c.send)
 			}
 
 			if err := w.Close(); err != nil {
@@ -209,9 +212,9 @@ func (c *Client) readPump() {
 	}()
 
 	c.conn.SetReadLimit(4096)
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 

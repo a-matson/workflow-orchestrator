@@ -35,7 +35,7 @@ func (h *Heartbeat) Run(ctx context.Context) {
 	key := fmt.Sprintf("worker:heartbeat:%s", h.workerID)
 
 	// Publish immediately on start
-	h.redis.SetIdempotency(ctx, key, HeartbeatTTL)
+	_ = h.redis.SetIdempotency(ctx, key, HeartbeatTTL)
 	log.Info().Str("worker_id", h.workerID).Msg("worker heartbeat started")
 
 	for {

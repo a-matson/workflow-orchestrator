@@ -87,7 +87,7 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 			task.WorkerID = ""
 			task.StartedAt = nil
 			task.UpdatedAt = now
-			r.store.UpdateTaskExecution(ctx, task)
+			_ = r.store.UpdateTaskExecution(ctx, task)
 		}
 	}
 

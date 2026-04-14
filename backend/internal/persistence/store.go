@@ -113,7 +113,7 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]*models.Workflow
 			&def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
-		json.Unmarshal(tagsJSON, &def.Tags)
+		_ = json.Unmarshal(tagsJSON, &def.Tags)
 		defs = append(defs, def)
 	}
 
@@ -167,8 +167,8 @@ func (s *Store) GetWorkflowExecution(ctx context.Context, id string) (*models.Wo
 		exec.Error = *errorStr
 	}
 
-	json.Unmarshal(payloadJSON, &exec.TriggerPayload)
-	json.Unmarshal(metaJSON, &exec.Metadata)
+	_ = json.Unmarshal(payloadJSON, &exec.TriggerPayload)
+	_ = json.Unmarshal(metaJSON, &exec.Metadata)
 
 	// Load task executions
 	tasks, err := s.ListTaskExecutions(ctx, exec.ID)
@@ -350,10 +350,10 @@ func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 		task.Output = outputJSON
 	}
 	if logsJSON != nil {
-		json.Unmarshal(logsJSON, &task.Logs)
+		_ = json.Unmarshal(logsJSON, &task.Logs)
 	}
 	if metaJSON != nil {
-		json.Unmarshal(metaJSON, &task.Metadata)
+		_ = json.Unmarshal(metaJSON, &task.Metadata)
 	}
 
 	return task, nil

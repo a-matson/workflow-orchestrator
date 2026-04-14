@@ -1,6 +1,7 @@
 package retry_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func TestScheduleRetry_SetsNextRetryAt(t *testing.T) {
 
 	task := &models.TaskExecution{ID: "task-1", RetryCount: 0}
 	before := time.Now()
-	mgr.ScheduleRetry(nil, task, policy, "test error")
+	mgr.ScheduleRetry(context.TODO(), task, policy, "test error")
 	after := time.Now()
 
 	if task.NextRetryAt == nil {

@@ -127,7 +127,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		log.Warn().Str("task_exec_id", msg.TaskExecID).Msg("task already locked by another worker, skipping")
 		return
 	}
-	defer w.redis.ReleaseTaskLock(ctx, msg.TaskExecID)
+	defer func() { _ = w.redis.ReleaseTaskLock(ctx, msg.TaskExecID) }()
 
 	addLog("info", "Task execution started", map[string]any{
 		"worker_id": w.id,

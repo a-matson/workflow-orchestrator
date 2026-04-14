@@ -78,7 +78,7 @@ func main() {
 		log.Fatal().Err(err).Msg("Redis connection failed")
 	}
 	log.Info().Msg("Redis connected")
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	// ── PostgreSQL ───────────────────────────────────────────────
 	log.Info().Msg("connecting to PostgreSQL")
@@ -150,7 +150,8 @@ func main() {
 	grpcServer.Register(grpcSrv)
 
 	go func() {
-		lis, err := net.Listen("tcp", grpcAddr)
+		var lc net.ListenConfig
+		lis, err := lc.Listen(ctx, "tcp", grpcAddr)
 		if err != nil {
 			log.Fatal().Err(err).Str("addr", grpcAddr).Msg("gRPC listener failed")
 		}
@@ -161,6 +162,7 @@ func main() {
 	}()
 
 	// ── Graceful shutdown ─────────────────────────────────────────
+	logStartupBanner(httpAddr, grpcAddr, metricsAddr, workerCount, workerConc)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit

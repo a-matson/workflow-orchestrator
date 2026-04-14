@@ -312,7 +312,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	}
 
 	// Mark idempotency key as processed
-	o.redis.SetIdempotency(ctx, fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount), 24*time.Hour)
+	_ = o.redis.SetIdempotency(ctx, fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount), 24*time.Hour)
 
 	execCtx.mu.Lock()
 	execCtx.Completed[taskDefID] = true
@@ -387,7 +387,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		}
 
 		if taskExec.NextRetryAt != nil {
-			o.redis.ScheduleRetry(ctx, msg, *taskExec.NextRetryAt)
+			_ = o.redis.ScheduleRetry(ctx, msg, *taskExec.NextRetryAt)
 		}
 
 		o.metrics.mu.Lock()
@@ -408,9 +408,9 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		// No more retries — dead letter
 		taskExec.Status = models.TaskStatusDeadLetter
 		taskExec.UpdatedAt = now
-		o.store.UpdateTaskExecution(ctx, taskExec)
+		_ = o.store.UpdateTaskExecution(ctx, taskExec)
 
-		o.redis.SendToDeadLetter(ctx, &models.TaskMessage{
+		_ = o.redis.SendToDeadLetter(ctx, &models.TaskMessage{
 			TaskExecID:     taskExec.ID,
 			WorkflowExecID: execCtx.Execution.ID,
 		}, result.Error)

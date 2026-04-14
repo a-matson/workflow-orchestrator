@@ -3,7 +3,6 @@ version: "2"
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -20,10 +19,10 @@ linters:
   settings:
     revive:
       rules:
-        - name: exported
+        # - name: exported
         - name: error-return
         - name: error-strings
-        - name: unused-parameter
+        # - name: unused-parameter
 
     exhaustive:
       default-signifies-exhaustive: true

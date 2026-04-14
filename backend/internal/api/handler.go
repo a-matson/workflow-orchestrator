@@ -113,7 +113,7 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload map[string]any
-	json.NewDecoder(r.Body).Decode(&payload)
+	_ = json.NewDecoder(r.Body).Decode(&payload)
 
 	exec, err := h.orchestrator.StartWorkflow(r.Context(), def, payload)
 	if err != nil {
@@ -259,7 +259,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
