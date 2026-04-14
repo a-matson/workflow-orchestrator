@@ -191,6 +191,10 @@ jobs:
     needs: docker
     if: github.ref == 'refs/heads/main'
 
+    permissions:
+      contents: read
+      security-events: write
+
     steps:
       - uses: actions/checkout@v4
 
