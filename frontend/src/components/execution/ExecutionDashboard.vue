@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, computed, markRaw, onMounted, onUnmounted } from 'vue'
+	import { ref, computed, markRaw } from 'vue'
 	import { VueFlow } from '@vue-flow/core'
 	import { Background } from '@vue-flow/background'
 	import { Controls } from '@vue-flow/controls'
@@ -128,6 +128,7 @@
 	import { STATUS_COLORS, STATUS_BG } from '../../types'
 	import TaskNode from '../dag/TaskNode.vue'
 	import StatusBadge from '../shared/StatusBadge.vue'
+	import { useNow } from '@/composables/useNow'
 
 	const props = defineProps<{
 		execution: WorkflowExecution
@@ -142,13 +143,7 @@
 	const expanded = ref(true)
 	const selectedTask = ref<TaskExecution | null>(null)
 	const nodeTypes = { taskNode: markRaw(TaskNode) }
-	const now = ref(Date.now())
-	let timer: ReturnType<typeof setInterval>
-
-	onMounted(() => {
-		timer = setInterval(() => (now.value = Date.now()), 1000)
-	})
-	onUnmounted(() => clearInterval(timer))
+	const now = useNow()
 
 	// const taskMap = computed(() => {
 	//   const m = new Map<string, TaskExecution>()

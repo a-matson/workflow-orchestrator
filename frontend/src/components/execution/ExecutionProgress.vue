@@ -27,19 +27,15 @@
 </template>
 
 <script setup lang="ts">
-	import { computed, ref, onMounted, onUnmounted } from 'vue'
+	import { computed } from 'vue'
 	import type { WorkflowExecution } from '../../types'
 	import { STATUS_COLORS } from '../../types'
 	import StatusBadge from '../shared/StatusBadge.vue'
+	import { useNow } from '@/composables/useNow'
 
 	const props = defineProps<{ execution: WorkflowExecution }>()
 
-	const now = ref(Date.now())
-	let timer: ReturnType<typeof setInterval>
-	onMounted(() => {
-		timer = setInterval(() => (now.value = Date.now()), 1000)
-	})
-	onUnmounted(() => clearInterval(timer))
+	const now = useNow()
 
 	const totalCount = computed(() => props.execution.tasks?.length ?? 0)
 	const completedCount = computed(

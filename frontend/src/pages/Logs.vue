@@ -65,7 +65,17 @@
 						<span class="ll-ts">{{ fmtTs(entry.timestamp) }}</span>
 						<span class="ll-lvl" :class="entry.level">{{ entry.level?.toUpperCase() }}</span>
 						<span class="ll-task">{{ entry._taskName }}</span>
-						<span class="ll-msg" v-html="highlight(entry.message)"></span>
+						<span class="ll-msg">
+							<template v-for="(seg, idx) in getHighlightSegments(entry.message)" :key="idx">
+								<mark
+									v-if="seg.match"
+									style="background: rgba(124, 106, 255, 0.3); color: inherit; border-radius: 2px"
+								>
+									{{ seg.text }}
+								</mark>
+								<template v-else>{{ seg.text }}</template>
+							</template>
+						</span>
 						<span v-if="hasFields(entry.fields)" class="ll-fields">{{
 							JSON.stringify(entry.fields)
 						}}</span>
@@ -180,14 +190,20 @@
 		navigator.clipboard.writeText(text)
 	}
 
-	function highlight(msg: string): string {
-		if (!search.value || !msg) return msg
+	function getHighlightSegments(msg: string): Array<{ text: string; match: boolean }> {
+		if (!search.value || !msg) return [{ text: msg, match: false }]
+
 		const esc = search.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-		return msg.replace(
-			new RegExp(esc, 'gi'),
-			(m) =>
-				`<mark style="background:rgba(124,106,255,.3);color:inherit;border-radius:2px">${m}</mark>`,
-		)
+		const regex = new RegExp(`(${esc})`, 'gi')
+		const parts = msg.split(regex)
+
+		return parts
+			.map((part) => ({
+				text: part,
+				// If it matches the search query (case-insensitive), mark it
+				match: part.toLowerCase() === search.value.toLowerCase(),
+			}))
+			.filter((p) => p.text.length > 0)
 	}
 
 	function fmtTs(ts: string): string {

@@ -28,24 +28,30 @@ export function useTaskLogs(
 		const exec = execution()
 		if (!exec) return staticLogs.value
 
-		const fromTasks: Array<LogEntry & { _taskId: string; _taskName: string }> = []
+		// Pre-allocate array and use a Map for O(1) deduplication (avoids heavy string concatenation)
+		const logMap = new Map<string, LogEntry & { _taskId: string; _taskName: string }>()
+
+		// 1. Process static logs
+		for (const log of staticLogs.value) {
+			logMap.set(`${log.timestamp}-${log._taskId}`, log)
+		}
+
+		// 2. Process active execution logs
 		for (const task of exec.tasks ?? []) {
-			for (const log of task.logs ?? []) {
-				fromTasks.push({ ...log, _taskId: task.id, _taskName: task.task_name })
+			if (!task.logs) continue
+			for (const log of task.logs) {
+				logMap.set(`${log.timestamp}-${task.id}`, {
+					...log,
+					_taskId: task.id,
+					_taskName: task.task_name,
+				})
 			}
 		}
 
-		// Merge static (API-fetched) and task-embedded logs, deduplicate by timestamp+message
-		const merged = [...fromTasks, ...staticLogs.value]
-		const seen = new Set<string>()
-		return merged
-			.filter((l) => {
-				const key = `${l.timestamp}:${l.message}:${l._taskId}`
-				if (seen.has(key)) return false
-				seen.add(key)
-				return true
-			})
-			.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+		// Convert map values to array and sort efficiently
+		return Array.from(logMap.values()).sort(
+			(a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+		)
 	})
 
 	// const filteredLogs = ref<typeof allLogs.value>([])
