@@ -37,7 +37,21 @@
 						>
 							<span class="ws-result-icon">{{ result.icon }}</span>
 							<div class="ws-result-body">
-								<div class="ws-result-title" v-html="highlight(result.title)"></div>
+								<span class="ws-result-title">
+									<template v-for="(seg, idx) in getHighlightSegments(result.title)" :key="idx">
+										<mark
+											v-if="seg.match"
+											style="
+												background: rgba(124, 106, 255, 0.3);
+												color: inherit;
+												border-radius: 2px;
+											"
+										>
+											{{ seg.text }}
+										</mark>
+										<template v-else>{{ seg.text }}</template>
+									</template>
+								</span>
 								<div class="ws-result-sub">
 									{{ result.subtitle }}
 								</div>
@@ -178,14 +192,20 @@
 		result.action()
 	}
 
-	function highlight(text: string): string {
-		if (!query.value) return text
-		const escaped = query.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-		return text.replace(
-			new RegExp(escaped, 'gi'),
-			(m) =>
-				`<mark style="background:rgba(124,106,255,.3);color:inherit;border-radius:2px">${m}</mark>`,
-		)
+	function getHighlightSegments(msg: string): Array<{ text: string; match: boolean }> {
+		if (!query.value || !msg) return [{ text: msg, match: false }]
+
+		const esc = query.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+		const regex = new RegExp(`(${esc})`, 'gi')
+		const parts = msg.split(regex)
+
+		return parts
+			.map((part) => ({
+				text: part,
+				// If it matches the search query (case-insensitive), mark it
+				match: part.toLowerCase() === query.value.toLowerCase(),
+			}))
+			.filter((p) => p.text.length > 0)
 	}
 
 	// Global keyboard shortcut
