@@ -104,7 +104,7 @@ func main() {
 	// ── Background services ───────────────────────────────────────
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
 	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
-	workerPool := worker.NewPool(redisClient, workerCount, workerConc)
+	workerPool := worker.NewPoolWithNotifier(redisClient, workerCount, workerConc, orch)
 	watchdog := worker.NewTaskWatchdog(redisClient)
 
 	go resultProcessor.Run(ctx)
