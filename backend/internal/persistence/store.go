@@ -364,10 +364,10 @@ func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 		_ = json.Unmarshal(metaJSON, &task.Metadata)
 	}
 	if artifactsInJSON != nil {
-		json.Unmarshal(artifactsInJSON, &task.ArtifactsIn)
+		_ = json.Unmarshal(artifactsInJSON, &task.ArtifactsIn)
 	}
 	if artifactsOutJSON != nil {
-		json.Unmarshal(artifactsOutJSON, &task.ArtifactsOut)
+		_ = json.Unmarshal(artifactsOutJSON, &task.ArtifactsOut)
 	}
 
 	return task, nil

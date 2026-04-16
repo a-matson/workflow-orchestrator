@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
+
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
-
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
 
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
@@ -242,8 +242,8 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		result.Success = false
 		result.Error = execErr.Error()
 		addLog("error", "Task failed", map[string]any{
-			"error": execErr.Error(),
-			"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
+			"error":         execErr.Error(),
+			"duration_ms":   completedAt.Sub(startedAt).Milliseconds(),
 			"artifacts_out": len(artifactsOut),
 		})
 	} else {

@@ -28,15 +28,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
-	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
-	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/rs/zerolog/log"
+
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 )
 
 const (
@@ -82,7 +83,7 @@ func NewContainerExecutor(storageClient *storage.Client) (*ContainerExecutor, er
 // The network is internal (no external routing) so task containers cannot
 // reach the internet, Postgres, or Redis.
 func (ce *ContainerExecutor) ensureNetwork(ctx context.Context) error {
-	nets, err := ce.docker.NetworkList(ctx, dockertypes.NetworkListOptions{
+	nets, err := ce.docker.NetworkList(ctx, network.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", TaskNetwork)),
 	})
 	if err != nil {
@@ -95,7 +96,7 @@ func (ce *ContainerExecutor) ensureNetwork(ctx context.Context) error {
 		}
 	}
 
-	_, err = ce.docker.NetworkCreate(ctx, TaskNetwork, dockertypes.NetworkCreate{
+	_, err = ce.docker.NetworkCreate(ctx, TaskNetwork, network.CreateOptions{
 		Driver:   "bridge",
 		Internal: true, // no external routing — tasks are isolated
 		Labels:   map[string]string{"managed-by": "fluxor"},
@@ -127,7 +128,7 @@ func (ce *ContainerExecutor) Run(
 	if err != nil {
 		return "", nil, fmt.Errorf("container: create workspace: %w", err)
 	}
-	defer os.RemoveAll(workspaceDir)
+	defer func() { _ = os.RemoveAll(workspaceDir) }()
 
 	if downloadErr := ce.downloadArtifacts(ctx, msg.ArtifactsIn, workspaceDir, addLog); downloadErr != nil {
 		return "", nil, fmt.Errorf("container: download artifacts: %w", downloadErr)
@@ -166,7 +167,7 @@ func (ce *ContainerExecutor) Run(
 		},
 
 		// ── Security hardening ────────────────────────────────────────────────
-		CapDrop:        []string{"ALL"},    // drop every Linux capability
+		CapDrop:        []string{"ALL"}, // drop every Linux capability
 		SecurityOpt:    []string{"no-new-privileges:true"},
 		ReadonlyRootfs: true,
 
@@ -210,14 +211,17 @@ func (ce *ContainerExecutor) Run(
 	containerID := createResp.ID
 	// Always clean up the container
 	defer func() {
-		rmCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// Create a detached context for cleanup so it isn't interrupted
+		detachedCtx := context.WithoutCancel(ctx)
+		cleanupCtx, cancel := context.WithTimeout(detachedCtx, 15*time.Second)
 		defer cancel()
-		ce.docker.ContainerRemove(rmCtx, containerID, dockertypes.ContainerRemoveOptions{Force: true})
+		_ = ce.docker.ContainerKill(cleanupCtx, containerID, "KILL")
+		_ = ce.docker.ContainerRemove(cleanupCtx, containerID, container.RemoveOptions{Force: true})
 	}()
 
 	// ── 6. Start container ────────────────────────────────────────────────────
 	addLog("info", fmt.Sprintf("Starting container %s", containerID[:12]), nil)
-	if err := ce.docker.ContainerStart(ctx, containerID, dockertypes.ContainerStartOptions{}); err != nil {
+	if err := ce.docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		return "", nil, fmt.Errorf("container: start: %w", err)
 	}
 
@@ -231,7 +235,7 @@ func (ce *ContainerExecutor) Run(
 		return "", nil, fmt.Errorf("container: wait: %w", waitErr)
 	case <-ctx.Done():
 		// Timeout/cancellation — kill the container
-		ce.docker.ContainerKill(context.Background(), containerID, "KILL") //nolint:errcheck
+		_ = ce.docker.ContainerKill(context.WithoutCancel(ctx), containerID, "KILL")
 		return "", nil, ctx.Err()
 	}
 
@@ -255,47 +259,46 @@ func (ce *ContainerExecutor) Run(
 	}
 
 	addLog("info", "Container execution complete", map[string]any{
-		"exit_code":      exitCode,
-		"artifacts_out":  len(artifacts),
+		"exit_code":     exitCode,
+		"artifacts_out": len(artifacts),
 	})
 	return stdout, artifacts, nil
 }
 
 // ── Image pull ────────────────────────────────────────────────────────────────
 
-func (ce *ContainerExecutor) pullImage(ctx context.Context, image string) error {
+func (ce *ContainerExecutor) pullImage(ctx context.Context, img string) error {
 	// Check if already local
-	_, _, err := ce.docker.ImageInspectWithRaw(ctx, image)
-	if err == nil {
+	if _, err := ce.docker.ImageInspect(ctx, img); err == nil {
 		return nil // already present
 	}
 
-	reader, err := ce.docker.ImagePull(ctx, image, dockertypes.ImagePullOptions{})
+	reader, err := ce.docker.ImagePull(ctx, img, image.PullOptions{})
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
-	io.Copy(io.Discard, reader) // consume the pull progress stream
+	defer func() { _ = reader.Close() }()
+	_, _ = io.Copy(io.Discard, reader) // consume the pull progress stream
 	return nil
 }
 
 // ── Log collection ────────────────────────────────────────────────────────────
 
 func (ce *ContainerExecutor) collectLogs(ctx context.Context, containerID string) (string, error) {
-	reader, err := ce.docker.ContainerLogs(ctx, containerID, dockertypes.ContainerLogsOptions{
+	reader, err := ce.docker.ContainerLogs(ctx, containerID, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
 	if err != nil {
 		return "", err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var buf bytes.Buffer
 	// Docker log stream is multiplexed: each frame has an 8-byte header.
 	// Use io.Copy to strip the header automatically via docker's StdCopy if needed,
 	// but for simplicity we read raw (the header bytes won't affect text visibility).
-	io.Copy(&buf, reader)
+	_, _ = io.Copy(&buf, reader)
 	return buf.String(), nil
 }
 
@@ -328,13 +331,13 @@ func (ce *ContainerExecutor) downloadArtifacts(
 
 		f, err := os.Create(destPath)
 		if err != nil {
-			reader.Close()
+			_ = reader.Close()
 			return fmt.Errorf("create local file %q: %w", destPath, err)
 		}
 
 		_, copyErr := io.Copy(f, reader)
-		reader.Close()
-		f.Close()
+		_ = reader.Close()
+		_ = f.Close()
 
 		if copyErr != nil {
 			return fmt.Errorf("write artifact %q: %w", ref.Path, copyErr)
@@ -378,7 +381,7 @@ func (ce *ContainerExecutor) uploadArtifacts(
 		}
 
 		resolved, uploadErr := ce.storage.Upload(ctx, key, f, fi.Size(), "")
-		f.Close()
+		_ = f.Close()
 
 		if uploadErr != nil {
 			return nil, fmt.Errorf("upload artifact %q: %w", ref.Path, uploadErr)
@@ -424,7 +427,8 @@ func effectiveContainerSpec(spec *models.ContainerSpec) models.ContainerSpec {
 
 // buildCommand constructs the container command from task config.
 // Supports: command+args (generic/data_transform/ml_inference),
-//           http_request (curl), database_query (psql), notification (curl).
+//
+//	http_request (curl), database_query (psql), notification (curl).
 func buildCommand(msg *models.TaskMessage) []string {
 	cfg := msg.Config
 
@@ -513,8 +517,8 @@ func tarFile(name string, content []byte) io.Reader {
 		Mode: 0o644,
 		Size: int64(len(content)),
 	})
-	tw.Write(content)
-	tw.Close()
+	_, _ = tw.Write(content)
+	_ = tw.Close()
 	return &buf
 }
 

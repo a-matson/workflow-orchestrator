@@ -6,17 +6,18 @@ import (
 	"io"
 	"time"
 
-	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/rs/zerolog/log"
+
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
 const DefaultBucket = "fluxor-artifacts"
 
 // Client wraps the MinIO SDK for artifact storage operations.
 type Client struct {
-	mc *minio.Client
+	mc     *minio.Client
 	bucket string
 }
 
@@ -58,7 +59,8 @@ func (c *Client) ensureBucket(ctx context.Context) error {
 }
 
 // ArtifactKey builds the canonical MinIO object key for an artifact.
-//   artifacts/{workflowExecID}/{taskDefID}/{relativePath}
+//
+//	artifacts/{workflowExecID}/{taskDefID}/{relativePath}
 func ArtifactKey(workflowExecID, taskDefID, relativePath string) string {
 	return fmt.Sprintf("artifacts/%s/%s/%s", workflowExecID, taskDefID, relativePath)
 }
@@ -92,7 +94,7 @@ func (c *Client) Download(ctx context.Context, key string) (io.ReadCloser, int64
 	}
 	info, err := obj.Stat()
 	if err != nil {
-		obj.Close()
+		_ = obj.Close()
 		return nil, 0, fmt.Errorf("minio: stat %q: %w", key, err)
 	}
 	return obj, info.Size, nil
