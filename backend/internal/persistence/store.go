@@ -227,16 +227,20 @@ func (s *Store) CreateTaskExecution(ctx context.Context, task *models.TaskExecut
 func (s *Store) UpdateTaskExecution(ctx context.Context, task *models.TaskExecution) error {
 	outputJSON, _ := json.Marshal(task.Output)
 	logsJSON, _ := json.Marshal(task.Logs)
+	artifactsInJSON, _ := json.Marshal(task.ArtifactsIn)
+	artifactsOutJSON, _ := json.Marshal(task.ArtifactsOut)
 
 	_, err := s.pool.Exec(ctx, `
 		UPDATE task_executions SET
 			status = $2, retry_count = $3, worker_id = $4, queued_at = $5,
 			started_at = $6, completed_at = $7, next_retry_at = $8,
-			output = $9, error = $10, logs = $11, updated_at = $12
+			output = $9, error = $10, logs = $11, updated_at = $12,
+			artifacts_in = $13, artifacts_out = $14
 		WHERE id = $1
 	`, task.ID, task.Status, task.RetryCount, task.WorkerID,
 		task.QueuedAt, task.StartedAt, task.CompletedAt, task.NextRetryAt,
-		outputJSON, task.Error, logsJSON, task.UpdatedAt)
+		outputJSON, task.Error, logsJSON, task.UpdatedAt,
+		artifactsInJSON, artifactsOutJSON)
 
 	return err
 }
@@ -245,7 +249,8 @@ func (s *Store) GetTaskExecution(ctx context.Context, id string) (*models.TaskEx
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at
+		       next_retry_at, output, error, logs, metadata, created_at, updated_at,
+		       artifacts_in, artifacts_out
 		FROM task_executions WHERE id = $1
 	`, id)
 
@@ -256,7 +261,8 @@ func (s *Store) ListTaskExecutions(ctx context.Context, workflowExecID string) (
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at
+		       next_retry_at, output, error, logs, metadata, created_at, updated_at,
+		       artifacts_in, artifacts_out
 		FROM task_executions WHERE workflow_exec_id = $1 ORDER BY created_at ASC
 	`, workflowExecID)
 	if err != nil {
@@ -281,7 +287,8 @@ func (s *Store) GetTasksReadyForRetry(ctx context.Context) ([]*models.TaskExecut
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at
+		       next_retry_at, output, error, logs, metadata, created_at, updated_at,
+		       artifacts_in, artifacts_out
 		FROM task_executions 
 		WHERE status = 'retrying' AND next_retry_at <= NOW()
 		ORDER BY next_retry_at ASC
@@ -330,23 +337,23 @@ func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 	task := &models.TaskExecution{}
 	var outputJSON, logsJSON, metaJSON []byte
 	var workerID, errorStr *string
+	var artifactsInJSON, artifactsOutJSON []byte
 
 	err := row.Scan(
 		&task.ID, &task.WorkflowExecID, &task.TaskDefinitionID, &task.TaskName, &task.TaskType, &task.Status,
 		&task.RetryCount, &task.MaxRetries, &workerID, &task.QueuedAt, &task.StartedAt, &task.CompletedAt,
 		&task.NextRetryAt, &outputJSON, &errorStr, &logsJSON, &metaJSON, &task.CreatedAt, &task.UpdatedAt,
+		&artifactsInJSON, &artifactsOutJSON,
 	)
 	if err != nil {
 		return nil, err
 	}
-
 	if workerID != nil {
 		task.WorkerID = *workerID
 	}
 	if errorStr != nil {
 		task.Error = *errorStr
 	}
-
 	if outputJSON != nil {
 		task.Output = outputJSON
 	}
@@ -355,6 +362,12 @@ func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 	}
 	if metaJSON != nil {
 		_ = json.Unmarshal(metaJSON, &task.Metadata)
+	}
+	if artifactsInJSON != nil {
+		json.Unmarshal(artifactsInJSON, &task.ArtifactsIn)
+	}
+	if artifactsOutJSON != nil {
+		json.Unmarshal(artifactsOutJSON, &task.ArtifactsOut)
 	}
 
 	return task, nil

@@ -28,16 +28,20 @@ service OrchestratorService {
   rpc StreamLogs(StreamLogsRequest)            returns (stream LogEvent);
 
   // Worker protocol
-  rpc ReportTaskStarted(ReportTaskStartedRequest)   returns (ReportTaskStartedResponse);
+  rpc ReportTaskStarted(ReportTaskStartedRequest)     returns (ReportTaskStartedResponse);
   rpc ReportTaskCompleted(ReportTaskCompletedRequest) returns (ReportTaskCompletedResponse);
 
+  // Artifacts
+  rpc GetArtifactURL(GetArtifactURLRequest)   returns (GetArtifactURLResponse);
+  rpc ListArtifacts(ListArtifactsRequest)     returns (ListArtifactsResponse);
+
   // System
-  rpc GetMetrics(GetMetricsRequest)  returns (PlatformMetrics);
+  rpc GetMetrics(GetMetricsRequest)   returns (PlatformMetrics);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 
 // ──────────────────────────────────────────────────────────
-// Core domain types
+// Enums
 // ──────────────────────────────────────────────────────────
 
 enum TaskStatus {
@@ -62,24 +66,66 @@ enum WorkflowStatus {
   WORKFLOW_STATUS_PAUSED      = 6;
 }
 
-message RetryPolicy {
-  int32  max_retries       = 1;
-  int64  initial_delay_ns  = 2;
-  int64  max_delay_ns      = 3;
-  double backoff_multiplier = 4;
-  bool   jitter            = 5;
+// ─────────────────────────────────────────────────────────────────────────────
+// Artifact & container types
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ArtifactRef describes a file the task reads or writes, relative to /workspace.
+message ArtifactRef {
+  string path        = 1; // relative path inside container, e.g. "output.json"
+  string description = 2; // human label shown in UI
 }
 
+// ResolvedArtifact is an ArtifactRef with the MinIO key and size populated.
+message ResolvedArtifact {
+  string path      = 1; // relative workspace path
+  string minio_key = 2; // full MinIO object key
+  int64  size      = 3; // bytes; 0 if not yet uploaded
+}
+
+// ContainerSpec configures the isolated Docker container for a task.
+message ContainerSpec {
+  string              image      = 1; // Docker image, e.g. "python:3.12-slim"
+  int64               memory_mb  = 2; // hard memory limit (default 256 MB)
+  int64               cpu_millis = 3; // CPU quota in milli-CPUs (default 500)
+  map<string, string> env        = 4; // extra environment variables
+  string              work_dir   = 5; // working directory (default /workspace)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core domain messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+message RetryPolicy {
+  int32  max_retries        = 1;
+  int64  initial_delay_ns   = 2;
+  int64  max_delay_ns       = 3;
+  double backoff_multiplier = 4;
+  bool   jitter             = 5;
+}
+
+// TaskDefinition is a node in the workflow DAG.
+// artifacts_in  — files produced by dependency tasks that must be injected
+//                 into this task's container before execution.
+// artifacts_out — files this task will produce inside /workspace; uploaded to
+//                 MinIO after the container exits so downstream tasks can read them.
+// container     — isolation and resource settings; if absent the task executes
+//                 in-process via the legacy dispatcher.
 message TaskDefinition {
-  string                  id           = 1;
-  string                  name         = 2;
-  string                  type         = 3;
-  repeated string         dependencies = 4;
-  google.protobuf.Struct  config       = 5;
-  RetryPolicy             retry_policy = 6;
-  int64                   timeout_ns   = 7;
-  int32                   max_parallel = 8;
-  map<string, string>     metadata     = 9;
+  string                  id            = 1;
+  string                  name          = 2;
+  string                  type          = 3;
+  repeated string         dependencies  = 4;
+  google.protobuf.Struct  config        = 5;
+  RetryPolicy             retry_policy  = 6;
+  int64                   timeout_ns    = 7;
+  int32                   max_parallel  = 8;
+  map<string, string>     metadata      = 9;
+
+  // Isolation & artifacts (new)
+  ContainerSpec           container     = 10;
+  repeated ArtifactRef    artifacts_in  = 11;
+  repeated ArtifactRef    artifacts_out = 12;
 }
 
 message WorkflowDefinition {
@@ -95,40 +141,47 @@ message WorkflowDefinition {
   google.protobuf.Timestamp updated_at = 10;
 }
 
+// TaskExecution tracks one runtime instance of a task.
+// artifacts_in  — MinIO keys that were downloaded before execution.
+// artifacts_out — MinIO keys that were uploaded after execution.
 message TaskExecution {
-  string                  id                  = 1;
-  string                  workflow_exec_id    = 2;
-  string                  task_definition_id  = 3;
-  string                  task_name           = 4;
-  string                  task_type           = 5;
-  TaskStatus              status              = 6;
-  int32                   retry_count         = 7;
-  int32                   max_retries         = 8;
-  string                  worker_id           = 9;
-  google.protobuf.Timestamp queued_at         = 10;
-  google.protobuf.Timestamp started_at        = 11;
-  google.protobuf.Timestamp completed_at      = 12;
-  google.protobuf.Timestamp next_retry_at     = 13;
-  bytes                   output              = 14;
-  string                  error               = 15;
-  repeated LogEntry       logs                = 16;
-  map<string, string>     metadata            = 17;
-  int64                   duration_ns         = 18;
+  string                    id                 = 1;
+  string                    workflow_exec_id   = 2;
+  string                    task_definition_id = 3;
+  string                    task_name          = 4;
+  string                    task_type          = 5;
+  TaskStatus                status             = 6;
+  int32                     retry_count        = 7;
+  int32                     max_retries        = 8;
+  string                    worker_id          = 9;
+  google.protobuf.Timestamp queued_at          = 10;
+  google.protobuf.Timestamp started_at         = 11;
+  google.protobuf.Timestamp completed_at       = 12;
+  google.protobuf.Timestamp next_retry_at      = 13;
+  bytes                     output             = 14;
+  string                    error              = 15;
+  repeated LogEntry         logs               = 16;
+  map<string, string>       metadata           = 17;
+  int64                     duration_ns        = 18;
+
+  // Artifact tracking (new)
+  repeated ResolvedArtifact artifacts_in       = 19;
+  repeated ResolvedArtifact artifacts_out      = 20;
 }
 
 message WorkflowExecution {
-  string                  id              = 1;
-  string                  workflow_id     = 2;
-  string                  workflow_name   = 3;
-  WorkflowStatus          status          = 4;
-  repeated TaskExecution  tasks           = 5;
-  google.protobuf.Timestamp started_at    = 6;
-  google.protobuf.Timestamp completed_at  = 7;
-  google.protobuf.Struct  trigger_payload = 8;
-  string                  error           = 9;
-  map<string, string>     metadata        = 10;
-  google.protobuf.Timestamp created_at    = 11;
-  google.protobuf.Timestamp updated_at    = 12;
+  string                    id              = 1;
+  string                    workflow_id     = 2;
+  string                    workflow_name   = 3;
+  WorkflowStatus            status          = 4;
+  repeated TaskExecution    tasks           = 5;
+  google.protobuf.Timestamp started_at      = 6;
+  google.protobuf.Timestamp completed_at    = 7;
+  google.protobuf.Struct    trigger_payload = 8;
+  string                    error           = 9;
+  map<string, string>       metadata        = 10;
+  google.protobuf.Timestamp created_at      = 11;
+  google.protobuf.Timestamp updated_at      = 12;
 }
 
 message LogEntry {
@@ -138,9 +191,9 @@ message LogEntry {
   google.protobuf.Struct    fields    = 4;
 }
 
-// ──────────────────────────────────────────────────────────
-// Request / Response types
-// ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Request / Response messages
+// ─────────────────────────────────────────────────────────────────────────────
 
 message CreateWorkflowRequest  { WorkflowDefinition workflow = 1; }
 message GetWorkflowRequest     { string id = 1; }
@@ -162,12 +215,11 @@ message ListExecutionsResponse  { repeated WorkflowExecution executions = 1; int
 message RetryExecutionRequest   { string execution_id = 1; }
 
 message WatchExecutionRequest { string execution_id = 1; }
-
 message ExecutionEvent {
-  string           type         = 1;
-  WorkflowExecution execution  = 2;
-  TaskExecution    task        = 3;
-  google.protobuf.Timestamp ts = 4;
+  string                    type      = 1;
+  WorkflowExecution         execution = 2;
+  TaskExecution             task      = 3;
+  google.protobuf.Timestamp ts        = 4;
 }
 
 message StreamLogsRequest {
@@ -175,49 +227,50 @@ message StreamLogsRequest {
   string task_id      = 2;
   string level_filter = 3;
 }
-
 message LogEvent {
   string   task_exec_id = 1;
   string   task_name    = 2;
   LogEntry entry        = 3;
 }
 
-message ReportTaskStartedRequest {
-  string task_exec_id = 1;
-  string worker_id    = 2;
-}
-message ReportTaskStartedResponse { bool accepted = 1; }
-
+message ReportTaskStartedRequest   { string task_exec_id = 1; string worker_id = 2; }
+message ReportTaskStartedResponse  { bool accepted = 1; }
 message ReportTaskCompletedRequest {
-  string    task_exec_id    = 1;
-  string    worker_id       = 2;
-  bool      success         = 3;
-  bytes     output          = 4;
-  string    error           = 5;
-  repeated  LogEntry logs   = 6;
+  string            task_exec_id = 1;
+  string            worker_id    = 2;
+  bool              success      = 3;
+  bytes             output       = 4;
+  string            error        = 5;
+  repeated LogEntry logs         = 6;
+  repeated ResolvedArtifact artifacts_out = 7;
 }
 message ReportTaskCompletedResponse { bool accepted = 1; }
 
-message GetMetricsRequest {}
+// Artifact management
+message GetArtifactURLRequest  { string minio_key = 1; int32 expires_minutes = 2; }
+message GetArtifactURLResponse { string url = 1; }
+message ListArtifactsRequest   { string workflow_exec_id = 1; string task_exec_id = 2; }
+message ListArtifactsResponse  { repeated ResolvedArtifact artifacts = 1; }
 
+message GetMetricsRequest {}
 message PlatformMetrics {
-  int64 workflows_started    = 1;
-  int64 workflows_completed  = 2;
-  int64 workflows_failed     = 3;
-  int64 tasks_dispatched     = 4;
-  int64 tasks_completed      = 5;
-  int64 tasks_failed         = 6;
-  int64 tasks_retried        = 7;
-  int64 tasks_dead_lettered  = 8;
-  int64 active_workflows     = 9;
-  int64 queue_depth          = 10;
-  int64 retry_queue_depth    = 11;
-  int64 ws_clients           = 12;
+  int64 workflows_started   = 1;
+  int64 workflows_completed = 2;
+  int64 workflows_failed    = 3;
+  int64 tasks_dispatched    = 4;
+  int64 tasks_completed     = 5;
+  int64 tasks_failed        = 6;
+  int64 tasks_retried       = 7;
+  int64 tasks_dead_lettered = 8;
+  int64 active_workflows    = 9;
+  int64 queue_depth         = 10;
+  int64 retry_queue_depth   = 11;
+  int64 ws_clients          = 12;
 }
 
 message HealthCheckRequest {}
 message HealthCheckResponse {
-  string status    = 1;
-  string timestamp = 2;
+  string status     = 1;
+  string timestamp  = 2;
   map<string, string> components = 3;
 }

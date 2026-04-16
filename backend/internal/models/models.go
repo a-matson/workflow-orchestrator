@@ -31,6 +31,23 @@ const (
 	WorkflowStatusPaused    WorkflowStatus = "paused"
 )
 
+// ArtifactRef describes a file artifact stored in MinIO.
+// Path is always relative to the task's artifact directory.
+//   MinIO key: artifacts/{workflow_exec_id}/{task_def_id}/{Path}
+type ArtifactRef struct {
+	Path        string `json:"path"`         // e.g. "output.json" or "results/data.csv"
+	Description string `json:"description"`  // human-readable label shown in UI
+}
+
+// ContainerSpec holds security and resource settings for the isolated container.
+type ContainerSpec struct {
+	Image      string            `json:"image"`        // e.g. "python:3.12-slim"
+	MemoryMB   int64             `json:"memory_mb"`    // hard memory limit (default 256)
+	CPUMillis  int64             `json:"cpu_millis"`   // CPU quota in milli-CPUs (default 500)
+	Env        map[string]string `json:"env"`          // extra env vars injected into container
+	WorkDir    string            `json:"work_dir"`     // working directory inside container (default /workspace)
+}
+
 // RetryPolicy defines retry behavior for tasks
 type RetryPolicy struct {
 	MaxRetries      int           `json:"max_retries"`
@@ -41,6 +58,15 @@ type RetryPolicy struct {
 }
 
 // TaskDefinition defines a single task within a workflow DAG
+// ArtifactsIn  — paths produced by dependency tasks that this task needs.
+//                The worker downloads these from MinIO and places them in the
+//                container's /workspace before starting execution.
+//
+// ArtifactsOut — paths this task will produce inside /workspace.
+//                The worker uploads these to MinIO after the container exits.
+//
+// Container    — Docker image and resource limits for the isolated executor.
+//                If nil the task runs in-process (legacy/simple tasks).
 type TaskDefinition struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
@@ -51,6 +77,9 @@ type TaskDefinition struct {
 	Timeout      time.Duration     `json:"timeout"`
 	MaxParallel  int               `json:"max_parallel,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+	Container    *ContainerSpec `json:"container,omitempty"`
+	ArtifactsIn  []ArtifactRef  `json:"artifacts_in,omitempty"`
+	ArtifactsOut []ArtifactRef  `json:"artifacts_out,omitempty"`
 }
 
 // WorkflowDefinition is the DAG specification
@@ -65,6 +94,13 @@ type WorkflowDefinition struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// ResolvedArtifact is an ArtifactRef with its fully-qualified MinIO key resolved.
+type ResolvedArtifact struct {
+	Path     string `json:"path"`      // relative path inside container workspace
+	MinioKey string `json:"minio_key"` // full MinIO object key
+	Size     int64  `json:"size"`      // bytes, set after upload
 }
 
 // WorkflowExecution is a runtime instance of a WorkflowDefinition
@@ -85,26 +121,28 @@ type WorkflowExecution struct {
 
 // TaskExecution tracks the runtime state of a single task
 type TaskExecution struct {
-	ID               string            `json:"id"`
-	WorkflowExecID   string            `json:"workflow_exec_id"`
-	TaskDefinitionID string            `json:"task_definition_id"`
-	TaskName         string            `json:"task_name"`
-	TaskType         string            `json:"task_type"`
-	Status           TaskStatus        `json:"status"`
-	RetryCount       int               `json:"retry_count"`
-	MaxRetries       int               `json:"max_retries"`
-	WorkerID         string            `json:"worker_id,omitempty"`
-	QueuedAt         *time.Time        `json:"queued_at,omitempty"`
-	StartedAt        *time.Time        `json:"started_at,omitempty"`
-	CompletedAt      *time.Time        `json:"completed_at,omitempty"`
-	NextRetryAt      *time.Time        `json:"next_retry_at,omitempty"`
-	Output           json.RawMessage   `json:"output,omitempty"`
-	Error            string            `json:"error,omitempty"`
-	Logs             []LogEntry        `json:"logs,omitempty"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
-	Duration         *time.Duration    `json:"duration,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
+	ID               string             `json:"id"`
+	WorkflowExecID   string             `json:"workflow_exec_id"`
+	TaskDefinitionID string             `json:"task_definition_id"`
+	TaskName         string             `json:"task_name"`
+	TaskType         string             `json:"task_type"`
+	Status           TaskStatus         `json:"status"`
+	RetryCount       int                `json:"retry_count"`
+	MaxRetries       int                `json:"max_retries"`
+	WorkerID         string             `json:"worker_id,omitempty"`
+	QueuedAt         *time.Time         `json:"queued_at,omitempty"`
+	StartedAt        *time.Time         `json:"started_at,omitempty"`
+	CompletedAt      *time.Time         `json:"completed_at,omitempty"`
+	NextRetryAt      *time.Time         `json:"next_retry_at,omitempty"`
+	Output           json.RawMessage    `json:"output,omitempty"`
+	Error            string             `json:"error,omitempty"`
+	Logs             []LogEntry         `json:"logs,omitempty"`
+	Metadata         map[string]string  `json:"metadata,omitempty"`
+	Duration         *time.Duration     `json:"duration,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	ArtifactsIn      []ResolvedArtifact `json:"artifacts_in,omitempty"`
+	ArtifactsOut     []ResolvedArtifact `json:"artifacts_out,omitempty"`
 }
 
 // LogEntry represents a single log line from a task execution
@@ -129,6 +167,9 @@ type TaskMessage struct {
 	Timeout          time.Duration  `json:"timeout"`
 	EnqueuedAt       time.Time      `json:"enqueued_at"`
 	IdempotencyKey   string         `json:"idempotency_key"`
+	Container    *ContainerSpec     `json:"container,omitempty"`
+	ArtifactsIn  []ResolvedArtifact `json:"artifacts_in,omitempty"`
+	ArtifactsOut []ArtifactRef      `json:"artifacts_out,omitempty"`
 }
 
 // TaskResult is what workers publish back
@@ -142,6 +183,7 @@ type TaskResult struct {
 	Logs           []LogEntry      `json:"logs,omitempty"`
 	StartedAt      time.Time       `json:"started_at"`
 	CompletedAt    time.Time       `json:"completed_at"`
+	ArtifactsOut   []ResolvedArtifact `json:"artifacts_out,omitempty"`
 }
 
 // WebSocketEvent is sent to connected UI clients

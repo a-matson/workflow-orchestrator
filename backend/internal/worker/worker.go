@@ -13,15 +13,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
-
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
+
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
-// Using an interface avoids a circular import between worker and orchestrator packages.
+// Using an interface avoids a circular import.
 type TaskNotifier interface {
 	MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error
 }
@@ -32,7 +33,8 @@ type TaskNotifier interface {
 type Worker struct {
 	id          string
 	redis       *persistence.RedisClient
-	notifier    TaskNotifier // optional: notifies orchestrator when a task starts
+	notifier    TaskNotifier
+	executor    *ContainerExecutor // nil if Docker unavailable
 	concurrency int
 	semaphore   chan struct{}
 	httpClient  *http.Client
@@ -44,17 +46,41 @@ type Pool struct {
 	redis   *persistence.RedisClient
 }
 
+// NewPool creates workers without Docker/MinIO (legacy in-process mode)
 func NewPool(redis *persistence.RedisClient, workerCount, concurrencyPerWorker int) *Pool {
 	return NewPoolWithNotifier(redis, workerCount, concurrencyPerWorker, nil)
 }
 
+// NewPoolWithNotifier creates workers with a TaskNotifier and optional
+// ContainerExecutor for isolated task execution.
 func NewPoolWithNotifier(redis *persistence.RedisClient, workerCount, concurrencyPerWorker int, notifier TaskNotifier) *Pool {
+	return NewPoolFull(redis, workerCount, concurrencyPerWorker, notifier, nil)
+}
+
+// NewPoolFull creates workers with all capabilities: task notification,
+// container isolation, and artifact storage.
+func NewPoolFull(
+	redis *persistence.RedisClient,
+	workerCount, concurrencyPerWorker int,
+	notifier TaskNotifier,
+	storageClient *storage.Client,
+) *Pool {
+	var executor *ContainerExecutor
+	if storageClient != nil {
+		var err error
+		executor, err = NewContainerExecutor(storageClient)
+		if err != nil {
+			log.Warn().Err(err).Msg("Docker unavailable — container isolation disabled; tasks run in-process")
+		}
+	}
+
 	workers := make([]*Worker, workerCount)
 	for i := 0; i < workerCount; i++ {
 		workers[i] = &Worker{
 			id:          fmt.Sprintf("worker-%s", uuid.New().String()[:8]),
 			redis:       redis,
 			notifier:    notifier,
+			executor:    executor,
 			concurrency: concurrencyPerWorker,
 			semaphore:   make(chan struct{}, concurrencyPerWorker),
 			httpClient: &http.Client{
@@ -118,8 +144,9 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
-// executeTask acquires a distributed lock for idempotency, dispatches to the
-// correct executor, and publishes the result back to Redis.
+// executeTask is the top-level dispatcher. It acquires the idempotency lock,
+// notifies the orchestrator that the task is running, then routes to either
+// the container executor or the in-process executor.
 func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	startedAt := time.Now()
 
@@ -129,6 +156,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		Str("task_type", msg.TaskType).
 		Str("task_name", msg.TaskName).
 		Int("retry", msg.RetryCount).
+		Bool("isolated", msg.Container != nil && w.executor != nil).
 		Msg("executing task")
 
 	var logs []models.LogEntry
@@ -149,6 +177,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		defer cancel()
 	}
 
+	// Distributed idempotency lock — prevents double-execution on re-delivery
 	locked, err := w.redis.AcquireTaskLock(taskCtx, msg.TaskExecID, 10*time.Minute)
 	if err != nil || !locked {
 		log.Warn().Str("task_exec_id", msg.TaskExecID).Msg("task already locked, skipping")
@@ -161,18 +190,42 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		"task_type": msg.TaskType,
 		"task_name": msg.TaskName,
 		"retry":     msg.RetryCount,
+		"isolated":  msg.Container != nil && w.executor != nil,
 	})
 
-	// Notify the orchestrator that this task is now running.
-	// This moves it from Queued→Running in the in-memory state so that
-	// dispatchReadyTasks correctly accounts for in-flight tasks.
+	// Notify orchestrator: Queued → Running
 	if w.notifier != nil {
 		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id); err != nil {
 			log.Warn().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to mark task running")
 		}
 	}
 
-	output, execErr := w.dispatch(taskCtx, msg, addLog)
+	var output map[string]any
+	var artifactsOut []models.ResolvedArtifact
+	var execErr error
+
+	// Route: container isolation if a ContainerSpec is present and Docker is available
+	if msg.Container != nil && w.executor != nil {
+		stdout, arts, runErr := w.executor.Run(taskCtx, msg, addLog)
+		artifactsOut = arts
+		execErr = runErr
+		if runErr == nil {
+			// Try to parse stdout as JSON for structured output
+			if json.Unmarshal([]byte(stdout), &output) != nil {
+				output = map[string]any{"output": stdout}
+			}
+			if len(arts) > 0 {
+				keys := make([]string, len(arts))
+				for i, a := range arts {
+					keys[i] = a.MinioKey
+				}
+				output["artifacts"] = keys
+			}
+		}
+	} else {
+		// In-process execution for built-in task types
+		output, execErr = w.dispatchInProcess(taskCtx, msg, addLog)
+	}
 
 	completedAt := time.Now()
 
@@ -182,14 +235,16 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		WorkerID:       w.id,
 		StartedAt:      startedAt,
 		CompletedAt:    completedAt,
+		ArtifactsOut:   artifactsOut,
 	}
 
 	if execErr != nil {
 		result.Success = false
 		result.Error = execErr.Error()
 		addLog("error", "Task failed", map[string]any{
-			"error":       execErr.Error(),
+			"error": execErr.Error(),
 			"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
+			"artifacts_out": len(artifactsOut),
 		})
 	} else {
 		result.Success = true
@@ -209,7 +264,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 
 type logFn func(level, message string, fields map[string]any)
 
-func (w *Worker) dispatch(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
+func (w *Worker) dispatchInProcess(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
 	switch msg.TaskType {
 	case "http_request":
 		return w.execHTTP(ctx, msg, addLog)
@@ -225,10 +280,6 @@ func (w *Worker) dispatch(ctx context.Context, msg *models.TaskMessage, addLog l
 		return w.execGeneric(ctx, msg, addLog)
 	}
 }
-
-// ─── HTTP Request ─────────────────────────────────────────────────────────────
-// Config: url (string), method (string), headers (map), body (string|object),
-//         timeout_ms (number)
 
 func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
 	cfg := msg.Config

@@ -1,16 +1,29 @@
+version: '3.9'
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+# fluxor-internal: backend services (postgres, redis, minio, backend)
+#                  NOT accessible from task containers.
+# fluxor-tasks:    isolated network for ephemeral task containers.
+#                  Internal=true → no internet, no route to postgres/redis.
+#                  Created by the worker at startup; defined here so Compose
+#                  knows about it.
 networks:
-  fluxor:
+  fluxor-internal:
     driver: bridge
+  fluxor-tasks:
+    driver: bridge
+    internal: true   # task containers have no external routing
 
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
 
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    networks: [fluxor]
+    networks: [fluxor-internal]
     environment:
       POSTGRES_DB: workflow
       POSTGRES_USER: workflow
@@ -28,7 +41,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    networks: [fluxor]
+    networks: [fluxor-internal]
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports: ["6379:6379"]
     volumes: [redis_data:/data]
@@ -37,13 +50,31 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    networks: [fluxor-internal]
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console  →  http://localhost:9001
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    networks: [fluxor]
+    networks: [fluxor-internal]
     ports:
       - "8080:8080"
       - "9090:9090"
@@ -55,20 +86,32 @@ services:
       LOG_LEVEL: info
       WORKER_COUNT: "3"
       WORKER_CONCURRENCY: "5"
+      # MinIO artifact storage
+      MINIO_ENDPOINT:   minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET:     fluxor-artifacts
+      MINIO_USE_SSL:    "false"
+      # Docker-out-of-Docker: mount the host socket so the backend can
+      # spawn isolated task containers on the host Docker daemon.
+      DOCKER_HOST:      unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s
 
   frontend:
     image: nginx:1.25-alpine
     restart: unless-stopped
-    networks: [fluxor]
+    networks: [fluxor-internal]
     ports: ["3000:80"]
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
@@ -78,7 +121,7 @@ services:
 
   redis-commander:
     image: rediscommander/redis-commander:latest
-    networks: [fluxor]
+    networks: [fluxor-internal]
     environment:
       REDIS_HOSTS: "fluxor:redis:6379"
     ports: ["8081:8081"]
