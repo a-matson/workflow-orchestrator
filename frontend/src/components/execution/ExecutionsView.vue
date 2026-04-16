@@ -329,10 +329,11 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+	import { ref, computed, watch } from 'vue'
 	import StatusBadge from '../shared/StatusBadge.vue'
 	import type { WorkflowExecution, TaskExecution } from '../../types'
 	import { STATUS_COLORS, TASK_TYPES } from '../../types'
+	import { useNow } from '@/composables/useNow'
 
 	const props = defineProps<{
 		executions: WorkflowExecution[]
@@ -351,13 +352,7 @@
 	// ── State ─────────────────────────────────────────────────
 	const statusFilter = ref('')
 	const selectedTaskDefId = ref<string | null>(null)
-	const now = ref(Date.now())
-	let timer: ReturnType<typeof setInterval>
-
-	onMounted(() => {
-		timer = setInterval(() => (now.value = Date.now()), 1000)
-	})
-	onUnmounted(() => clearInterval(timer))
+	const now = useNow()
 
 	// ── Computed: exec list ───────────────────────────────────
 	const filteredExecs = computed(() =>

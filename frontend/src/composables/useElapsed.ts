@@ -1,19 +1,8 @@
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed } from 'vue'
+import { useNow } from './useNow'
 
-/**
- * Reactive elapsed-time formatter.
- * Ticks every second and returns a human-readable string.
- */
 export function useElapsed(startAt: () => string | undefined, endAt?: () => string | undefined) {
-	const now = ref(Date.now())
-	let timer: ReturnType<typeof setInterval>
-
-	onMounted(() => {
-		timer = setInterval(() => {
-			now.value = Date.now()
-		}, 1000)
-	})
-	onUnmounted(() => clearInterval(timer))
+	const now = useNow()
 
 	const ms = computed(() => {
 		const start = startAt()
@@ -33,13 +22,4 @@ export function useElapsed(startAt: () => string | undefined, endAt?: () => stri
 	})
 
 	return { ms, formatted }
-}
-
-/**
- * Format a Date/string timestamp as HH:MM:SS.mmm
- */
-export function formatTimestamp(ts: string): string {
-	const d = new Date(ts)
-	const pad = (n: number, l = 2) => String(n).padStart(l, '0')
-	return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
 }
