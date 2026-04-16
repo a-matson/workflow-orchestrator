@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { WorkflowDefinition, WorkflowExecution, PlatformMetrics } from '../types'
+import type { WorkflowDefinition, WorkflowExecution, PlatformMetrics, LogEntry } from '../types'
 import { api } from '../composables/useApi'
 
 export const useWorkflowStore = defineStore('workflows', () => {
@@ -132,7 +132,7 @@ export const useWorkflowStore = defineStore('workflows', () => {
 			}
 		}
 
-		if (type.startsWith('task.')) {
+		if (type.startsWith('task.') && type !== 'task.log') {
 			const task = payload as { id: string; workflow_exec_id: string; status: string }
 			// Update task in selectedExecution if it matches
 			if (selectedExecution.value?.id === task.workflow_exec_id) {
@@ -148,6 +148,35 @@ export const useWorkflowStore = defineStore('workflows', () => {
 				const tIdx = exec.tasks.findIndex((t) => t.id === task.id)
 				if (tIdx >= 0) {
 					Object.assign(exec.tasks[tIdx], task)
+				}
+			}
+		}
+
+		if (type === 'task.log') {
+			const payloadLog = payload as { task_exec_id: string; entry: LogEntry }
+
+			// Apply to selected execution if active
+			if (selectedExecution.value) {
+				const task = selectedExecution.value.tasks.find((t) => t.id === payloadLog.task_exec_id)
+				if (task) {
+					task.logs = task.logs || []
+					task.logs.push(payloadLog.entry)
+					// PREVENT MEMORY LEAK
+					if (task.logs.length > 2000) task.logs.shift()
+				}
+			}
+
+			// Apply to general execution list
+			const exec = executions.value.find((e) =>
+				e.tasks?.some((t) => t.id === payloadLog.task_exec_id),
+			)
+			if (exec) {
+				const task = exec.tasks.find((t) => t.id === payloadLog.task_exec_id)
+				if (task) {
+					task.logs = task.logs || []
+					task.logs.push(payloadLog.entry)
+					// PREVENT MEMORY LEAK
+					if (task.logs.length > 2000) task.logs.shift()
 				}
 			}
 		}
