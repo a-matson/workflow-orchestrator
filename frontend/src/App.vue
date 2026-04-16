@@ -43,11 +43,13 @@
 			</RouterView>
 		</main>
 		<Teleport to="body">
-			<Transition name="toast">
-				<div v-if="toast" class="toast" :class="toast.type">
-					{{ toast.message }}
-				</div>
-			</Transition>
+			<div class="toast-container">
+				<TransitionGroup name="toast">
+					<div v-for="t in toasts" :key="t.id" class="toast" :class="t.type">
+						{{ t.message }}
+					</div>
+				</TransitionGroup>
+			</div>
 		</Teleport>
 	</div>
 </template>
@@ -80,16 +82,18 @@
 	})
 
 	interface Toast {
+		id: number
 		message: string
 		type: 'success' | 'error' | 'info'
 	}
-	const toast = ref<Toast | null>(null)
-	let toastTimer = 0
+	const toasts = ref<Toast[]>([])
+	let toastIdCounter = 0
 	function showToast(message: string, type: Toast['type'] = 'info') {
-		clearTimeout(toastTimer)
-		toast.value = { message, type }
-		toastTimer = window.setTimeout(() => {
-			toast.value = null
+		const id = toastIdCounter++
+		toasts.value.push({ id, message, type })
+
+		window.setTimeout(() => {
+			toasts.value = toasts.value.filter((t) => t.id !== id)
 		}, 3500)
 	}
 	provide('showToast', showToast)
@@ -260,11 +264,20 @@
 	.fade-leave-to {
 		opacity: 0;
 	}
-	.toast {
+	.toast-container {
 		position: fixed;
 		bottom: 20px;
 		right: 20px;
 		z-index: 9999;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		pointer-events: none;
+	}
+	.toast {
+		position: relative;
+		bottom: auto;
+		right: auto;
 		padding: 10px 18px;
 		border-radius: var(--r);
 		font-size: 12px;
