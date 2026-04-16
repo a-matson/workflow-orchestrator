@@ -83,7 +83,10 @@ func TestStore_SaveWorkflowDefinition_Upsert(t *testing.T) {
 		t.Fatalf("upsert failed: %v", err)
 	}
 
-	got, _ := store.GetWorkflowDefinition(ctx, def.ID)
+	got, err := store.GetWorkflowDefinition(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
 	if got.Name != "Updated" {
 		t.Errorf("expected Updated, got %s", got.Name)
 	}
@@ -164,7 +167,10 @@ func TestStore_UpdateWorkflowExecution(t *testing.T) {
 		t.Fatalf("update failed: %v", err)
 	}
 
-	got, _ := store.GetWorkflowExecution(ctx, exec.ID)
+	got, err := store.GetWorkflowExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
 	if got.Status != models.WorkflowStatusCompleted {
 		t.Errorf("expected Completed, got %s", got.Status)
 	}
@@ -238,7 +244,10 @@ func TestStore_AppendTaskLog(t *testing.T) {
 		t.Fatalf("append log failed: %v", err)
 	}
 
-	got, _ := store.GetTaskExecution(ctx, task.ID)
+	got, err := store.GetTaskExecution(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get task failed: %v", err)
+	}
 	if len(got.Logs) != 1 {
 		t.Errorf("expected 1 log, got %d", len(got.Logs))
 	}

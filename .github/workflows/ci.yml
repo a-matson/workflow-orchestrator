@@ -82,11 +82,13 @@ jobs:
       - name: Run database migrations
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client
-          psql -h localhost -U workflow -d workflow_test <<EOF
-          CREATE EXTENSION IF NOT EXISTS pg_trgm;
-          $(cat migrations/001_initial_schema.sql)
-          $(cat migrations/002_performance_indexes.sql)
-          EOF
+          
+          psql -h localhost -U workflow -d workflow_test -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+          
+          for f in migrations/*.sql; do
+            echo "Applying $f..."
+            psql -h localhost -U workflow -d workflow_test -f "$f"
+          done
         env:
           PGPASSWORD: workflow
         working-directory: backend
