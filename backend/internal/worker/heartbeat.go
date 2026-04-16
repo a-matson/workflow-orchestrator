@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/rs/zerolog/log"
+
+	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 )
 
 const (

@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/go-redis/redis/v8"
+
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
 const (

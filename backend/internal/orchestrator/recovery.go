@@ -4,9 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
-	"github.com/rs/zerolog/log"
 )
 
 // RecoverInFlightExecutions reloads all RUNNING workflow executions from PostgreSQL

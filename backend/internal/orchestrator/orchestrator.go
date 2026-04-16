@@ -6,12 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
+
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/retry"
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
 
 // Orchestrator is the central coordinator that:

@@ -13,10 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
-	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 )
 
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
