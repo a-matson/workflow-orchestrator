@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/workflow-platform/backend/internal/models"
-	"github.com/workflow-platform/backend/internal/orchestrator"
-	"github.com/workflow-platform/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 )
 
 // GRPCServer implements OrchestratorServiceServer (generated from orchestrator.proto).

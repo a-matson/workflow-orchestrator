@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/workflow-platform/backend/internal/models"
-	"github.com/workflow-platform/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 )
 
 func setupStore(t *testing.T) *persistence.Store {

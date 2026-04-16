@@ -1,4 +1,4 @@
-module github.com/workflow-platform/backend
+module github.com/a-matson/workflow-orchestrator/backend
 
 go 1.25.0
 

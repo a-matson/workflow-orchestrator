@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
-	"github.com/workflow-platform/backend/internal/models"
 )
 
 var upgrader = websocket.Upgrader{

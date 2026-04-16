@@ -3,8 +3,8 @@ package dag_test
 import (
 	"testing"
 
-	"github.com/workflow-platform/backend/internal/dag"
-	"github.com/workflow-platform/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
 func makeWorkflow(tasks []models.TaskDefinition) *models.WorkflowDefinition {

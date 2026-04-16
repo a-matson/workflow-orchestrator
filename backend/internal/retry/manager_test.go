@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/workflow-platform/backend/internal/models"
-	"github.com/workflow-platform/backend/internal/retry"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/retry"
 )
 
 func TestNextRetryDelay_ExponentialGrowth(t *testing.T) {

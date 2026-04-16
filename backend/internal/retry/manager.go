@@ -6,8 +6,8 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/rs/zerolog/log"
-	"github.com/workflow-platform/backend/internal/models"
 )
 
 // DefaultPolicy is used when no task-level policy is specified

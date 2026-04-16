@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/rs/zerolog/log"
-	"github.com/workflow-platform/backend/internal/orchestrator"
-	"github.com/workflow-platform/backend/internal/persistence"
 )
 
 // ResultProcessor continuously reads from the Redis result queue

@@ -3,7 +3,7 @@ package dag
 import (
 	"fmt"
 
-	"github.com/workflow-platform/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
 // Graph represents the Directed Acyclic Graph of tasks
