@@ -21,6 +21,8 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 )
 
+var dbCache sync.Map // map[string]*sql.DB
+
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
@@ -395,24 +397,26 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 
 	addLog("info", fmt.Sprintf("Connecting (%s)", driver), nil)
 
-	db, err := sql.Open(driver, connStr)
-	if err != nil {
-		return nil, fmt.Errorf("database_query: open: %w", err)
-	}
-	defer func() {
-		if closeErr := db.Close(); closeErr != nil {
-			log.Warn().Err(closeErr).Msg("failed to close database connection")
+	// Use cached connection pool
+	var db *sql.DB
+	if cached, ok := dbCache.Load(connStr); ok {
+		db = cached.(*sql.DB)
+	} else {
+		var err error
+		db, err = sql.Open(driver, connStr)
+		if err != nil {
+			return nil, fmt.Errorf("database_query: open: %w", err)
 		}
-	}()
-	db.SetConnMaxLifetime(30 * time.Second)
-	db.SetMaxOpenConns(2)
+		// Configure pool limits appropriately
+		db.SetConnMaxLifetime(30 * time.Minute)
+		db.SetMaxOpenConns(5)
+		dbCache.Store(connStr, db)
+	}
 
 	addLog("info", "Executing query", map[string]any{"query": truncate(query, 200)})
 
-	qCtx, qCancel := context.WithTimeout(ctx, 60*time.Second)
-	defer qCancel()
 
-	rows, err := db.QueryContext(qCtx, query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("database_query: %w", err)
 	}
