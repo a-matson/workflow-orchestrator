@@ -476,10 +476,7 @@ func (w *Worker) execDataTransform(ctx context.Context, msg *models.TaskMessage,
 		"script":        truncate(script, 200),
 	})
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", script)
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -533,10 +530,7 @@ func (w *Worker) execMLInference(ctx context.Context, msg *models.TaskMessage, a
 		"input": inputPath, "output": outputPath, "batch_size": batchSize,
 	})
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, modelName, args...)
+	cmd := exec.CommandContext(ctx, modelName, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -718,10 +712,7 @@ func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLo
 		"args":    args,
 	})
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, command, args...)
+	cmd := exec.CommandContext(ctx, command, args...)
 
 	if envMap, ok := cfg["env"].(map[string]any); ok {
 		for k, v := range envMap {
