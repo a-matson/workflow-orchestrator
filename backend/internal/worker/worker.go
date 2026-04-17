@@ -139,10 +139,46 @@ func (w *Worker) run(ctx context.Context) {
 				return
 			}
 
-			go func(taskMsg *models.TaskMessage) {
-				defer func() { <-w.semaphore }()
+			go func(ctx context.Context, taskMsg *models.TaskMessage) {
+				defer func(ctx context.Context) {
+					if r := recover(); r != nil {
+						// Log the panic on the worker
+						log.Error().
+							Interface("panic", r).
+							Str("worker_id", w.id).
+							Str("task_exec_id", taskMsg.TaskExecID).
+							Msg("recovered from panic during task execution")
+
+						// Notify the orchestrator immediately
+						reportCtx, reportCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+						defer reportCancel()
+
+						errMsg := fmt.Sprintf("worker panic: %v", r)
+
+						result := &models.TaskResult{
+							TaskExecID:     taskMsg.TaskExecID,
+							WorkflowExecID: taskMsg.WorkflowExecID,
+							WorkerID:       w.id,
+							Success:        false,
+							Error:          errMsg,
+							StartedAt:      time.Now(), // Fallback approximation
+							CompletedAt:    time.Now(),
+						}
+
+						if err := w.redis.PublishResult(reportCtx, result); err != nil {
+							log.Error().
+								Err(err).
+								Str("task_exec_id", taskMsg.TaskExecID).
+								Msg("failed to publish panic result to orchestrator")
+						}
+					}
+
+					// Release the concurrency slot back to the worker pool
+					<-w.semaphore
+				}(ctx)
+
 				w.executeTask(ctx, taskMsg)
-			}(msg)
+			}(ctx, msg)
 		}
 	}
 }
