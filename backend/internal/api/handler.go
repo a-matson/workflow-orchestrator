@@ -137,11 +137,7 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if limit == 0 {
-		limit = 50
-	}
+	limit, offset := parsePagination(r, 50)
 
 	execs, err := h.store.ListWorkflowExecutions(r.Context(), limit, offset)
 	if err != nil {
@@ -320,4 +316,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func parsePagination(r *http.Request, defaultLimit int) (int, int) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	return limit, offset
 }
