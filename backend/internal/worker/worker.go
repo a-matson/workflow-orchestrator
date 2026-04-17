@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -152,23 +153,36 @@ func (w *Worker) run(ctx context.Context) {
 func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	startedAt := time.Now()
 
-	log.Info().
+	taskLogger := log.With().
 		Str("worker_id", w.id).
 		Str("task_exec_id", msg.TaskExecID).
 		Str("task_type", msg.TaskType).
 		Str("task_name", msg.TaskName).
 		Int("retry", msg.RetryCount).
 		Bool("isolated", msg.Container != nil && w.executor != nil).
-		Msg("executing task")
+		Logger()
+
+	taskLogger.Info().Msg("executing task")
 
 	var logs []models.LogEntry
 	addLog := func(level, message string, fields map[string]any) {
-		logs = append(logs, models.LogEntry{
+		entry := models.LogEntry{
 			Timestamp: time.Now(),
 			Level:     level,
 			Message:   message,
 			Fields:    fields,
-		})
+		}
+		logs = append(logs, entry)
+
+		// Broadcast to Web UI in Real-Time
+		_ = w.redis.PublishLiveLog(ctx, msg.TaskExecID, entry)
+
+		// Write Structured Backend Console Logging
+		evt := taskLogger.WithLevel(parseLogLevel(level))
+		for k, v := range fields {
+			evt = evt.Interface(k, v)
+		}
+		evt.Msg(message)
 	}
 
 	// Create execution context with timeout
@@ -414,7 +428,6 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	}
 
 	addLog("info", "Executing query", map[string]any{"query": truncate(query, 200)})
-
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -758,4 +771,18 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// parseLogLevel converts string log levels to zerolog levels
+func parseLogLevel(level string) zerolog.Level {
+	switch level {
+	case "warn":
+		return zerolog.WarnLevel
+	case "error":
+		return zerolog.ErrorLevel
+	case "debug":
+		return zerolog.DebugLevel
+	default:
+		return zerolog.InfoLevel
+	}
 }
