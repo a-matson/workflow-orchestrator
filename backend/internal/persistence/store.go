@@ -3,13 +3,18 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
+
+// Public sentinel error
+var ErrNotFound = errors.New("resource not found")
 
 // Store provides persistence for workflow executions and task states
 type Store struct {
@@ -82,7 +87,11 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 	var tasksJSON, tagsJSON []byte
 	err := row.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
 		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt)
+
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("scanning workflow definition: %w", err)
 	}
 

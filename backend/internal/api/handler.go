@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -73,7 +74,7 @@ func (h *Handler) Routes() *http.ServeMux {
 func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	var def models.WorkflowDefinition
 	if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		writeError(w, r, http.StatusBadRequest, "invalid request body: "+err.Error(), err)
 		return
 	}
 
@@ -86,7 +87,7 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
 		log.Error().Err(err).Msg("failed to save workflow definition")
-		writeError(w, http.StatusInternalServerError, "failed to save workflow")
+		writeError(w, r, http.StatusInternalServerError, "failed to save workflow", err)
 		return
 	}
 
@@ -96,7 +97,7 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	defs, err := h.store.ListWorkflowDefinitions(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list workflows")
+		writeError(w, r, http.StatusInternalServerError, "failed to list workflows", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workflows": defs, "count": len(defs)})
@@ -106,7 +107,11 @@ func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	def, err := h.store.GetWorkflowDefinition(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "workflow not found")
+		if errors.Is(err, persistence.ErrNotFound) {
+			writeError(w, r, http.StatusNotFound, "workflow not found", nil)
+		} else {
+			writeError(w, r, http.StatusInternalServerError, "internal server error", err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, def)
@@ -119,7 +124,7 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	def, err := h.store.GetWorkflowDefinition(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "workflow not found")
+		writeError(w, r, http.StatusNotFound, "workflow not found", err)
 		return
 	}
 
@@ -128,8 +133,7 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	exec, err := h.orchestrator.StartWorkflow(r.Context(), def, payload)
 	if err != nil {
-		log.Error().Err(err).Str("workflow_id", id).Msg("failed to start workflow")
-		writeError(w, http.StatusInternalServerError, "failed to start workflow: "+err.Error())
+		writeError(w, r, http.StatusInternalServerError, "failed to start workflow", err)
 		return
 	}
 
@@ -141,7 +145,7 @@ func (h *Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
 
 	execs, err := h.store.ListWorkflowExecutions(r.Context(), limit, offset)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list executions")
+		writeError(w, r, http.StatusInternalServerError, "failed to list executions", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"executions": execs, "count": len(execs)})
@@ -151,7 +155,7 @@ func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	exec, err := h.store.GetWorkflowExecution(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "execution not found")
+		writeError(w, r, http.StatusNotFound, "execution not found", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, exec)
@@ -161,11 +165,11 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	exec, err := h.store.GetWorkflowExecution(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "execution not found")
+		writeError(w, r, http.StatusNotFound, "execution not found", err)
 		return
 	}
 	if exec.Status != models.WorkflowStatusRunning && exec.Status != models.WorkflowStatusPending {
-		writeError(w, http.StatusConflict, "execution is not cancellable")
+		writeError(w, r, http.StatusConflict, "execution is not cancellable", err)
 		return
 	}
 	now := time.Now()
@@ -173,7 +177,7 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	exec.CompletedAt = &now
 	exec.UpdatedAt = now
 	if err := h.store.UpdateWorkflowExecution(r.Context(), exec); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to cancel execution")
+		writeError(w, r, http.StatusInternalServerError, "failed to cancel execution", err)
 		return
 	}
 	h.hub.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowFailed, Payload: exec})
@@ -184,19 +188,19 @@ func (h *Handler) RetryExecution(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	exec, err := h.store.GetWorkflowExecution(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "execution not found")
+		writeError(w, r, http.StatusNotFound, "execution not found", err)
 		return
 	}
 
 	def, err := h.store.GetWorkflowDefinition(r.Context(), exec.WorkflowID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "workflow definition not found")
+		writeError(w, r, http.StatusInternalServerError, "workflow definition not found", err)
 		return
 	}
 
 	newExec, err := h.orchestrator.StartWorkflow(r.Context(), def, exec.TriggerPayload)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to retry: "+err.Error())
+		writeError(w, r, http.StatusInternalServerError, "failed to retry: "+err.Error(), err)
 		return
 	}
 
@@ -209,7 +213,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	execID := r.PathValue("execID")
 	tasks, err := h.store.ListTaskExecutions(r.Context(), execID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list tasks")
+		writeError(w, r, http.StatusInternalServerError, "failed to list tasks", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks, "count": len(tasks)})
@@ -219,7 +223,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	task, err := h.store.GetTaskExecution(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeError(w, r, http.StatusNotFound, "task not found", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, task)
@@ -229,7 +233,7 @@ func (h *Handler) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	task, err := h.store.GetTaskExecution(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeError(w, r, http.StatusNotFound, "task not found", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logs": task.Logs, "task_id": id})
@@ -314,8 +318,23 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func writeError(w http.ResponseWriter, r *http.Request, status int, publicMsg string, internalErr error) {
+	reqID, _ := r.Context().Value(RequestIDKey).(string)
+
+	if internalErr != nil {
+		// Securely log the real error on the backend, tied to the Request ID
+		log.Error().
+			Err(internalErr).
+			Str("request_id", reqID).
+			Int("status", status).
+			Msg("api error")
+	}
+
+	// Return a safe message to the client, plus the ID
+	writeJSON(w, status, map[string]string{
+		"error":      publicMsg,
+		"request_id": reqID,
+	})
 }
 
 func parsePagination(r *http.Request, defaultLimit int) (int, int) {
