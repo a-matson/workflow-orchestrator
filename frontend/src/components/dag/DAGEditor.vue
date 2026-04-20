@@ -158,6 +158,108 @@
 					</div>
 					<p class="deps-hint">Connect nodes on the canvas to add dependencies</p>
 
+					<!-- ── Container Isolation ────────────────────────────────── -->
+					<div class="section-label">
+						Container Isolation
+						<label class="toggle-label">
+							<input
+								type="checkbox"
+								:checked="!!selectedNode.data.taskDef.container"
+								@change="toggleContainer"
+							/>
+							Enabled
+						</label>
+					</div>
+					<template v-if="selectedNode.data.taskDef.container">
+						<div class="field">
+							<label>Docker Image</label>
+							<input
+								class="cf-input cf-code"
+								:value="selectedNode.data.taskDef.container.image ?? 'alpine:3.19'"
+								placeholder="python:3.12-slim"
+								@input="patchContainer('image', ($event.target as HTMLInputElement).value)"
+							/>
+						</div>
+						<div class="field-row">
+							<div class="field">
+								<label>Memory (MB)</label>
+								<input
+									type="number"
+									min="64"
+									max="16384"
+									class="cf-input"
+									:value="selectedNode.data.taskDef.container.memory_mb ?? 256"
+									@change="patchContainer('memory_mb', +($event.target as HTMLInputElement).value)"
+								/>
+							</div>
+							<div class="field">
+								<label>CPU (milli)</label>
+								<input
+									type="number"
+									min="50"
+									max="8000"
+									class="cf-input"
+									:value="selectedNode.data.taskDef.container.cpu_millis ?? 500"
+									@change="patchContainer('cpu_millis', +($event.target as HTMLInputElement).value)"
+								/>
+							</div>
+						</div>
+					</template>
+
+					<!-- ── Artifacts ──────────────────────────────────────────── -->
+					<div class="section-label">Artifact Outputs</div>
+					<div class="deps-list">
+						<span
+							v-for="(art, i) in selectedNode.data.taskDef.artifacts_out ?? []"
+							:key="i"
+							class="dep-tag"
+						>
+							{{ art.path }}
+							<button @click="removeArtifactOut(i)">×</button>
+						</span>
+					</div>
+					<div class="artifact-add-row">
+						<input
+							v-model="newArtifactOutPath"
+							class="cf-input"
+							placeholder="output.json"
+							style="flex: 1"
+							@keydown.enter.prevent="addArtifactOut"
+						/>
+						<button class="btn-add" :disabled="!newArtifactOutPath" @click="addArtifactOut">
+							+
+						</button>
+					</div>
+					<p class="deps-hint">
+						Files written to /workspace that will be uploaded to MinIO after execution
+					</p>
+
+					<div class="section-label">Artifact Inputs</div>
+					<div class="deps-list">
+						<span
+							v-for="(art, i) in selectedNode.data.taskDef.artifacts_in ?? []"
+							:key="i"
+							class="dep-tag dep-tag--in"
+						>
+							{{ art.path }}
+							<button @click="removeArtifactIn(i)">×</button>
+						</span>
+					</div>
+					<div class="artifact-add-row">
+						<input
+							v-model="newArtifactInPath"
+							class="cf-input"
+							placeholder="input.json"
+							style="flex: 1"
+							@keydown.enter.prevent="addArtifactIn"
+						/>
+						<button class="btn-add" :disabled="!newArtifactInPath" @click="addArtifactIn">+</button>
+					</div>
+					<p class="deps-hint">
+						Files produced by dependency tasks that will be injected into /workspace before
+						execution
+					</p>
+
 					<button class="btn-delete" @click="deleteSelectedNode">Delete Task</button>
 				</div>
 			</div>
@@ -177,7 +279,7 @@
 	import { v4 as uuidv4 } from 'uuid'
 	import { useWorkflowStore } from '../../stores/workflow'
 	import { TASK_TYPES } from '../../types'
-	import type { DAGNode, DAGEdge, TaskDefinition } from '../../types'
+	import type { DAGNode, DAGEdge, TaskDefinition, ContainerSpec, ArtifactRef } from '../../types'
 	import TaskNode from './TaskNode.vue'
 	import TaskConfigFields from './TaskConfigFields.vue'
 
@@ -195,6 +297,8 @@
 	const saving = ref(false)
 	const savedWorkflowId = ref<string | null>(null)
 	const banner = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+	const newArtifactOutPath = ref('')
+	const newArtifactInPath = ref('')
 
 	const nodeTypes = { taskNode: markRaw(TaskNode) }
 	const defaultEdgeOptions = {
@@ -375,6 +479,59 @@
 			jitter: true,
 		}
 		selectedNode.value.data.taskDef.retry_policy = { ...policy, [field]: value }
+	}
+
+	// ── Container helpers ──────────────────────────────────────────
+	function toggleContainer() {
+		if (!selectedNode.value) return
+		if (selectedNode.value.data.taskDef.container) {
+			selectedNode.value.data.taskDef.container = undefined
+		} else {
+			selectedNode.value.data.taskDef.container = {
+				image: 'alpine:3.19',
+				memory_mb: 256,
+				cpu_millis: 500,
+			}
+		}
+	}
+
+	function patchContainer(key: keyof ContainerSpec, value: unknown) {
+		if (!selectedNode.value?.data.taskDef.container) return
+		selectedNode.value.data.taskDef.container = {
+			...selectedNode.value.data.taskDef.container,
+			[key]: value,
+		}
+	}
+
+	// ── Artifact helpers ─────────────────────────────────────────────────────────
+	function addArtifactOut() {
+		if (!selectedNode.value || !newArtifactOutPath.value.trim()) return
+		const task = selectedNode.value.data.taskDef
+		if (!task.artifacts_out) task.artifacts_out = []
+		const path = newArtifactOutPath.value.trim()
+		if (!task.artifacts_out.find((a: ArtifactRef) => a.path === path)) {
+			task.artifacts_out.push({ path })
+		}
+		newArtifactOutPath.value = ''
+	}
+
+	function removeArtifactOut(i: number) {
+		selectedNode.value?.data.taskDef.artifacts_out?.splice(i, 1)
+	}
+
+	function addArtifactIn() {
+		if (!selectedNode.value || !newArtifactInPath.value.trim()) return
+		const task = selectedNode.value.data.taskDef
+		if (!task.artifacts_in) task.artifacts_in = []
+		const path = newArtifactInPath.value.trim()
+		if (!task.artifacts_in.find((a: ArtifactRef) => a.path === path)) {
+			task.artifacts_in.push({ path })
+		}
+		newArtifactInPath.value = ''
+	}
+
+	function removeArtifactIn(i: number) {
+		selectedNode.value?.data.taskDef.artifacts_in?.splice(i, 1)
 	}
 
 	// ── Layout ─────────────────────────────────────────────────────
@@ -828,6 +985,50 @@
 		padding: 0;
 		font-size: 13px;
 		line-height: 1;
+	}
+	.section-label {
+		font-size: 9px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--text3);
+		margin-top: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.toggle-label {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 10px;
+		font-weight: 500;
+		text-transform: none;
+		letter-spacing: 0;
+		color: var(--text2);
+		cursor: pointer;
+	}
+	.toggle-label input {
+		cursor: pointer;
+	}
+	.field-row {
+		display: flex;
+		gap: 8px;
+	}
+	.field-row .field {
+		flex: 1;
+	}
+	.artifact-add-row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.dep-tag--in {
+		background: rgba(34, 211, 160, 0.1);
+		color: var(--green);
+	}
+	.dep-tag--in button {
+		color: var(--green);
 	}
 	.no-deps {
 		font-size: 11px;

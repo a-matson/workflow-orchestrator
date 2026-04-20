@@ -8,7 +8,7 @@ PROTO_OUT    = ./backend/proto/gen
 FRONTEND_DIR = ./frontend
 MIGRATION_DIR = ./backend/migrations
 
-DB_URL ?= postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable
+DB_URL ?= postgres://workflow:workflow@localhost:5433/workflow?sslmode=disable
 REDIS  ?= localhost:6379
 
 # ── Default ───────────────────────────────────────────────
@@ -20,7 +20,7 @@ dev:
 	@make -j3 dev-backend dev-frontend dev-infra
 
 dev-infra:
-	docker compose up postgres redis --wait
+	docker compose up postgres redis minio --wait
 
 dev-backend:
 	cd backend && POSTGRES_URL="$(DB_URL)" REDIS_ADDR="$(REDIS)" \

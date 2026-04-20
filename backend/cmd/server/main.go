@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/scheduler"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/worker"
 )
 
@@ -46,7 +46,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// ── Configuration ────────────────────────────────────────────
+	// Configuration
 	postgresURL := getEnv("POSTGRES_URL", "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable")
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
@@ -55,8 +55,14 @@ func main() {
 	metricsAddr := getEnv("METRICS_ADDR", ":9091")
 	workerCount := getEnvInt("WORKER_COUNT", 3)
 	workerConc := getEnvInt("WORKER_CONCURRENCY", 5)
+	// MinIO / artifact storage
+	minioEndpoint := getEnv("MINIO_ENDPOINT", "localhost:9000")
+	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
+	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin")
+	minioBucket := getEnv("MINIO_BUCKET", "fluxor-artifacts")
+	minioSSL := getEnv("MINIO_USE_SSL", "false") == "true"
 
-	// ── Prometheus ───────────────────────────────────────────────
+	// Prometheus
 	reg := prometheus.NewRegistry()
 	prom := metrics.NewMetrics(reg)
 	log.Info().Str("addr", metricsAddr).Msg("Prometheus metrics endpoint")
@@ -71,7 +77,7 @@ func main() {
 	}()
 	_ = prom // used via prometheus.MustRegister in metrics package
 
-	// ── Redis ────────────────────────────────────────────────────
+	// Redis
 	log.Info().Str("addr", redisAddr).Msg("connecting to Redis")
 	redisClient := persistence.NewRedisClient(redisAddr, redisPassword, 0)
 	if err := redisClient.Ping(ctx); err != nil {
@@ -80,7 +86,15 @@ func main() {
 	log.Info().Msg("Redis connected")
 	defer func() { _ = redisClient.Close() }()
 
-	// ── PostgreSQL ───────────────────────────────────────────────
+	// MinIO (artifact storage)
+	log.Info().Str("endpoint", minioEndpoint).Msg("connecting to MinIO")
+	minioClient, err := storage.NewClient(ctx, minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL)
+	if err != nil {
+		log.Warn().Err(err).Msg("MinIO unavailable — artifact storage disabled; tasks run in-process")
+		minioClient = nil
+	}
+
+	// PostgreSQL
 	log.Info().Msg("connecting to PostgreSQL")
 	store, err := persistence.NewStore(ctx, postgresURL)
 	if err != nil {
@@ -89,22 +103,22 @@ func main() {
 	log.Info().Msg("PostgreSQL connected")
 	defer store.Close()
 
-	// ── Core services ────────────────────────────────────────────
+	// Core services
 	hub := api.NewHub()
 	go hub.Run()
 
 	orch := orchestrator.NewOrchestrator(store, redisClient, hub)
 
-	// ── Crash recovery: reload in-flight executions ───────────────
+	// Crash recovery: reload in-flight executions
 	log.Info().Msg("running crash recovery...")
 	if err := orch.RecoverInFlightExecutions(ctx); err != nil {
 		log.Warn().Err(err).Msg("crash recovery encountered errors (non-fatal)")
 	}
 
-	// ── Background services ───────────────────────────────────────
+	// Background services
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
 	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
-	workerPool := worker.NewPoolWithNotifier(redisClient, workerCount, workerConc, orch)
+	workerPool := worker.NewPoolFull(redisClient, workerCount, workerConc, orch, minioClient)
 	watchdog := worker.NewTaskWatchdog(redisClient)
 
 	go resultProcessor.Run(ctx)
@@ -112,8 +126,8 @@ func main() {
 	go workerPool.Start(ctx)
 	go watchdog.Run(ctx)
 
-	// ── HTTP server ───────────────────────────────────────────────
-	handler := api.NewHandler(store, redisClient, orch, hub)
+	// HTTP server
+	handler := api.NewHandlerWithStorage(store, redisClient, orch, hub, minioClient)
 	rawMux := handler.Routes()
 
 	// Compose middleware chain
@@ -142,7 +156,7 @@ func main() {
 		}
 	}()
 
-	// ── gRPC server ───────────────────────────────────────────────
+	// gRPC server
 	grpcSrv := grpc.NewServer(
 		grpc.UnaryInterceptor(api.UnaryInterceptor),
 	)
@@ -161,8 +175,7 @@ func main() {
 		}
 	}()
 
-	// ── Graceful shutdown ─────────────────────────────────────────
-	logStartupBanner(httpAddr, grpcAddr, metricsAddr, workerCount, workerConc)
+	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
@@ -201,18 +214,4 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
-}
-
-// logStartupBanner logs a structured startup summary.
-func logStartupBanner(httpAddr, grpcAddr, metricsAddr string, workers, concurrency int) {
-	fmt.Printf(`
-┌────────────────────────────────────────────┐
-│  Fluxor Orchestration Platform             │
-│  Version: %-32s│
-│  HTTP:    %-32s│
-│  gRPC:    %-32s│
-│  Metrics: %-32s│
-│  Workers: %d × %d concurrency              │
-└────────────────────────────────────────────┘
-`, version, httpAddr, grpcAddr, metricsAddr, workers, concurrency)
 }

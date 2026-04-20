@@ -178,7 +178,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	log.Info().Str("exec_id", exec.ID).Str("workflow", def.Name).Msg("workflow execution started")
 
 	// Dispatch first wave of tasks (those with no dependencies)
-	go o.dispatchReadyTasks(ctx, execCtx)
+	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
 
 	return exec, nil
 }
@@ -216,6 +216,10 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 
 		execCtx.Queued[taskDefID] = true
 
+		// Resolve artifact inputs: for each ArtifactsIn spec, find the
+		// ResolvedArtifact produced by the dependency task that matches the path.
+		resolvedIn := o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn)
+
 		msg := &models.TaskMessage{
 			TaskExecID:       taskExec.ID,
 			WorkflowExecID:   execCtx.Execution.ID,
@@ -229,6 +233,9 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 			Timeout:          taskDef.Timeout,
 			EnqueuedAt:       time.Now(),
 			IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
+			Container:        taskDef.Container,
+			ArtifactsIn:      resolvedIn,
+			ArtifactsOut:     taskDef.ArtifactsOut,
 		}
 
 		if err := o.redis.EnqueueTask(ctx, msg); err != nil {
@@ -330,7 +337,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	taskExec.CompletedAt = &now
 	taskExec.WorkerID = result.WorkerID
 	taskExec.UpdatedAt = now
-
+	taskExec.ArtifactsOut = result.ArtifactsOut
 	dur := now.Sub(result.StartedAt)
 	taskExec.Duration = &dur
 
@@ -366,7 +373,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	}
 
 	// Dispatch next wave of now-unblocked tasks
-	go o.dispatchReadyTasks(ctx, execCtx)
+	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
 	return nil
 }
 
@@ -400,6 +407,10 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 		// Schedule retry in Redis
 		taskDef := execCtx.Graph.Nodes[taskDefID].Task
+		// Re-resolve artifact inputs for the retry: the dependency outputs are
+		// still in the TaskMap from the original run.
+		retryArtifactsIn := o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn)
+
 		msg := &models.TaskMessage{
 			TaskExecID:       taskExec.ID,
 			WorkflowExecID:   execCtx.Execution.ID,
@@ -412,6 +423,9 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 			MaxRetries:       taskExec.MaxRetries,
 			Timeout:          taskDef.Timeout,
 			IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
+			Container:        taskDef.Container,
+			ArtifactsIn:      retryArtifactsIn,
+			ArtifactsOut:     taskDef.ArtifactsOut,
 		}
 
 		if taskExec.NextRetryAt != nil {
@@ -523,6 +537,49 @@ func (o *Orchestrator) handleOrphanedResult(ctx context.Context, result *models.
 	}
 	log.Info().Str("exec_id", exec.ID).Msg("workflow state reloaded from DB")
 	return nil
+}
+
+// resolveArtifactsIn matches each ArtifactRef spec against the ResolvedArtifacts
+// produced by dependency tasks. For each path spec, it searches all completed
+// dependency tasks' ArtifactsOut for a matching path and returns the resolved key.
+func (o *Orchestrator) resolveArtifactsIn(
+	execCtx *ExecutionContext,
+	taskDefID string,
+	specs []models.ArtifactRef,
+) []models.ResolvedArtifact {
+	if len(specs) == 0 {
+		return nil
+	}
+
+	node := execCtx.Graph.Nodes[taskDefID]
+	if node == nil {
+		return nil
+	}
+
+	// Collect all artifacts produced by direct and transitive dependencies
+	depArtifacts := make(map[string]models.ResolvedArtifact) // path → resolved
+	for _, dep := range node.Dependencies {
+		depExec := execCtx.TaskMap[dep.Task.ID]
+		if depExec == nil {
+			continue
+		}
+		for _, art := range depExec.ArtifactsOut {
+			depArtifacts[art.Path] = art
+		}
+	}
+
+	var resolved []models.ResolvedArtifact
+	for _, spec := range specs {
+		if art, ok := depArtifacts[spec.Path]; ok {
+			resolved = append(resolved, art)
+		} else {
+			log.Warn().
+				Str("task_def_id", taskDefID).
+				Str("artifact_path", spec.Path).
+				Msg("artifact input not found among dependency outputs — will be missing in container")
+		}
+	}
+	return resolved
 }
 
 func (o *Orchestrator) GetMetrics() map[string]int64 {
