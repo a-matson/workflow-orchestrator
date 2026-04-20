@@ -107,7 +107,7 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 
 func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]*models.WorkflowDefinition, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, description, version, max_parallel, tags, created_at, updated_at
+		SELECT id, name, description, version, tasks, max_parallel, tags, created_at, updated_at
 		FROM workflow_definitions ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -118,11 +118,12 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]*models.Workflow
 	var defs []*models.WorkflowDefinition
 	for rows.Next() {
 		def := &models.WorkflowDefinition{}
-		var tagsJSON []byte
+		var tasksJSON, tagsJSON []byte
 		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-			&def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt); err != nil {
+			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(tasksJSON, &def.Tasks)
 		_ = json.Unmarshal(tagsJSON, &def.Tags)
 		defs = append(defs, def)
 	}

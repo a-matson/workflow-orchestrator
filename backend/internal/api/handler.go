@@ -40,6 +40,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/workflows", h.CreateWorkflow)
 	mux.HandleFunc("GET /api/workflows", h.ListWorkflows)
 	mux.HandleFunc("GET /api/workflows/{id}", h.GetWorkflow)
+	mux.HandleFunc("PUT /api/workflows/{id}", h.UpdateWorkflow)
 
 	// Workflow executions
 	mux.HandleFunc("POST /api/workflows/{id}/trigger", h.TriggerWorkflow)
@@ -101,6 +102,29 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workflows": defs, "count": len(defs)})
+}
+
+// UpdateWorkflow upserts a workflow definition by ID
+// PUT /api/workflows/{id}
+func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var def models.WorkflowDefinition
+	if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	def.ID = id // ensure URL ID wins
+	now := time.Now()
+	if def.CreatedAt.IsZero() {
+		def.CreatedAt = now
+	}
+	def.UpdatedAt = now
+	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
+		log.Error().Err(err).Str("id", id).Msg("failed to update workflow definition")
+		writeError(w, r, http.StatusInternalServerError, "failed to update workflow", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, def)
 }
 
 func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
