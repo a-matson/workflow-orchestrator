@@ -39,6 +39,35 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		}
 	}
 
+	async function updateDefinition(
+		id: string,
+		def: Omit<WorkflowDefinition, 'id' | 'created_at' | 'updated_at'>,
+	) {
+		try {
+			// PUT /api/workflows/:id — upserts via ON CONFLICT in the backend
+			const updated = await api.put<WorkflowDefinition>(`/api/workflows/${id}`, { ...def, id })
+			const idx = definitions.value.findIndex((d) => d.id === id)
+			if (idx >= 0) definitions.value[idx] = updated
+			else definitions.value.unshift(updated)
+			return updated
+		} catch (err) {
+			error.value = 'Failed to update workflow'
+			throw err
+		}
+	}
+
+	async function fetchDefinition(id: string) {
+		try {
+			const def = await api.get<WorkflowDefinition>(`/api/workflows/${id}`)
+			const idx = definitions.value.findIndex((d) => d.id === id)
+			if (idx >= 0) definitions.value[idx] = def
+			return def
+		} catch (err) {
+			error.value = 'Failed to load workflow'
+			throw err
+		}
+	}
+
 	async function fetchExecutions(limit = 50, offset = 0) {
 		try {
 			loading.value = true
@@ -195,6 +224,8 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		error,
 		fetchDefinitions,
 		createDefinition,
+		updateDefinition,
+		fetchDefinition,
 		fetchExecutions,
 		fetchExecution,
 		triggerWorkflow,

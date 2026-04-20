@@ -14,12 +14,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 )
+
+var dbCache sync.Map // map[string]*sql.DB
 
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
 // Using an interface avoids a circular import.
@@ -136,10 +139,46 @@ func (w *Worker) run(ctx context.Context) {
 				return
 			}
 
-			go func(taskMsg *models.TaskMessage) {
-				defer func() { <-w.semaphore }()
+			go func(ctx context.Context, taskMsg *models.TaskMessage) {
+				defer func(ctx context.Context) {
+					if r := recover(); r != nil {
+						// Log the panic on the worker
+						log.Error().
+							Interface("panic", r).
+							Str("worker_id", w.id).
+							Str("task_exec_id", taskMsg.TaskExecID).
+							Msg("recovered from panic during task execution")
+
+						// Notify the orchestrator immediately
+						reportCtx, reportCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+						defer reportCancel()
+
+						errMsg := fmt.Sprintf("worker panic: %v", r)
+
+						result := &models.TaskResult{
+							TaskExecID:     taskMsg.TaskExecID,
+							WorkflowExecID: taskMsg.WorkflowExecID,
+							WorkerID:       w.id,
+							Success:        false,
+							Error:          errMsg,
+							StartedAt:      time.Now(), // Fallback approximation
+							CompletedAt:    time.Now(),
+						}
+
+						if err := w.redis.PublishResult(reportCtx, result); err != nil {
+							log.Error().
+								Err(err).
+								Str("task_exec_id", taskMsg.TaskExecID).
+								Msg("failed to publish panic result to orchestrator")
+						}
+					}
+
+					// Release the concurrency slot back to the worker pool
+					<-w.semaphore
+				}(ctx)
+
 				w.executeTask(ctx, taskMsg)
-			}(msg)
+			}(ctx, msg)
 		}
 	}
 }
@@ -150,23 +189,36 @@ func (w *Worker) run(ctx context.Context) {
 func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	startedAt := time.Now()
 
-	log.Info().
+	taskLogger := log.With().
 		Str("worker_id", w.id).
 		Str("task_exec_id", msg.TaskExecID).
 		Str("task_type", msg.TaskType).
 		Str("task_name", msg.TaskName).
 		Int("retry", msg.RetryCount).
 		Bool("isolated", msg.Container != nil && w.executor != nil).
-		Msg("executing task")
+		Logger()
+
+	taskLogger.Info().Msg("executing task")
 
 	var logs []models.LogEntry
 	addLog := func(level, message string, fields map[string]any) {
-		logs = append(logs, models.LogEntry{
+		entry := models.LogEntry{
 			Timestamp: time.Now(),
 			Level:     level,
 			Message:   message,
 			Fields:    fields,
-		})
+		}
+		logs = append(logs, entry)
+
+		// Broadcast to Web UI in Real-Time
+		_ = w.redis.PublishLiveLog(ctx, msg.TaskExecID, entry)
+
+		// Write Structured Backend Console Logging
+		evt := taskLogger.WithLevel(parseLogLevel(level))
+		for k, v := range fields {
+			evt = evt.Interface(k, v)
+		}
+		evt.Msg(message)
 	}
 
 	// Create execution context with timeout
@@ -395,24 +447,25 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 
 	addLog("info", fmt.Sprintf("Connecting (%s)", driver), nil)
 
-	db, err := sql.Open(driver, connStr)
-	if err != nil {
-		return nil, fmt.Errorf("database_query: open: %w", err)
-	}
-	defer func() {
-		if closeErr := db.Close(); closeErr != nil {
-			log.Warn().Err(closeErr).Msg("failed to close database connection")
+	// Use cached connection pool
+	var db *sql.DB
+	if cached, ok := dbCache.Load(connStr); ok {
+		db = cached.(*sql.DB)
+	} else {
+		var err error
+		db, err = sql.Open(driver, connStr)
+		if err != nil {
+			return nil, fmt.Errorf("database_query: open: %w", err)
 		}
-	}()
-	db.SetConnMaxLifetime(30 * time.Second)
-	db.SetMaxOpenConns(2)
+		// Configure pool limits appropriately
+		db.SetConnMaxLifetime(30 * time.Minute)
+		db.SetMaxOpenConns(5)
+		dbCache.Store(connStr, db)
+	}
 
 	addLog("info", "Executing query", map[string]any{"query": truncate(query, 200)})
 
-	qCtx, qCancel := context.WithTimeout(ctx, 60*time.Second)
-	defer qCancel()
-
-	rows, err := db.QueryContext(qCtx, query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("database_query: %w", err)
 	}
@@ -472,10 +525,7 @@ func (w *Worker) execDataTransform(ctx context.Context, msg *models.TaskMessage,
 		"script":        truncate(script, 200),
 	})
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", script)
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -529,10 +579,7 @@ func (w *Worker) execMLInference(ctx context.Context, msg *models.TaskMessage, a
 		"input": inputPath, "output": outputPath, "batch_size": batchSize,
 	})
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, modelName, args...)
+	cmd := exec.CommandContext(ctx, modelName, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -714,10 +761,7 @@ func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLo
 		"args":    args,
 	})
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, command, args...)
+	cmd := exec.CommandContext(ctx, command, args...)
 
 	if envMap, ok := cfg["env"].(map[string]any); ok {
 		for k, v := range envMap {
@@ -763,4 +807,18 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// parseLogLevel converts string log levels to zerolog levels
+func parseLogLevel(level string) zerolog.Level {
+	switch level {
+	case "warn":
+		return zerolog.WarnLevel
+	case "error":
+		return zerolog.ErrorLevel
+	case "debug":
+		return zerolog.DebugLevel
+	default:
+		return zerolog.InfoLevel
+	}
 }

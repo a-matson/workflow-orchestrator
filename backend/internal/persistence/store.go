@@ -3,13 +3,18 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
+
+// Public sentinel error
+var ErrNotFound = errors.New("resource not found")
 
 // Store provides persistence for workflow executions and task states
 type Store struct {
@@ -82,7 +87,11 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 	var tasksJSON, tagsJSON []byte
 	err := row.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
 		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt)
+
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("scanning workflow definition: %w", err)
 	}
 
@@ -98,7 +107,7 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 
 func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]*models.WorkflowDefinition, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, description, version, max_parallel, tags, created_at, updated_at
+		SELECT id, name, description, version, tasks, max_parallel, tags, created_at, updated_at
 		FROM workflow_definitions ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -109,11 +118,12 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]*models.Workflow
 	var defs []*models.WorkflowDefinition
 	for rows.Next() {
 		def := &models.WorkflowDefinition{}
-		var tagsJSON []byte
+		var tasksJSON, tagsJSON []byte
 		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-			&def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt); err != nil {
+			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(tasksJSON, &def.Tasks)
 		_ = json.Unmarshal(tagsJSON, &def.Tags)
 		defs = append(defs, def)
 	}

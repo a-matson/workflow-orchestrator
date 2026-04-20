@@ -73,9 +73,18 @@
 		editorRef.value?.resetToEmpty()
 	}
 
-	function loadWorkflow(wf: WorkflowDefinition) {
+	async function loadWorkflow(wf: WorkflowDefinition) {
 		activeWorkflowId.value = wf.id
-		editorRef.value?.loadWorkflow(wf.name, wf.tasks)
+		try {
+			// Always fetch the full definition — the list endpoint may omit tasks
+			// in future if pagination is added. This guarantees nodes are populated.
+			const full = await store.fetchDefinition(wf.id)
+			editorRef.value?.loadWorkflow(full.name, full.tasks, full.id)
+		} catch {
+			// Fallback: use whatever was in the list (tasks may be empty if list was stale)
+			editorRef.value?.loadWorkflow(wf.name, wf.tasks, wf.id)
+			showToast?.('Warning: loaded from cache — some task details may be missing', 'error')
+		}
 	}
 
 	async function runWorkflow(wfId: string) {

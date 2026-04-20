@@ -628,9 +628,14 @@
 				tasks: nodes.value.map((n) => n.data.taskDef),
 				max_parallel: 10,
 			}
-			const created = await store.createDefinition(def)
-			savedWorkflowId.value = created.id
-			showBanner('success', `✓ Saved "${created.name}"`)
+			let result
+			if (savedWorkflowId.value) {
+				result = await store.updateDefinition(savedWorkflowId.value, def)
+			} else {
+				result = await store.createDefinition(def)
+				savedWorkflowId.value = result.id
+			}
+			showBanner('success', `✓ Saved "${result.name}"`)
 		} catch {
 			showBanner('error', 'Save failed — check backend connection')
 		} finally {
@@ -651,8 +656,9 @@
 
 	// ── Expose for parent (e.g. BuilderPage loading an existing wf) ─
 	defineExpose({
-		loadWorkflow(wfName: string, tasks: TaskDefinition[]) {
+		loadWorkflow(wfName: string, tasks: TaskDefinition[], wfId?: string) {
 			workflowName.value = wfName
+			if (wfId) savedWorkflowId.value = wfId
 			nodes.value = tasks?.map((t, i) => ({
 				id: t.id,
 				type: 'taskNode' as const,

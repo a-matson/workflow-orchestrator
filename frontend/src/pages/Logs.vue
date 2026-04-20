@@ -66,19 +66,21 @@
 						<span class="ll-lvl" :class="entry.level">{{ entry.level?.toUpperCase() }}</span>
 						<span class="ll-task">{{ entry._taskName }}</span>
 						<span class="ll-msg">
-							<template v-for="(seg, idx) in getHighlightSegments(entry.message)" :key="idx">
-								<mark
-									v-if="seg.match"
-									style="background: rgba(124, 106, 255, 0.3); color: inherit; border-radius: 2px"
-								>
-									{{ seg.text }}
-								</mark>
-								<template v-else>{{ seg.text }}</template>
-							</template>
+							<div>
+								<template v-for="(seg, idx) in getHighlightSegments(entry.message)" :key="idx">
+									<mark
+										v-if="seg.match"
+										style="background: rgba(124, 106, 255, 0.3); color: inherit; border-radius: 2px"
+									>
+										{{ seg.text }}
+									</mark>
+									<template v-else>{{ seg.text }}</template>
+								</template>
+							</div>
+							<span v-if="hasFields(entry.fields)" class="ll-fields">{{
+								JSON.stringify(entry.fields)
+							}}</span>
 						</span>
-						<span v-if="hasFields(entry.fields)" class="ll-fields">{{
-							JSON.stringify(entry.fields)
-						}}</span>
 					</div>
 				</div>
 			</template>
