@@ -271,7 +271,7 @@ func (h *Handler) ListTaskArtifacts(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 	task, err := h.store.GetTaskExecution(r.Context(), taskID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeError(w, r, http.StatusNotFound, "task not found", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -286,12 +286,12 @@ func (h *Handler) ListTaskArtifacts(w http.ResponseWriter, r *http.Request) {
 // GET /api/artifacts/url?key=artifacts/...&expires=60
 func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
 	if h.storage == nil {
-		writeError(w, http.StatusServiceUnavailable, "artifact storage not configured")
+		writeError(w, r, http.StatusServiceUnavailable, "artifact storage not configured", nil)
 		return
 	}
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		writeError(w, http.StatusBadRequest, "key parameter required")
+		writeError(w, r, http.StatusBadRequest, "key parameter required", nil)
 		return
 	}
 	expiresStr := r.URL.Query().Get("expires")
@@ -304,7 +304,7 @@ func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
 	url, err := h.storage.PresignURL(r.Context(), key, time.Duration(expiresMins)*time.Minute)
 	if err != nil {
 		log.Error().Err(err).Str("key", key).Msg("presign failed")
-		writeError(w, http.StatusInternalServerError, "could not generate download URL")
+		writeError(w, r, http.StatusInternalServerError, "could not generate download URL", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"url": url, "key": key})
