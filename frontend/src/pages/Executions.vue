@@ -153,6 +153,24 @@
 									>{{ expandedTask.retry_count }}/{{ expandedTask.max_retries }}</span
 								>
 							</div>
+							<!-- Artifacts produced by this task -->
+							<template v-if="expandedTask.artifacts_out?.length">
+								<div class="td-key" style="margin-top: 6px">Artifacts out</div>
+								<div class="artifact-list">
+									<a
+										v-for="art in expandedTask.artifacts_out"
+										:key="art.minio_key"
+										class="artifact-chip"
+										:href="artifactDownloadUrl(art.minio_key)"
+										target="_blank"
+										:title="art.minio_key"
+									>
+										<span class="artifact-icon">⬇</span>
+										{{ art.path }}
+										<span class="artifact-size">{{ fmtBytes(art.size) }}</span>
+									</a>
+								</div>
+							</template>
 							<!-- Last 8 log lines -->
 							<div v-if="expandedTask.logs?.length" class="task-mini-logs">
 								<div
@@ -302,6 +320,17 @@
 			if (updated) store.selectedExecution = updated
 		},
 	)
+
+	function artifactDownloadUrl(minioKey: string): string {
+		return `/api/artifacts/url?key=${encodeURIComponent(minioKey)}&expires=60`
+	}
+
+	function fmtBytes(bytes: number): string {
+		if (!bytes) return ''
+		if (bytes < 1024) return `${bytes}B`
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+		return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+	}
 </script>
 
 <style scoped>
@@ -683,5 +712,34 @@
 	.expand-leave-from {
 		max-height: 400px;
 		opacity: 1;
+	}
+	.artifact-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+		margin-top: 4px;
+	}
+	.artifact-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 3px 9px;
+		border-radius: 4px;
+		font-size: 10px;
+		font-family: var(--mono);
+		background: rgba(34, 211, 160, 0.08);
+		color: var(--green);
+		border: 1px solid rgba(34, 211, 160, 0.2);
+		text-decoration: none;
+	}
+	.artifact-chip:hover {
+		background: rgba(34, 211, 160, 0.18);
+	}
+	.artifact-icon {
+		font-size: 9px;
+	}
+	.artifact-size {
+		color: var(--text3);
+		font-size: 9px;
 	}
 </style>

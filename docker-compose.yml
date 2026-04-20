@@ -28,7 +28,7 @@ services:
       POSTGRES_DB: workflow
       POSTGRES_USER: workflow
       POSTGRES_PASSWORD: workflow
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d:ro

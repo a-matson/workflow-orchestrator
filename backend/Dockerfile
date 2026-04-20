@@ -16,7 +16,10 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates tzdata wget
 WORKDIR /app
 COPY --from=builder /workflow-server .
-RUN adduser -D -u 10001 appuser
+ARG DOCKER_GID=999
+RUN addgroup -g ${DOCKER_GID} docker && \
+    adduser -D -u 10001 appuser && \
+    addgroup appuser docker
 USER appuser
 EXPOSE 8080 9090 9091
 CMD ["./workflow-server"]

@@ -12,6 +12,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 )
 
 // Handler provides HTTP API endpoints for the workflow platform
@@ -20,10 +21,15 @@ type Handler struct {
 	redis        *persistence.RedisClient
 	orchestrator *orchestrator.Orchestrator
 	hub          *Hub
+	storage      *storage.Client
 }
 
 func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub) *Handler {
 	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub}
+}
+
+func NewHandlerWithStorage(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub, sc *storage.Client) *Handler {
+	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
@@ -49,6 +55,10 @@ func (h *Handler) Routes() *http.ServeMux {
 	// System
 	mux.HandleFunc("GET /api/metrics", h.GetMetrics)
 	mux.HandleFunc("GET /api/health", h.Health)
+
+	// Artifacts
+	mux.HandleFunc("GET /api/tasks/{id}/artifacts", h.ListTaskArtifacts)
+	mux.HandleFunc("GET /api/artifacts/url", h.GetArtifactURL)
 
 	// WebSocket
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +264,51 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // ==================== Helpers ====================
+
+// ListTaskArtifacts returns the artifacts produced by a task execution.
+// GET /api/tasks/{id}/artifacts
+func (h *Handler) ListTaskArtifacts(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("id")
+	task, err := h.store.GetTaskExecution(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"task_id":       task.ID,
+		"task_name":     task.TaskName,
+		"artifacts_in":  task.ArtifactsIn,
+		"artifacts_out": task.ArtifactsOut,
+	})
+}
+
+// GetArtifactURL returns a pre-signed download URL for an artifact.
+// GET /api/artifacts/url?key=artifacts/...&expires=60
+func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
+	if h.storage == nil {
+		writeError(w, http.StatusServiceUnavailable, "artifact storage not configured")
+		return
+	}
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "key parameter required")
+		return
+	}
+	expiresStr := r.URL.Query().Get("expires")
+	expiresMins := 60
+	if expiresStr != "" {
+		if n, err := strconv.Atoi(expiresStr); err == nil && n > 0 {
+			expiresMins = n
+		}
+	}
+	url, err := h.storage.PresignURL(r.Context(), key, time.Duration(expiresMins)*time.Minute)
+	if err != nil {
+		log.Error().Err(err).Str("key", key).Msg("presign failed")
+		writeError(w, http.StatusInternalServerError, "could not generate download URL")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": url, "key": key})
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

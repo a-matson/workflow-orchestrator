@@ -19,6 +19,28 @@ export interface RetryPolicy {
 	jitter: boolean
 }
 
+// Describes a file artifact stored in MinIO.
+export interface ArtifactRef {
+	path: string // relative workspace path, e.g. "output.json"
+	description?: string // optional label shown in UI
+}
+
+// Resolved artifact with full MinIO key (populated after upload).
+export interface ResolvedArtifact {
+	path: string // relative workspace path
+	minio_key: string // full MinIO object key
+	size: number // bytes
+}
+
+// Docker container spec for isolated task execution.
+export interface ContainerSpec {
+	image: string // e.g. "python:3.12-slim"
+	memory_mb?: number // MB, default 256
+	cpu_millis?: number // milli-CPUs, default 500
+	env?: Record<string, string>
+	work_dir?: string
+}
+
 export interface TaskDefinition {
 	id: string
 	name: string
@@ -29,6 +51,9 @@ export interface TaskDefinition {
 	timeout?: number
 	max_parallel?: number
 	metadata?: Record<string, string>
+	container?: ContainerSpec
+	artifacts_in?: ArtifactRef[]
+	artifacts_out?: ArtifactRef[]
 }
 
 export interface WorkflowDefinition {
@@ -72,6 +97,8 @@ export interface TaskExecution {
 	duration?: number
 	created_at: string
 	updated_at: string
+	artifacts_in?: ResolvedArtifact[]
+	artifacts_out?: ResolvedArtifact[]
 }
 
 export interface WorkflowExecution {

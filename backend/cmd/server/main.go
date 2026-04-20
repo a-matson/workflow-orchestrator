@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -128,7 +127,7 @@ func main() {
 	go watchdog.Run(ctx)
 
 	// HTTP server
-	handler := api.NewHandler(store, redisClient, orch, hub)
+	handler := api.NewHandlerWithStorage(store, redisClient, orch, hub, minioClient)
 	rawMux := handler.Routes()
 
 	// Compose middleware chain
@@ -177,7 +176,6 @@ func main() {
 	}()
 
 	// Graceful shutdown
-	logStartupBanner(httpAddr, grpcAddr, metricsAddr, workerCount, workerConc)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
@@ -216,18 +214,4 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
-}
-
-// logStartupBanner logs a structured startup summary.
-func logStartupBanner(httpAddr, grpcAddr, metricsAddr string, workers, concurrency int) {
-	fmt.Printf(`
-┌────────────────────────────────────────────┐
-│  Fluxor Orchestration Platform             │
-│  Version: %-32s│
-│  HTTP:    %-32s│
-│  gRPC:    %-32s│
-│  Metrics: %-32s│
-│  Workers: %d × %d concurrency              │
-└────────────────────────────────────────────┘
-`, version, httpAddr, grpcAddr, metricsAddr, workers, concurrency)
 }

@@ -18,7 +18,6 @@ package worker
 //                 to MinIO. Keys are: artifacts/{execID}/{taskDefID}/{path}
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
@@ -34,6 +33,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -294,12 +294,23 @@ func (ce *ContainerExecutor) collectLogs(ctx context.Context, containerID string
 	}
 	defer func() { _ = reader.Close() }()
 
-	var buf bytes.Buffer
-	// Docker log stream is multiplexed: each frame has an 8-byte header.
-	// Use io.Copy to strip the header automatically via docker's StdCopy if needed,
-	// but for simplicity we read raw (the header bytes won't affect text visibility).
-	_, _ = io.Copy(&buf, reader)
-	return buf.String(), nil
+	// Docker log stream is multiplexed: stdout and stderr share one TCP
+	// connection with 8-byte frame headers (stream type + payload length).
+	// stdcopy.StdCopy strips the headers and writes clean text to the buffers.
+	var outBuf, errBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&outBuf, &errBuf, reader); err != nil {
+		// Fall back to raw copy if StdCopy fails (e.g., TTY mode)
+		_ = reader.Close()
+		return outBuf.String() + errBuf.String(), nil
+	}
+	combined := outBuf.String()
+	if errBuf.Len() > 0 {
+		if combined != "" {
+			combined += "\n"
+		}
+		combined += errBuf.String()
+	}
+	return combined, nil
 }
 
 // ── Artifact download ─────────────────────────────────────────────────────────
@@ -505,21 +516,6 @@ func buildEnv(msg *models.TaskMessage, spec models.ContainerSpec) []string {
 		result = append(result, k+"="+v)
 	}
 	return result
-}
-
-// tarFile creates an in-memory tar archive containing a single file.
-// Used for copying files into the container via CopyToContainer.
-func tarFile(name string, content []byte) io.Reader {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	_ = tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: 0o644,
-		Size: int64(len(content)),
-	})
-	_, _ = tw.Write(content)
-	_ = tw.Close()
-	return &buf
 }
 
 func int64Ptr(v int64) *int64 { return &v }

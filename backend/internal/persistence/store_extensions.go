@@ -14,9 +14,8 @@ func (s *Store) ListStaleRunningTasks(ctx context.Context, maxAge time.Duration)
 	cutoff := time.Now().Add(-maxAge)
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
-		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at
+		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status, 
+			retry_count, max_retries, worker_id, queued_at, started_at, completed_at, next_retry_at, output, error, logs, metadata, created_at, updated_at, artifacts_in, artifacts_out
 		FROM task_executions
 		WHERE status = 'running'
 		  AND started_at < $1

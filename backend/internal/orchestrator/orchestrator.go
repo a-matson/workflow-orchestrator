@@ -178,7 +178,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	log.Info().Str("exec_id", exec.ID).Str("workflow", def.Name).Msg("workflow execution started")
 
 	// Dispatch first wave of tasks (those with no dependencies)
-	go o.dispatchReadyTasks(ctx, execCtx)
+	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
 
 	return exec, nil
 }
@@ -373,7 +373,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	}
 
 	// Dispatch next wave of now-unblocked tasks
-	go o.dispatchReadyTasks(ctx, execCtx)
+	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
 	return nil
 }
 
@@ -407,6 +407,10 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 		// Schedule retry in Redis
 		taskDef := execCtx.Graph.Nodes[taskDefID].Task
+		// Re-resolve artifact inputs for the retry: the dependency outputs are
+		// still in the TaskMap from the original run.
+		retryArtifactsIn := o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn)
+
 		msg := &models.TaskMessage{
 			TaskExecID:       taskExec.ID,
 			WorkflowExecID:   execCtx.Execution.ID,
@@ -419,6 +423,9 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 			MaxRetries:       taskExec.MaxRetries,
 			Timeout:          taskDef.Timeout,
 			IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
+			Container:        taskDef.Container,
+			ArtifactsIn:      retryArtifactsIn,
+			ArtifactsOut:     taskDef.ArtifactsOut,
 		}
 
 		if taskExec.NextRetryAt != nil {

@@ -1,6 +1,6 @@
 # Fluxor — Distributed Workflow Orchestration Platform
 
-> DAG-based workflow execution with reliability, scalability, and real-time observability.
+> DAG-based workflow execution with container-per-task isolation, MinIO artifact storage, real-time observability, and a visual drag-and-drop builder.
 
 ## Quick Start
 
@@ -8,116 +8,175 @@
 git clone https://github.com/a-matson/workflow-orchestrator && cd fluxor
 cd frontend && npm install && npm run build && cd ..
 docker compose up -d
-BASE_URL=http://localhost:8080 ./examples/smoke-test.sh
+Open **http://localhost:3000** — the Builder page loads immediately.
 ```
 
-| Service | URL |
-|---|---|
-| **UI** | http://localhost:3000 |
-| **REST API** | http://localhost:8080/api |
-| **WebSocket** | ws://localhost:8080/ws |
-| **gRPC** | localhost:9090 |
-| **Redis UI** | http://localhost:8081 (profile: tools) |
-| **Grafana** | http://localhost:3001 (profile: observability) |
+| Service           | URL                                         |
+|-------------------|---------------------------------------------|
+| **UI**            | http://localhost:3000                       |
+| **REST API**      | http://localhost:8080/api                   |
+| **WebSocket**     | ws://localhost:8080/ws                      |
+| **gRPC**          | localhost:9090                              |
+| **MinIO Console** | http://localhost:9001 (admin / minioadmin)  |
+| **Redis UI**      | http://localhost:8081 (profile: tools)      |
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Vue 3 + TS Frontend                                             │
-│  DAG Builder (VueFlow) │ Executions │ Log Viewer │ Metrics       │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ REST + WebSocket
-┌──────────────────────────────▼───────────────────────────────────┐
-│  Go Backend                                                      │
-│  REST /api/* │ WS Hub /ws │ gRPC :9090 │ Prometheus :9091        │
-│                      ▼                                           │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  Orchestrator                                            │    │
-│  │  • Kahn's topological sort  • Concurrency semaphores     │    │
-│  │  • Dependency wave dispatch • Redis NX idempotency       │    │
-│  │  • Exp backoff retry        • Dead-letter after max-retry│    │
-│  └──────────────┬───────────────────────────┬───────────────┘    │
-│                 │                           │                    │
-│  ┌──────────────▼───────┐    ┌──────────────▼───────────────┐    │
-│  │  PostgreSQL 16       │    │  Redis 7 Broker              │    │
-│  │  executions/tasks    │    │  task queue (LIST BLPOP)     │    │
-│  │  logs (JSONB)        │    │  retry ZSet (scored by time) │    │
-│  │  definitions         │    │  dead_letter (LIST)          │    │
-│  └──────────────────────┘    │  locks (SET NX EX)           │    │
-│                              └──────────────┬───────────────┘    │
-│                                             │                    │
-│  ┌──────────────────────────────────────────▼─────────────────┐  │
-│  │  Worker Pool (3 workers × 5 concurrency)                   │  │
-│  │  BLPOP → lock → execute (http/db/transform/ml/notify)      │  │
-│  │  → publish result → orchestrator advances DAG              │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│  Vue 3 + TS Frontend                                                  │
+│  Builder (DAGEditor + VueFlow) │ Executions │ Logs │ Metrics          │
+└─────────────────────────────┬─────────────────────────────────────────┘
+                              │ REST + WebSocket
+┌─────────────────────────────▼──────────────────────────────────────────┐
+│  Go Backend                                                            │
+│  REST /api/* │ WS Hub /ws │ gRPC :9090 │ Prometheus :9091              │
+│                                                                        │
+│  ┌───────────────────────────────────────────────────────────────┐     │
+│  │  Orchestrator                                                 │     │
+│  │  Kahn topo-sort · dependency waves · concurrency semaphores   │     │
+│  │  exponential backoff · dead-letter · crash recovery           │     │
+│  └──────────────┬────────────────────────────┬───────────────────┘     │
+│                 │                            │                         │
+│  ┌──────────────▼─────┐    ┌────────────────▼────────────────────┐     │
+│  │  PostgreSQL 16      │    │  Redis 7 Broker                    │     │
+│  │  definitions        │    │  task queue   (LIST BLPOP)         │     │
+│  │  executions/tasks   │    │  retry ZSet   (scored by time)     │     │
+│  │  artifacts (JSONB)  │    │  dead_letter  (LIST)               │     │
+│  └─────────────────────┘    │  locks        (SET NX EX)          │     │
+│                              └──────────────┬────────────────────┘     │
+│                                             │                          │
+│  ┌──────────────────────────────────────────▼───────────────────────┐  │
+│  │  Worker Pool                                                     │  │
+│  │  BLPOP → acquire lock → resolve artifact inputs from MinIO       │  │
+│  │    → spawn isolated Docker container (cap-drop ALL, no-net)      │  │
+│  │    → execute task command inside /workspace                      │  │
+│  │    → collect stdcopy logs → upload artifact outputs to MinIO     │  │
+│  │    → publish result → orchestrator advances DAG                  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                             │                          │
+│  ┌──────────────────────────────────────────▼───────────────────────┐  │
+│  │  MinIO  (S3-compatible)                                          │  │
+│  │  Bucket: fluxor-artifacts                                        │  │
+│  │  Key:    artifacts/{workflow_exec_id}/{task_def_id}/{path}       │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+## Container-per-Task Isolation
+
+Every task with a `container` field defined runs in its own ephemeral Docker container. When the task finishes the container is removed.
+
+**Security model:**
+- `--cap-drop ALL` — drops every Linux capability
+- `no-new-privileges:true` — blocks privilege escalation
+- Read-only root filesystem with a tmpfs `/tmp`
+- Connected to the `fluxor-tasks` internal network — **no internet, no access to Postgres or Redis**
+- CPU and memory hard limits from `ContainerSpec`
+- Max 256 PIDs per container
+
+**Artifact flow — passing files between tasks:**
+
+```
+Task A runs in container-A
+  → writes output.json to /workspace/
+  → worker uploads /workspace/output.json → MinIO
+     key: artifacts/{execID}/{taskA_id}/output.json
+
+Task B depends on Task A; artifacts_in: [{path: "output.json"}]
+  → orchestrator resolves MinIO key from Task A's ArtifactsOut
+  → worker downloads output.json → /workspace/output.json
+  → spawns container-B with /workspace bind-mounted
+  → Task B reads /workspace/output.json
 ```
 
-## File Layout
+### Configuring a task for isolation
 
+In the **Builder → task config panel → Container Isolation**, toggle Enabled and set:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Docker Image | `alpine:3.19` | Any image on the Docker daemon |
+| Memory MB | 256 | Hard memory limit |
+| CPU millis | 500 | 500 = 0.5 vCPU |
+
+Add file paths under **Artifact Outputs** (files this task writes) and **Artifact Inputs** (files from dependency tasks this task needs).
+
+---
+
+## Development Setup
+
+```bash
+# Start infrastructure
+docker compose up -d postgres redis minio
+
+# Run backend
+cd backend
+go mod download
+go run ./cmd/server
+
+# Run frontend dev server (separate terminal)
+cd frontend
+npm install
+npm run dev     # → http://localhost:5173
+
+# Lint and format frontend
+npm run lint
+npm run format
 ```
-fluxor/
-├── backend/
-│   ├── cmd/server/main.go                    Entrypoint + wiring
-│   └── internal/
-│       ├── models/models.go                  Domain types
-│       ├── dag/graph.go + graph_test.go      DAG parser, topo sort, cycle detection
-│       ├── orchestrator/orchestrator.go      Central state machine
-│       ├── persistence/store.go              PostgreSQL (pgxpool)
-│       ├── persistence/redis.go              Redis broker
-│       ├── retry/manager.go + _test.go       Backoff, dead-letter, replay
-│       ├── scheduler/processor.go            Result consumer + retry poller
-│       ├── worker/worker.go                  Worker pool (5 task type simulators)
-│       ├── api/handler.go                    REST handlers
-│       ├── api/websocket.go                  WS hub (gorilla/websocket)
-│       ├── api/grpc_server.go                gRPC implementation
-│       └── metrics/prometheus.go             Prometheus metrics
-│   ├── proto/orchestrator.proto              Full gRPC service definition
-│   └── migrations/001_initial_schema.sql     PostgreSQL schema + triggers
-│
-├── frontend/src/
-│   ├── App.vue                               Shell: topbar, sidebar, tab router
-│   ├── stores/{workflow,execution,websocket} Pinia stores
-│   ├── composables/{useApi,useWebSocket,     Typed helpers
-│   │                useElapsed,useTemplates}
-│   └── components/
-│       ├── dag/{DAGEditor,TaskNode,           VueFlow DAG builder + templates
-│       │        WorkflowTemplates}.vue
-│       ├── execution/{ExecutionsView,         Live DAG view, task drill-down
-│       │             ExecutionDashboard}.vue
-│       ├── logs/LogViewer.vue                 Streaming terminal, filter/search
-│       ├── metrics/MetricsView.vue            KPI, sparkline, donut, table
-│       └── shared/StatusBadge.vue             Animated status pill
-│
-├── examples/etl-pipeline.json                Example workflow payload
-├── examples/smoke-test.sh                    End-to-end API test
-├── grafana/provisioning/                     Datasource + dashboard JSON
-├── .github/workflows/ci.yml                  CI: test + lint + docker push
-├── docker-compose.yml                        Full stack with health checks
-├── nginx.conf                                SPA + API proxy + WS upgrade
-├── Makefile                                  dev/build/test/proto/migrate
-└── prometheus.yml                            Scrape config
-```
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_URL` | `postgres://workflow:workflow@localhost:5432/workflow` | PostgreSQL DSN |
+| `REDIS_ADDR` | `localhost:6379` | Redis address |
+| `MINIO_ENDPOINT` | `localhost:9000` | MinIO S3 endpoint |
+| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO access key |
+| `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key |
+| `MINIO_BUCKET` | `fluxor-artifacts` | Artifact bucket name |
+| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon socket |
+| `WORKER_COUNT` | `3` | Number of worker goroutines |
+| `WORKER_CONCURRENCY` | `5` | Tasks per worker |
+| `HTTP_ADDR` | `:8080` | HTTP listen address |
+| `GRPC_ADDR` | `:9090` | gRPC listen address |
+| `LOG_LEVEL` | `info` | `debug` or `info` |
+
+---
 
 ## REST API
 
 ```
-POST   /api/workflows                   Create workflow definition
-GET    /api/workflows                   List definitions
-GET    /api/workflows/:id               Get definition
-POST   /api/workflows/:id/trigger       Trigger execution
-GET    /api/executions                  List executions (paginated)
-GET    /api/executions/:id              Get execution + tasks
-POST   /api/executions/:id/cancel       Cancel running execution
-POST   /api/executions/:id/retry        Replay finished execution
-GET    /api/executions/:id/tasks        List tasks
-GET    /api/tasks/:id/logs              Get task logs
-GET    /api/metrics                     Platform metrics JSON
-GET    /api/health                      Health check
-GET    /ws                              WebSocket upgrade
+POST   /api/workflows                  Create workflow definition
+GET    /api/workflows                  List all definitions
+GET    /api/workflows/{id}             Get definition
+POST   /api/workflows/{id}/trigger     Start execution
+GET    /api/executions                 List executions
+GET    /api/executions/{id}            Get execution with tasks
+POST   /api/executions/{id}/cancel     Cancel running execution
+POST   /api/executions/{id}/retry      Retry failed execution
+GET    /api/executions/{execID}/tasks  List tasks for execution
+GET    /api/tasks/{id}                 Get task execution
+GET    /api/tasks/{id}/logs            Get task logs
+GET    /api/tasks/{id}/artifacts       Get task artifact metadata
+GET    /api/artifacts/url?key=…        Pre-signed MinIO download URL
+GET    /api/metrics                    Platform metrics
+GET    /api/health                     Health check
+GET    /ws                             WebSocket (real-time events)
 ```
+
+---
+
+## Running Migrations
+
+Migrations run automatically on `docker compose up` via the PostgreSQL init directory. For manual runs:
+
+```bash
+psql "$POSTGRES_URL" -f backend/migrations/001_initial_schema.sql
+psql "$POSTGRES_URL" -f backend/migrations/002_performance_indexes.sql
+psql "$POSTGRES_URL" -f backend/migrations/003_artifacts.sql
+```
+
+---
 
 ## Reliability Design
 
@@ -133,14 +192,16 @@ GET    /ws                              WebSocket upgrade
 | Crash recovery | State reconstructed from PostgreSQL on restart |
 | DAG validation | Kahn's BFS at submission time — rejects cycles & missing deps |
 
-## Development
+## Building for Production
 
 ```bash
-make dev             # Start infra + backend + frontend concurrently
-make test            # Run unit tests with race detector
-make test-integration # Requires running Postgres + Redis
-make proto           # Regenerate gRPC code from .proto
-make migrate         # Apply SQL migrations
-make lint            # golangci-lint + vue-tsc
-make build           # Compile binary + bundle frontend
+# Build frontend
+cd frontend && npm run build
+
+# Build backend
+cd backend && go build -o workflow-server ./cmd/server
+
+# Or build the Docker image (Docker GID may vary by host)
+docker build --build-arg DOCKER_GID=$(getent group docker | cut -d: -f3) \
+  -t fluxor-backend ./backend
 ```
