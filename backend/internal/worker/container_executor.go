@@ -128,6 +128,12 @@ func (ce *ContainerExecutor) Run(
 	if err != nil {
 		return "", nil, fmt.Errorf("container: create workspace: %w", err)
 	}
+	// Mode 0700: only the worker process can read/write this directory.
+	// The container sees it via bind-mount; no other host process can access it.
+	if err := os.Chmod(workspaceDir, 0o700); err != nil {
+		defer func() { _ = os.RemoveAll(workspaceDir) }()
+		return "", nil, fmt.Errorf("container: chmod workspace: %w", err)
+	}
 	defer func() { _ = os.RemoveAll(workspaceDir) }()
 
 	if downloadErr := ce.downloadArtifacts(ctx, msg.ArtifactsIn, workspaceDir, addLog); downloadErr != nil {

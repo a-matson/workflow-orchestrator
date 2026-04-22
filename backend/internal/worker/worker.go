@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -28,6 +28,7 @@ var dbCache sync.Map // map[string]*sql.DB
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
 	MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error
+	StreamLog(workflowExecID, taskExecID, taskName string, entry models.LogEntry)
 }
 
 // Worker pulls tasks from Redis, executes them using the config provided by the
@@ -210,15 +211,10 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		}
 		logs = append(logs, entry)
 
-		// Broadcast to Web UI in Real-Time
-		_ = w.redis.PublishLiveLog(ctx, msg.TaskExecID, entry)
-
-		// Write Structured Backend Console Logging
-		evt := taskLogger.WithLevel(parseLogLevel(level))
-		for k, v := range fields {
-			evt = evt.Interface(k, v)
+		// Broadcast immediately so the UI streams output in real time
+		if w.notifier != nil {
+			w.notifier.StreamLog(msg.WorkflowExecID, msg.TaskExecID, msg.TaskName, entry)
 		}
-		evt.Msg(message)
 	}
 
 	// Create execution context with timeout
@@ -519,18 +515,24 @@ func (w *Worker) execDataTransform(ctx context.Context, msg *models.TaskMessage,
 		return nil, fmt.Errorf("data_transform: 'script' is required")
 	}
 
-	addLog("info", "Running transform", map[string]any{
-		"input_format":  cfg["input_format"],
-		"output_format": cfg["output_format"],
-		"script":        truncate(script, 200),
-	})
+	// Run in a clean, empty sandbox directory so the script cannot access the
+	// host project source, backend binaries, or any other host files.
+	sandbox, err := createSandbox()
+	if err != nil {
+		return nil, fmt.Errorf("data_transform: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(sandbox) }()
+
+	addLog("info", "Running transform", map[string]any{"script": truncate(script, 200), "sandbox": sandbox})
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Dir = sandbox
+	cmd.Env = sandboxEnv(msg)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if stderr.Len() > 0 {
 		addLog("warn", "stderr", map[string]any{"output": truncate(stderr.String(), 500)})
 	}
@@ -579,12 +581,20 @@ func (w *Worker) execMLInference(ctx context.Context, msg *models.TaskMessage, a
 		"input": inputPath, "output": outputPath, "batch_size": batchSize,
 	})
 
+	sandbox, err := createSandbox()
+	if err != nil {
+		return nil, fmt.Errorf("ml_inference: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(sandbox) }()
+
 	cmd := exec.CommandContext(ctx, modelName, args...)
+	cmd.Dir = sandbox
+	cmd.Env = sandboxEnv(msg)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if stderr.Len() > 0 {
 		addLog("info", "model output", map[string]any{"output": truncate(stderr.String(), 500)})
 	}
@@ -755,6 +765,16 @@ func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLo
 	case []string:
 		args = a
 	}
+	// Reject path-traversal attempts in the command binary itself
+	if strings.Contains(command, "..") || strings.HasPrefix(command, "/") {
+		return nil, fmt.Errorf("generic: command must be a binary name, not a path: %q", command)
+	}
+
+	sandbox, sandboxErr := createSandbox()
+	if sandboxErr != nil {
+		return nil, fmt.Errorf("generic: %w", sandboxErr)
+	}
+	defer func() { _ = os.RemoveAll(sandbox) }()
 
 	addLog("info", fmt.Sprintf("Running: %s %s", command, strings.Join(args, " ")), map[string]any{
 		"command": command,
@@ -762,6 +782,9 @@ func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLo
 	})
 
 	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = sandbox
+	// Start with the clean base env, then merge any task-specific vars
+	cmd.Env = sandboxEnv(msg)
 
 	if envMap, ok := cfg["env"].(map[string]any); ok {
 		for k, v := range envMap {
@@ -802,23 +825,42 @@ func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLo
 	return map[string]any{"output": out, "exit_code": exitCode}, nil
 }
 
+// createSandbox creates a fresh, empty, world-inaccessible temporary directory
+// that is used as the working directory for all in-process task executors.
+// The directory is completely isolated from the backend source tree: it is
+// created under the OS temp base (e.g. /tmp), has mode 0700 so no other
+// process can list it, and is removed by the caller after the task finishes.
+func createSandbox() (string, error) {
+	dir, err := os.MkdirTemp("", "fluxor-sandbox-*")
+	if err != nil {
+		return "", fmt.Errorf("create sandbox dir: %w", err)
+	}
+	// Restrict to owner only — prevents other processes from peeking
+	if err := os.Chmod(dir, 0o700); err != nil {
+		defer func() { _ = os.RemoveAll(dir) }()
+		return "", fmt.Errorf("chmod sandbox dir: %w", err)
+	}
+	return dir, nil
+}
+
+// sandboxEnv returns a minimal, clean environment for subprocess execution.
+// It deliberately omits the inherited process environment so user scripts
+// cannot read secrets (POSTGRES_URL, MINIO_SECRET_KEY, REDIS_ADDR, etc.)
+// that are present in the backend process env.
+func sandboxEnv(msg *models.TaskMessage) []string {
+	return []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/tmp",
+		"TMPDIR=/tmp",
+		"FLUXOR_TASK_EXEC_ID=" + msg.TaskExecID,
+		"FLUXOR_WORKFLOW_EXEC_ID=" + msg.WorkflowExecID,
+		"FLUXOR_TASK_NAME=" + msg.TaskName,
+	}
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	return s[:n] + "…"
-}
-
-// parseLogLevel converts string log levels to zerolog levels
-func parseLogLevel(level string) zerolog.Level {
-	switch level {
-	case "warn":
-		return zerolog.WarnLevel
-	case "error":
-		return zerolog.ErrorLevel
-	case "debug":
-		return zerolog.DebugLevel
-	default:
-		return zerolog.InfoLevel
-	}
 }

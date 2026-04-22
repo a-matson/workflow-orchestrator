@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/api"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/metrics"
-	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/scheduler"
@@ -108,14 +106,6 @@ func main() {
 	// Core services
 	hub := api.NewHub()
 	go hub.Run()
-
-	// –– Log Stream ────────────────────────────────────────────–––
-	go redisClient.ListenForLiveLogs(ctx, func(payload string) {
-		var event models.WebSocketEvent
-		if err := json.Unmarshal([]byte(payload), &event); err == nil {
-			hub.Broadcast(event)
-		}
-	})
 
 	orch := orchestrator.NewOrchestrator(store, redisClient, hub)
 
