@@ -1,0 +1,63 @@
+# Fluxor native YAML workflow definition
+# Import via: POST /api/import/yaml
+# Or use the ⬆ button in the Builder sidebar
+#
+# All fields map 1:1 to the WorkflowDefinition model.
+
+name: ETL Pipeline (YAML)
+description: Fetch raw data, transform it in an isolated container, then notify.
+version: 1.0.0
+max_parallel: 4
+tags:
+  category: data
+  owner: platform-team
+
+global_retry:
+  max_retries: 2
+  initial_delay_seconds: 5
+  backoff_multiplier: 2.0
+  jitter: true
+
+tasks:
+  - id: fetch-raw
+    name: Fetch Raw Data
+    type: http_request
+    config:
+      url: https://jsonplaceholder.typicode.com/todos
+      method: GET
+      timeout_ms: 15000
+    artifacts_out:
+      - path: todos.json
+        description: Raw API response
+    timeout_seconds: 30
+
+  - id: transform
+    name: Filter Completed
+    type: data_transform
+    dependencies: [fetch-raw]
+    config:
+      input_format: json
+      output_format: json
+      script: |
+        jq '[.[] | select(.completed == true)]' /workspace/todos.json \
+          > /workspace/completed.json
+    artifacts_in:
+      - path: todos.json
+    artifacts_out:
+      - path: completed.json
+        description: Completed todos only
+    container:
+      image: ghcr.io/jqlang/jq:1.7
+      memory_mb: 128
+      cpu_millis: 200
+    timeout_seconds: 60
+
+  - id: notify
+    name: Post Results
+    type: notification
+    dependencies: [transform]
+    config:
+      notify_type: webhook
+      channel: https://webhook.site/replace-with-your-id
+      message: "ETL complete — see completed.json artifact"
+    timeout_seconds: 15

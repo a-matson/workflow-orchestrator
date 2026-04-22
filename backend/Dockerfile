@@ -16,7 +16,7 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates tzdata wget
 WORKDIR /app
 COPY --from=builder /workflow-server .
-ARG DOCKER_GID=999
+ARG DOCKER_GID=1000
 RUN addgroup -g ${DOCKER_GID} docker && \
     adduser -D -u 10001 appuser && \
     addgroup appuser docker

@@ -12,6 +12,7 @@ require (
 	github.com/prometheus/client_golang v1.19.0
 	github.com/rs/zerolog v1.32.0
 	google.golang.org/grpc v1.80.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
