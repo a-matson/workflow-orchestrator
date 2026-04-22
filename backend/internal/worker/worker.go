@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -28,6 +27,7 @@ var dbCache sync.Map // map[string]*sql.DB
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
 	MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error
+	StreamLog(workflowExecID, taskExecID, taskName string, entry models.LogEntry)
 }
 
 // Worker pulls tasks from Redis, executes them using the config provided by the
@@ -210,15 +210,10 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		}
 		logs = append(logs, entry)
 
-		// Broadcast to Web UI in Real-Time
-		_ = w.redis.PublishLiveLog(ctx, msg.TaskExecID, entry)
-
-		// Write Structured Backend Console Logging
-		evt := taskLogger.WithLevel(parseLogLevel(level))
-		for k, v := range fields {
-			evt = evt.Interface(k, v)
+		// Broadcast immediately so the UI streams output in real time
+		if w.notifier != nil {
+			w.notifier.StreamLog(msg.WorkflowExecID, msg.TaskExecID, msg.TaskName, entry)
 		}
-		evt.Msg(message)
 	}
 
 	// Create execution context with timeout
@@ -807,18 +802,4 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
-}
-
-// parseLogLevel converts string log levels to zerolog levels
-func parseLogLevel(level string) zerolog.Level {
-	switch level {
-	case "warn":
-		return zerolog.WarnLevel
-	case "error":
-		return zerolog.ErrorLevel
-	case "debug":
-		return zerolog.DebugLevel
-	default:
-		return zerolog.InfoLevel
-	}
 }

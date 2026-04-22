@@ -57,12 +57,8 @@
 					<div class="detail-header-left">
 						<span :class="['badge', selectedExec.status]">{{ selectedExec.status }}</span>
 						<div>
-							<div class="detail-wf-name">
-								{{ selectedExec.workflow_name }}
-							</div>
-							<div class="detail-exec-id">
-								{{ selectedExec.id }}
-							</div>
+							<div class="detail-wf-name">{{ selectedExec.workflow_name }}</div>
+							<div class="detail-exec-id">{{ selectedExec.id }}</div>
 						</div>
 					</div>
 					<div class="detail-header-right">
@@ -90,12 +86,8 @@
 				<!-- Stats row -->
 				<div class="stats-row">
 					<div v-for="s in taskStats(selectedExec)" :key="s.label" class="stat-cell">
-						<div class="stat-val" :style="{ color: s.color }">
-							{{ s.count }}
-						</div>
-						<div class="stat-lbl">
-							{{ s.label }}
-						</div>
+						<div class="stat-val" :style="{ color: s.color }">{{ s.count }}</div>
+						<div class="stat-lbl">{{ s.label }}</div>
 					</div>
 					<div class="stat-cell">
 						<div class="stat-val">{{ completePct(selectedExec) }}%</div>
@@ -134,9 +126,7 @@
 					<!-- Expanded task detail -->
 					<Transition name="expand">
 						<div v-if="expandedTask" class="task-detail">
-							<div v-if="expandedTask.error" class="task-error">
-								{{ expandedTask.error }}
-							</div>
+							<div v-if="expandedTask.error" class="task-error">{{ expandedTask.error }}</div>
 							<div class="task-detail-grid">
 								<span class="td-key">Worker</span>
 								<span class="td-val">{{ expandedTask.worker_id ?? '—' }}</span>
@@ -171,18 +161,49 @@
 									</a>
 								</div>
 							</template>
-							<!-- Last 8 log lines -->
-							<div v-if="expandedTask.logs?.length" class="task-mini-logs">
-								<div
-									v-for="(log, i) in expandedTask.logs.slice(-8)"
-									:key="i"
-									class="mini-log"
-									:class="log.level"
-								>
-									<span class="ml-ts">{{ new Date(log.timestamp).toLocaleTimeString() }}</span>
-									<span class="ml-lvl">{{ log.level?.toUpperCase() }}</span>
-									<span class="ml-msg">{{ log.message }}</span>
-								</div>
+
+							<!-- Streaming terminal output -->
+							<div class="term-section">
+								<button class="term-toggle" @click.stop="termOpen = !termOpen">
+									<span class="term-toggle-icon">{{ termOpen ? '▾' : '▸' }}</span>
+									<span class="term-label">Terminal output</span>
+									<span class="term-count">{{ expandedTask.logs?.length ?? 0 }} lines</span>
+									<span v-if="expandedTask.status === 'running'" class="term-live">● LIVE</span>
+								</button>
+								<Transition name="term-slide">
+									<div v-if="termOpen" class="term-body">
+										<div ref="termEl" class="term-output">
+											<div v-if="!expandedTask.logs?.length" class="term-empty">
+												{{
+													expandedTask.status === 'running'
+														? 'Waiting for output…'
+														: 'No output recorded'
+												}}
+											</div>
+											<div
+												v-for="(log, i) in expandedTask.logs ?? []"
+												:key="i"
+												class="term-line"
+												:class="log.level"
+											>
+												<span class="tl-ts">{{ fmtLogTs(log.timestamp) }}</span>
+												<span class="tl-lvl" :class="log.level">{{
+													(log.level ?? 'info').toUpperCase().slice(0, 1)
+												}}</span>
+												<span class="tl-msg">{{ log.message }}</span>
+												<span v-if="hasFields(log.fields)" class="tl-fields">{{
+													fmtFields(log.fields)
+												}}</span>
+											</div>
+										</div>
+										<div class="term-footer">
+											<label class="term-autoscroll">
+												<input v-model="termAutoScroll" type="checkbox" @click.stop /> auto-scroll
+											</label>
+											<button class="term-copy-btn" @click.stop="copyTermLogs">copy</button>
+										</div>
+									</div>
+								</Transition>
 							</div>
 						</div>
 					</Transition>
@@ -198,7 +219,7 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, computed, inject, onMounted, watch } from 'vue'
+	import { ref, computed, inject, onMounted, watch, nextTick } from 'vue'
 	import { useRoute, useRouter } from 'vue-router'
 	import { useWorkflowStore } from '../stores/workflow'
 	import { useWebSocketStore } from '../stores/websocket'
@@ -330,6 +351,57 @@
 		if (bytes < 1024) return `${bytes}B`
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
 		return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+	}
+
+	// ── Terminal state ──────────────────────────────────────────────
+	const termOpen = ref(true)
+	const termAutoScroll = ref(true)
+	const termEl = ref<HTMLElement | null>(null)
+
+	// Auto-scroll terminal when new log lines arrive
+	watch(
+		() => expandedTask.value?.logs?.length,
+		async () => {
+			if (!termAutoScroll.value || !termOpen.value) return
+			await nextTick()
+			if (termEl.value) termEl.value.scrollTop = termEl.value.scrollHeight
+		},
+	)
+
+	// Reset terminal open state when switching tasks
+	watch(expandedTaskId, () => {
+		termOpen.value = true
+		termAutoScroll.value = true
+	})
+
+	function fmtLogTs(ts: string): string {
+		const d = new Date(ts)
+		return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`
+	}
+
+	function fmtFields(fields: Record<string, unknown> | undefined): string {
+		if (!fields) return ''
+		const parts = Object.entries(fields)
+			.filter(([k]) => k !== 'output' && k !== 'stdout')
+			.map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+		return parts.join(' ')
+	}
+
+	function hasFields(fields: Record<string, unknown> | undefined): boolean {
+		if (!fields) return false
+		const filtered = Object.keys(fields).filter((k) => k !== 'output' && k !== 'stdout')
+		return filtered.length > 0
+	}
+
+	function copyTermLogs() {
+		const logs = expandedTask.value?.logs ?? []
+		const text = logs
+			.map(
+				(l) =>
+					`[${fmtLogTs(l.timestamp)}] ${(l.level ?? '').toUpperCase().padEnd(5)} ${l.message}${hasFields(l.fields) ? ' ' + fmtFields(l.fields) : ''}`,
+			)
+			.join('\n')
+		navigator.clipboard.writeText(text)
 	}
 </script>
 
@@ -713,6 +785,7 @@
 		max-height: 400px;
 		opacity: 1;
 	}
+
 	.artifact-list {
 		display: flex;
 		flex-wrap: wrap;
@@ -741,5 +814,185 @@
 	.artifact-size {
 		color: var(--text3);
 		font-size: 9px;
+	}
+
+	/* ── Streaming terminal ─────────────────────────────────── */
+	.term-section {
+		margin-top: 10px;
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+
+	.term-toggle {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		width: 100%;
+		padding: 6px 10px;
+		background: rgba(255, 255, 255, 0.03);
+		border: none;
+		cursor: pointer;
+		font-size: 11px;
+		color: var(--text2);
+		text-align: left;
+	}
+	.term-toggle:hover {
+		background: rgba(255, 255, 255, 0.06);
+	}
+	.term-toggle-icon {
+		font-size: 10px;
+		color: var(--text3);
+		width: 10px;
+	}
+	.term-label {
+		font-weight: 600;
+		font-size: 11px;
+		color: var(--text2);
+	}
+	.term-count {
+		font-size: 10px;
+		color: var(--text3);
+		font-family: var(--mono);
+		margin-left: auto;
+	}
+	.term-live {
+		font-size: 9px;
+		font-weight: 700;
+		color: var(--green);
+		background: rgba(34, 211, 160, 0.1);
+		border: 1px solid rgba(34, 211, 160, 0.25);
+		border-radius: 3px;
+		padding: 1px 5px;
+		letter-spacing: 0.04em;
+		animation: pulse-live 1.5s ease-in-out infinite;
+	}
+	@keyframes pulse-live {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.5;
+		}
+	}
+
+	.term-body {
+		background: #07070e;
+		border-top: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	.term-output {
+		max-height: 320px;
+		overflow-y: auto;
+		padding: 6px 0;
+		font-family: var(--mono);
+		font-size: 11px;
+	}
+	.term-empty {
+		padding: 14px 12px;
+		color: #3a3a55;
+		font-style: italic;
+	}
+
+	.term-line {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		padding: 1px 12px;
+		line-height: 1.75;
+	}
+	.term-line:hover {
+		background: rgba(255, 255, 255, 0.02);
+	}
+	.tl-ts {
+		color: #2a2a42;
+		font-size: 10px;
+		flex-shrink: 0;
+		min-width: 86px;
+	}
+	.tl-lvl {
+		width: 14px;
+		text-align: center;
+		font-size: 9px;
+		font-weight: 800;
+		flex-shrink: 0;
+		border-radius: 2px;
+	}
+	.tl-lvl.info {
+		color: #4a7fa8;
+	}
+	.tl-lvl.warn {
+		color: #b8860b;
+	}
+	.tl-lvl.error {
+		color: #a83232;
+	}
+	.tl-lvl.debug {
+		color: #555;
+	}
+	.tl-msg {
+		color: #a8b5c8;
+		flex: 1;
+		word-break: break-word;
+		white-space: pre-wrap;
+	}
+	.term-line.warn .tl-msg {
+		color: #c8a835;
+	}
+	.term-line.error .tl-msg {
+		color: #d46060;
+	}
+	.tl-fields {
+		font-size: 9.5px;
+		color: #2a2a42;
+		word-break: break-all;
+	}
+
+	.term-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 4px 10px;
+		border-top: 1px solid rgba(255, 255, 255, 0.04);
+		background: rgba(0, 0, 0, 0.2);
+	}
+	.term-autoscroll {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 10px;
+		color: var(--text3);
+		cursor: pointer;
+	}
+	.term-autoscroll input {
+		cursor: pointer;
+	}
+	.term-copy-btn {
+		font-size: 10px;
+		padding: 2px 8px;
+		background: var(--surface);
+		border: 1px solid var(--border2);
+		border-radius: 3px;
+		color: var(--text3);
+	}
+	.term-copy-btn:hover {
+		color: var(--text);
+	}
+
+	.term-slide-enter-active,
+	.term-slide-leave-active {
+		transition: all 0.18s ease;
+		overflow: hidden;
+	}
+	.term-slide-enter-from,
+	.term-slide-leave-to {
+		max-height: 0;
+		opacity: 0;
+	}
+	.term-slide-enter-to,
+	.term-slide-leave-from {
+		max-height: 380px;
+		opacity: 1;
 	}
 </style>

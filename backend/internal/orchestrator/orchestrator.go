@@ -264,6 +264,20 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 	}
 }
 
+// Broadcasts a single log entry immediately as a task.log WebSocket event.
+// Called by the worker for each line so the UI streams terminal output live.
+func (o *Orchestrator) StreamLog(workflowExecID, taskExecID, taskName string, entry models.LogEntry) {
+	o.broadcaster.Broadcast(models.WebSocketEvent{
+		Type: models.WSEventTaskLog,
+		Payload: map[string]any{
+			"workflow_exec_id": workflowExecID,
+			"task_exec_id":     taskExecID,
+			"task_name":        taskName,
+			"entry":            entry,
+		},
+	})
+}
+
 // Called by the worker (via the API or directly) when it picks up a task.
 // Moves the task from Queued → Running so dispatchReadyTasks knows the slot
 // is actively occupied and the task won't be re-dispatched.
