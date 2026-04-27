@@ -71,14 +71,19 @@ eval_expression() {
     -e "s/\${{ *github\.workspace *}}/\/workspace/g" \
   )
 
-  # Replace ${{ env.VAR }} with shell env lookups
-  while [[ "$result" =~ \$\{\{[[:space:]]*env\.([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\}\} ]]; do
-    local var_name="${BASH_REMATCH[1]}"
-    local var_val="${!var_name:-}"
-    result="${result//${{ env.$var_name }}/$var_val}"
-    # Prevent infinite loop on unknown vars
-    result=$(echo "$result" | sed "s/\${{ *env\.$var_name *}}/$var_val/g")
-  done
+  # Replace ${{ env.VAR }} with current shell env values.
+  # Use a temp file to avoid issues with special characters in patterns.
+  local tmp_result
+  tmp_result=$(echo "$result" | perl -pe     's/\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/defined $ENV{$1} ? $ENV{$1} : ""/ge'     2>/dev/null || echo "$result")
+  # Fallback to sed-based approach if perl unavailable
+  if command -v perl &>/dev/null; then
+    result="$tmp_result"
+  else
+    # sed-based fallback: handle the most common env var patterns
+    while IFS='=' read -r k v; do
+      result=$(echo "$result" | sed "s|\\${{ *env\.${k} *}}|${v}|g")
+    done < <(env | grep -v '^_=')
+  fi
 
   echo "$result"
 }
@@ -294,6 +299,8 @@ log_info "Starting GHA job execution: $STEP_COUNT steps"
 
 # Declare associative array for step outputs
 declare -A STEP_OUTPUTS
+# Track GITHUB_OUTPUT line offset so each step only captures its own outputs
+GITHUB_OUTPUT_OFFSET=0
 
 for i in $(seq 0 $((STEP_COUNT - 1))); do
   STEP=$(jq ".[$i]" "$STEPS_FILE")
@@ -338,11 +345,20 @@ for i in $(seq 0 $((STEP_COUNT - 1))); do
     log_warn "Step has neither 'run' nor 'uses' — skipping"
   fi
 
-  # Capture step outputs (read from GITHUB_OUTPUT since last checkpoint)
+  # Capture step outputs: only read NEW lines added since last checkpoint.
+  # GITHUB_OUTPUT_OFFSET tracks how many lines existed before this step ran.
   if [[ -n "$STEP_ID" && -f "$GITHUB_OUTPUT" ]]; then
-    while IFS='=' read -r key value; do
-      STEP_OUTPUTS["${STEP_ID}.${key}"]="$value"
-    done < <(grep -v '^#' "$GITHUB_OUTPUT" 2>/dev/null || true)
+    local current_lines
+    current_lines=$(wc -l < "$GITHUB_OUTPUT" 2>/dev/null || echo "0")
+    current_lines="${current_lines// /}"  # trim whitespace
+    if [[ $current_lines -gt $GITHUB_OUTPUT_OFFSET ]]; then
+      local new_start=$(( GITHUB_OUTPUT_OFFSET + 1 ))
+      while IFS='=' read -r key value; do
+        [[ -z "$key" || "$key" == '#'* ]] && continue
+        STEP_OUTPUTS["${STEP_ID}.${key}"]="$value"
+      done < <(sed -n "${new_start},${current_lines}p" "$GITHUB_OUTPUT" 2>/dev/null || true)
+    fi
+    GITHUB_OUTPUT_OFFSET=$current_lines
   fi
 
   if [[ $STEP_EXIT -ne 0 ]]; then

@@ -273,7 +273,7 @@ func parseGitHubActions(data []byte, sourceName string) (*models.WorkflowDefinit
 }
 
 // convertSteps maps raw YAML steps to the canonical GHAStep model.
-func convertSteps(raw []*ghaRawStep, jobEnv map[string]string) []models.GHAStep {
+func convertSteps(raw []*ghaRawStep, _ map[string]string) []models.GHAStep {
 	out := make([]models.GHAStep, 0, len(raw))
 	for i, r := range raw {
 		if r == nil {

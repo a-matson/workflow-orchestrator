@@ -27,7 +27,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -109,6 +108,16 @@ func (ce *ContainerExecutor) RunGHAJob(
 	fluxorDir := filepath.Join(workspaceDir, ".fluxor")
 	if err := os.MkdirAll(fluxorDir, 0o700); err != nil {
 		return "", nil, fmt.Errorf("gha_job: create fluxor dir: %w", err)
+	}
+
+	// Pre-create the GITHUB_* magic files on the host side of the bind mount.
+	// The container sees these as /fluxor/github_env etc. via the bind mount.
+	// Without this, if the container crashes before the touch commands in
+	// step-runner.sh, the files won't exist and the script fails immediately.
+	for _, magicFile := range []string{"github_env", "github_output", "github_path", "github_step_summary"} {
+		if err := os.WriteFile(filepath.Join(fluxorDir, magicFile), []byte{}, 0o600); err != nil {
+			return "", nil, fmt.Errorf("gha_job: create magic file %s: %w", magicFile, err)
+		}
 	}
 
 	// Write steps.json for the runner binary to consume
@@ -216,9 +225,47 @@ func (ce *ContainerExecutor) RunGHAJob(
 		return "", nil, fmt.Errorf("gha_job: start container: %w", err)
 	}
 
-	// 10. Stream logs in real time via attach
+	// 10. Wait and stream logs concurrently
+	// Open the Follow:true log stream BEFORE starting the wait so we don't miss
+	// early output. The goroutine reads line-by-line and calls addLog for each
+	// line — this is what drives the real-time WebSocket terminal in the UI.
+	// We use a done channel to coordinate between the log goroutine and the
+	// ContainerWait result so we never call collectLogs twice on the same stream.
+	logReader, logErr := ce.docker.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	})
 	var logBuf bytes.Buffer
-	go ce.streamContainerLogs(ctx, containerID, &logBuf, addLog)
+	logDone := make(chan struct{})
+	if logErr == nil {
+		go func() {
+			defer close(logDone)
+			defer func() { _ = logReader.Close() }()
+			var outBuf, errBuf bytes.Buffer
+			stdcopy.StdCopy(&outBuf, &errBuf, logReader) //nolint:errcheck
+			combined := outBuf.String()
+			if errBuf.Len() > 0 {
+				combined += errBuf.String()
+			}
+			logBuf.WriteString(combined)
+			// Stream each line through addLog for real-time WebSocket delivery
+			for _, line := range splitByNewline(combined) {
+				if line == "" {
+					continue
+				}
+				level := "info"
+				if isErrorLine(line) {
+					level = "error"
+				} else if isWarnLine(line) {
+					level = "warn"
+				}
+				addLog(level, line, nil)
+			}
+		}()
+	} else {
+		close(logDone)
+	}
 
 	// 11. Wait for completion
 	statusCh, errCh := ce.docker.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
@@ -233,9 +280,14 @@ func (ce *ContainerExecutor) RunGHAJob(
 		return "", nil, ctx.Err()
 	}
 
-	// 12. Collect final logs
-	finalLogs, _ := ce.collectLogs(ctx, containerID)
-	stdout = finalLogs
+	// Wait for the log goroutine to finish draining before using logBuf
+	select {
+	case <-logDone:
+	case <-time.After(5 * time.Second): // safety timeout
+	}
+
+	// 12. Use buffered logs
+	stdout = logBuf.String()
 
 	addLog("info", fmt.Sprintf("Runner exited with code %d", exitCode), map[string]any{
 		"exit_code": exitCode,
@@ -243,7 +295,7 @@ func (ce *ContainerExecutor) RunGHAJob(
 
 	if exitCode != 0 {
 		return stdout, nil, fmt.Errorf("gha_job: runner exited with code %d\n%s",
-			exitCode, truncate(finalLogs, 600))
+			exitCode, truncate(stdout, 600))
 	}
 
 	// 13. Upload artifact outputs
@@ -319,7 +371,10 @@ func splitRef(ref string) string {
 
 // buildGHAEnv constructs the environment variables injected into the runner
 // container, including all standard GITHUB_* variables and user-defined env.
-func buildGHAEnv(msg *models.TaskMessage, ghaCtx models.GHAContext, workspaceDir string) []string {
+// All GITHUB_* file paths use container-side paths (/fluxor/*), not host paths.
+// workspaceDir is accepted for future use (e.g. injecting host paths for DinD)
+// but is intentionally not used for the magic file paths.
+func buildGHAEnv(msg *models.TaskMessage, ghaCtx models.GHAContext, _ string) []string {
 	m := map[string]string{
 		// Standard GitHub Actions environment variables
 		"GITHUB_WORKSPACE":    "/workspace",
@@ -371,47 +426,6 @@ func buildGHAEnv(msg *models.TaskMessage, ghaCtx models.GHAContext, workspaceDir
 	return out
 }
 
-// streamContainerLogs attaches to the container log stream and forwards each
-// line to addLog for real-time WebSocket streaming.
-func (ce *ContainerExecutor) streamContainerLogs(ctx context.Context, containerID string, buf *bytes.Buffer, addLog logFn) {
-	reader, err := ce.docker.ContainerLogs(ctx, containerID, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     true,
-		Timestamps: false,
-	})
-	if err != nil {
-		return
-	}
-	defer func() { _ = reader.Close() }()
-
-	var outBuf, errBuf bytes.Buffer
-	if _, err := stdcopy.StdCopy(&outBuf, &errBuf, reader); err != nil {
-		io.Copy(buf, reader) //nolint:errcheck
-		return
-	}
-
-	combined := outBuf.String()
-	if errBuf.Len() > 0 {
-		combined += errBuf.String()
-	}
-	buf.WriteString(combined)
-
-	// Forward each line individually so the terminal streams in real time
-	for _, line := range splitLines(combined) {
-		if line == "" {
-			continue
-		}
-		level := "info"
-		if isErrorLine(line) {
-			level = "error"
-		} else if isWarnLine(line) {
-			level = "warn"
-		}
-		addLog(level, line, nil)
-	}
-}
-
 // stepNames returns just the name of each step for logging.
 func stepNames(steps []models.GHAStep) []string {
 	names := make([]string, len(steps))
@@ -419,10 +433,6 @@ func stepNames(steps []models.GHAStep) []string {
 		names[i] = s.Name
 	}
 	return names
-}
-
-func splitLines(s string) []string {
-	return splitByNewline(s)
 }
 
 func splitByNewline(s string) []string {
