@@ -9,9 +9,10 @@ export type TaskStatus =
 	| 'retrying'
 	| 'skipped'
 	| 'dead_letter'
-export type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
 
-export interface RetryPolicy {
+type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
+
+interface RetryPolicy {
 	max_retries: number
 	initial_delay: number // nanoseconds
 	max_delay: number
@@ -26,7 +27,7 @@ export interface ArtifactRef {
 }
 
 // Resolved artifact with full MinIO key (populated after upload).
-export interface ResolvedArtifact {
+interface ResolvedArtifact {
 	path: string // relative workspace path
 	minio_key: string // full MinIO object key
 	size: number // bytes
@@ -169,19 +170,6 @@ export const STATUS_COLORS: Record<TaskStatus | WorkflowStatus, string> = {
 	dead_letter: '#991B1B',
 	cancelled: '#DC2626',
 	paused: '#F59E0B',
-}
-
-export const STATUS_BG: Record<TaskStatus | WorkflowStatus, string> = {
-	pending: '#F3F4F6',
-	queued: '#EDE9FE',
-	running: '#DBEAFE',
-	completed: '#D1FAE5',
-	failed: '#FEE2E2',
-	retrying: '#FEF3C7',
-	skipped: '#E5E7EB',
-	dead_letter: '#FEE2E2',
-	cancelled: '#FEE2E2',
-	paused: '#FEF3C7',
 }
 
 export interface GHAStep {
