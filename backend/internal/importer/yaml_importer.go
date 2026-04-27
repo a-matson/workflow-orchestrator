@@ -1,11 +1,13 @@
 // Package importer converts external YAML workflow definitions into Fluxor's
 // internal WorkflowDefinition model.
 //
-// Supported formats
+// Supported formats:
 //
 //   - GitHub Actions (.github/workflows/*.yml)
-//     Mapped as: jobs → tasks, steps.run → generic/data_transform task,
-//     steps.uses → container task (Docker action), needs → dependencies.
+//     Each Job becomes exactly ONE Fluxor TaskDefinition of type "gha_job".
+//     All Steps are embedded in Config["steps"] so they share a single runner
+//     container — preserving the shared filesystem and environment that GitHub
+//     Actions requires for step-to-step state passing.
 //
 //   - Fluxor native YAML
 //     A direct YAML representation of WorkflowDefinition — useful for
@@ -13,6 +15,7 @@
 package importer
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -26,9 +29,7 @@ import (
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-// ParseYAML detects the format of the supplied YAML bytes and converts them
-// to a Fluxor WorkflowDefinition. It never saves to the database; the caller
-// decides whether to persist the returned definition.
+// ParseYAML detects the format and converts to a Fluxor WorkflowDefinition.
 func ParseYAML(data []byte, sourceName string) (*models.WorkflowDefinition, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty YAML input")
@@ -47,10 +48,10 @@ func ParseYAML(data []byte, sourceName string) (*models.WorkflowDefinition, erro
 		return parseFluxorNative(data)
 	}
 
-	return nil, fmt.Errorf("unrecognised YAML format: expected GitHub Actions (has 'jobs:') or Fluxor native (has 'tasks:')")
+	return nil, fmt.Errorf("unrecognised YAML format: expected GitHub Actions ('jobs:') or Fluxor native ('tasks:')")
 }
 
-// ── GitHub Actions parser ─────────────────────────────────────────────────────
+// GitHub Actions structs
 
 // ghaWorkflow mirrors the subset of GitHub Actions YAML we care about.
 type ghaWorkflow struct {
@@ -61,47 +62,76 @@ type ghaWorkflow struct {
 }
 
 type ghaJob struct {
-	Name   string            `yaml:"name"`
-	RunsOn string            `yaml:"runs-on"`
-	Needs  ghaNeeds          `yaml:"needs"`
-	Env    map[string]string `yaml:"env"`
-	Steps  []*ghaStep        `yaml:"steps"`
-	// Container support
-	Container *ghaContainer `yaml:"container"`
-	// Timeout in minutes
-	TimeoutMinutes int `yaml:"timeout-minutes"`
+	Name            string            `yaml:"name"`
+	RunsOn          ghaRunsOn         `yaml:"runs-on"`
+	Needs           ghaNeeds          `yaml:"needs"`
+	Env             map[string]string `yaml:"env"`
+	Steps           []*ghaRawStep     `yaml:"steps"`
+	Container       *ghaContainer     `yaml:"container"`
+	TimeoutMinutes  int               `yaml:"timeout-minutes"`
+	Outputs         map[string]string `yaml:"outputs"`
+	Strategy        *ghaStrategy      `yaml:"strategy"`
+	ContinueOnError bool              `yaml:"continue-on-error"`
 }
 
-type ghaContainer struct {
-	Image string            `yaml:"image"`
-	Env   map[string]string `yaml:"env"`
+// ghaRunsOn handles both string and map ({"group": ...}) forms
+type ghaRunsOn struct{ Value string }
+
+func (r *ghaRunsOn) UnmarshalYAML(v *yaml.Node) error {
+	if v.Kind == yaml.ScalarNode {
+		r.Value = v.Value
+		return nil
+	}
+	r.Value = "ubuntu-latest" // default for complex runners
+	return nil
 }
 
-// ghaNeeds accepts both a single string and a list of strings.
 type ghaNeeds []string
 
-func (n *ghaNeeds) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.ScalarNode {
-		*n = []string{value.Value}
+func (n *ghaNeeds) UnmarshalYAML(v *yaml.Node) error {
+	if v.Kind == yaml.ScalarNode {
+		*n = []string{v.Value}
 		return nil
 	}
 	var list []string
-	if err := value.Decode(&list); err != nil {
+	if err := v.Decode(&list); err != nil {
 		return err
 	}
 	*n = list
 	return nil
 }
 
-type ghaStep struct {
-	ID   string            `yaml:"id"`
-	Name string            `yaml:"name"`
-	Uses string            `yaml:"uses"`
-	Run  string            `yaml:"run"`
-	With map[string]any    `yaml:"with"`
-	Env  map[string]string `yaml:"env"`
+type ghaContainer struct {
+	Image       string            `yaml:"image"`
+	Env         map[string]string `yaml:"env"`
+	Credentials *struct {
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+	} `yaml:"credentials"`
+	Options string `yaml:"options"`
 }
 
+type ghaStrategy struct {
+	Matrix   map[string]any `yaml:"matrix"`
+	FailFast *bool          `yaml:"fail-fast"`
+}
+
+// ghaRawStep preserves every field using yaml.Node for With (mixed types)
+type ghaRawStep struct {
+	ID              string            `yaml:"id"`
+	Name            string            `yaml:"name"`
+	Uses            string            `yaml:"uses"`
+	Run             string            `yaml:"run"`
+	Shell           string            `yaml:"shell"`
+	WorkingDir      string            `yaml:"working-directory"`
+	Env             map[string]string `yaml:"env"`
+	If              string            `yaml:"if"`
+	ContinueOnError bool              `yaml:"continue-on-error"`
+	With            yaml.Node         `yaml:"with"`
+	TimeoutMinutes  int               `yaml:"timeout-minutes"`
+}
+
+// GitHub Actions parser
 func parseGitHubActions(data []byte, sourceName string) (*models.WorkflowDefinition, error) {
 	var gha ghaWorkflow
 	if err := yaml.Unmarshal(data, &gha); err != nil {
@@ -113,14 +143,14 @@ func parseGitHubActions(data []byte, sourceName string) (*models.WorkflowDefinit
 		name = sourceName
 	}
 	if name == "" {
-		name = "Imported Workflow"
+		name = "Imported GHA Workflow"
 	}
 
 	now := time.Now()
 	def := &models.WorkflowDefinition{
 		ID:          uuid.New().String(),
 		Name:        name,
-		Description: fmt.Sprintf("Imported from GitHub Actions workflow: %s", sourceName),
+		Description: fmt.Sprintf("Imported from GitHub Actions: %s", sourceName),
 		Version:     "1.0.0",
 		MaxParallel: 10,
 		Tags: map[string]string{
@@ -131,22 +161,15 @@ func parseGitHubActions(data []byte, sourceName string) (*models.WorkflowDefinit
 		UpdatedAt: now,
 	}
 
-	// Stable job ordering: collect in insertion order via a second parse
+	// Preserve job insertion order
 	var rawOrder struct {
 		Jobs yaml.Node `yaml:"jobs"`
 	}
 	yaml.Unmarshal(data, &rawOrder) //nolint:errcheck
-
 	jobOrder := extractMapKeys(&rawOrder.Jobs)
 
-	// Map each job to one or more Fluxor tasks.
-	// A job with a single "run:" step becomes one generic task.
-	// A job with multiple steps becomes a task per step, chained via dependencies.
-	// A job using "uses:" with a docker:// image becomes a container task.
-
-	// jobToTaskIDs maps job name → last task ID in that job's chain
-	// so that "needs:" references resolve to the right task ID.
-	jobToLastTaskID := make(map[string]string)
+	// Map job key → the single Fluxor task ID for that job (used by needs: resolution)
+	jobToTaskID := make(map[string]string)
 
 	for _, jobKey := range jobOrder {
 		job, ok := gha.Jobs[jobKey]
@@ -154,26 +177,27 @@ func parseGitHubActions(data []byte, sourceName string) (*models.WorkflowDefinit
 			continue
 		}
 
-		jobDisplayName := job.Name
-		if jobDisplayName == "" {
-			jobDisplayName = jobKey
+		taskID := stableID(jobKey)
+		displayName := job.Name
+		if displayName == "" {
+			displayName = jobKey
 		}
 
-		// Resolve dependencies: needs → IDs of the last task in each needed job
-		var jobDeps []string
+		// Resolve needs → Fluxor task IDs
+		var deps []string
 		for _, need := range job.Needs {
-			if lastID, ok := jobToLastTaskID[need]; ok {
-				jobDeps = append(jobDeps, lastID)
+			if tid, ok := jobToTaskID[need]; ok {
+				deps = append(deps, tid)
 			}
 		}
 
-		// Build timeout
+		// Timeout
 		timeout := time.Duration(job.TimeoutMinutes) * time.Minute
 		if timeout == 0 {
 			timeout = 60 * time.Minute
 		}
 
-		// Merge workflow-level env with job-level env
+		// Merge env: workflow-level → job-level
 		mergedEnv := make(map[string]string)
 		for k, v := range gha.Env {
 			mergedEnv[k] = v
@@ -182,146 +206,156 @@ func parseGitHubActions(data []byte, sourceName string) (*models.WorkflowDefinit
 			mergedEnv[k] = v
 		}
 
-		// If the job has no steps, create a single placeholder task
-		if len(job.Steps) == 0 {
-			id := stableID(jobKey)
-			task := buildJobTask(id, jobDisplayName, jobKey, job, jobDeps, mergedEnv, timeout)
-			def.Tasks = append(def.Tasks, task)
-			jobToLastTaskID[jobKey] = id
-			continue
+		// Convert raw steps to GHAStep model objects
+		steps := convertSteps(job.Steps, mergedEnv)
+
+		// Detect artifact actions and wire ArtifactsIn/Out automatically
+		artifactsIn, artifactsOut := detectArtifacts(steps)
+
+		// Serialise steps list into Config so the worker can deserialise them
+		stepsJSON, _ := json.Marshal(steps)
+		var stepsAny []any
+		json.Unmarshal(stepsJSON, &stepsAny) //nolint:errcheck
+
+		// Runner image: honour job.container.image if set, else use our runner
+		runnerImage := "fluxor/gha-runner:latest"
+		if job.Container != nil && job.Container.Image != "" {
+			runnerImage = job.Container.Image
 		}
 
-		// Multiple steps: create a chain
-		prevID := ""
-		for si, step := range job.Steps {
-			stepDeps := jobDeps
-			if prevID != "" {
-				stepDeps = []string{prevID}
-			}
-
-			stepName := step.Name
-			if stepName == "" {
-				stepName = fmt.Sprintf("%s / step %d", jobDisplayName, si+1)
-			}
-
-			stepEnv := make(map[string]string)
-			for k, v := range mergedEnv {
-				stepEnv[k] = v
-			}
-			for k, v := range step.Env {
-				stepEnv[k] = v
-			}
-
-			id := stableID(fmt.Sprintf("%s-%d", jobKey, si))
-			task := buildStepTask(id, stepName, step, job, stepDeps, stepEnv, timeout)
-			def.Tasks = append(def.Tasks, task)
-			prevID = id
+		// Decide the runs-on label so the UI can display it
+		runsOn := job.RunsOn.Value
+		if runsOn == "" {
+			runsOn = "ubuntu-latest"
 		}
-		jobToLastTaskID[jobKey] = prevID
+
+		task := models.TaskDefinition{
+			ID:           taskID,
+			Name:         displayName,
+			Type:         "gha_job",
+			Dependencies: deps,
+			Timeout:      timeout,
+			// The gha_job executor reads these fields:
+			Config: map[string]any{
+				"steps":        stepsAny,    // []GHAStep serialised
+				"runs_on":      runsOn,      // informational / routing
+				"runner_image": runnerImage, // Docker image for the runner container
+				"env":          mergedEnv,   // workflow+job level env
+				"job_key":      jobKey,      // original job key for act -j
+				"outputs":      job.Outputs, // job outputs map
+			},
+			// Container spec for the runner — the gha_job executor overrides this
+			// at runtime with the resolved runner image + DinD socket mount
+			Container: &models.ContainerSpec{
+				Image:     runnerImage,
+				MemoryMB:  2048,
+				CPUMillis: 2000,
+				Env:       mergedEnv,
+			},
+			ArtifactsIn:  artifactsIn,
+			ArtifactsOut: artifactsOut,
+			Metadata: map[string]string{
+				"gha_job":     jobKey,
+				"gha_runs_on": runsOn,
+				"gha_source":  sourceName,
+			},
+		}
+
+		def.Tasks = append(def.Tasks, task)
+		jobToTaskID[jobKey] = taskID
 	}
 
 	if len(def.Tasks) == 0 {
-		return nil, fmt.Errorf("GitHub Actions workflow has no jobs or steps to import")
+		return nil, fmt.Errorf("GitHub Actions workflow has no jobs")
 	}
 
 	return def, nil
 }
 
-// buildJobTask creates a Fluxor task for a job that has no steps.
-func buildJobTask(id, displayName, jobKey string, job *ghaJob, deps []string, env map[string]string, timeout time.Duration) models.TaskDefinition {
-	return models.TaskDefinition{
-		ID:           id,
-		Name:         displayName,
-		Type:         "generic",
-		Dependencies: deps,
-		Config: map[string]any{
-			"command": "echo",
-			"args":    []string{fmt.Sprintf("job '%s' has no steps", jobKey)},
-			"env":     env,
-		},
-		Timeout: timeout,
-		Metadata: map[string]string{
-			"gha_job":    jobKey,
-			"gha_runsOn": job.RunsOn,
-		},
+// convertSteps maps raw YAML steps to the canonical GHAStep model.
+func convertSteps(raw []*ghaRawStep, jobEnv map[string]string) []models.GHAStep {
+	out := make([]models.GHAStep, 0, len(raw))
+	for i, r := range raw {
+		if r == nil {
+			continue
+		}
+		step := models.GHAStep{
+			ID:      r.ID,
+			Name:    r.Name,
+			Uses:    r.Uses,
+			Run:     r.Run,
+			Shell:   r.Shell,
+			WorkDir: r.WorkingDir,
+			If:      r.If,
+		}
+		if step.Name == "" {
+			if step.Uses != "" {
+				step.Name = step.Uses
+			} else {
+				step.Name = fmt.Sprintf("step-%d", i+1)
+			}
+		}
+		if step.Shell == "" && step.Run != "" {
+			step.Shell = "bash"
+		}
+
+		// Merge env
+		if len(r.Env) > 0 {
+			step.Env = make(map[string]string)
+			for k, v := range r.Env {
+				step.Env[k] = v
+			}
+		}
+
+		// Decode With into map[string]any
+		if r.With.Kind != 0 {
+			var withMap map[string]any
+			if err := r.With.Decode(&withMap); err == nil {
+				step.With = withMap
+			}
+		}
+
+		out = append(out, step)
 	}
+	return out
 }
 
-// buildStepTask converts a single GitHub Actions step into a Fluxor task.
-func buildStepTask(id, displayName string, step *ghaStep, job *ghaJob, deps []string, env map[string]string, timeout time.Duration) models.TaskDefinition {
-	task := models.TaskDefinition{
-		ID:           id,
-		Name:         displayName,
-		Dependencies: deps,
-		Timeout:      timeout,
-		Metadata: map[string]string{
-			"gha_runsOn": job.RunsOn,
-		},
-	}
-	if step.ID != "" {
-		task.Metadata["gha_step_id"] = step.ID
-	}
-
-	switch {
-	case step.Run != "":
-		// Shell script step → generic task
-		task.Type = "generic"
-		task.Config = map[string]any{
-			"command": "sh",
-			"args":    []string{"-c", step.Run},
-			"env":     env,
+// detectArtifacts scans steps for upload-artifact / download-artifact uses
+// and returns corresponding ArtifactRef slices for MinIO bridging.
+func detectArtifacts(steps []models.GHAStep) (in []models.ArtifactRef, out []models.ArtifactRef) {
+	for _, s := range steps {
+		if !strings.Contains(s.Uses, "actions/upload-artifact") &&
+			!strings.Contains(s.Uses, "actions/download-artifact") {
+			continue
 		}
-
-	case strings.HasPrefix(step.Uses, "docker://"):
-		// docker:// action → container task
-		image := strings.TrimPrefix(step.Uses, "docker://")
-		task.Type = "generic"
-		task.Container = &models.ContainerSpec{
-			Image:     image,
-			MemoryMB:  512,
-			CPUMillis: 1000,
-			Env:       env,
+		name := ""
+		path := ""
+		if s.With != nil {
+			if n, ok := s.With["name"].(string); ok {
+				name = n
+			}
+			if p, ok := s.With["path"].(string); ok {
+				path = p
+			}
 		}
-		// Build command from "with" inputs if present
-		if entrypoint, ok := step.With["entrypoint"].(string); ok {
-			task.Config = map[string]any{"command": entrypoint}
+		if path == "" {
+			path = name
+		}
+		if path == "" {
+			continue
+		}
+		ref := models.ArtifactRef{Path: path, Description: name}
+		if strings.Contains(s.Uses, "upload-artifact") {
+			out = append(out, ref)
 		} else {
-			task.Config = map[string]any{}
-		}
-		if args, ok := step.With["args"].(string); ok {
-			task.Config["args"] = strings.Fields(args)
-		}
-
-	case step.Uses != "":
-		// Named action (e.g. actions/checkout@v4) → informational placeholder
-		// We can't execute GitHub-hosted actions natively, so we note the action
-		// and create a shell task the user can customise.
-		task.Type = "generic"
-		actionNote := fmt.Sprintf("# GitHub Action: %s\n# This action cannot run natively in Fluxor.\n# Replace with an equivalent shell command or container task.", step.Uses)
-		task.Config = map[string]any{
-			"command": "sh",
-			"args":    []string{"-c", fmt.Sprintf("echo 'Action: %s — configure manually'", step.Uses)},
-			"env":     env,
-		}
-		task.Metadata["gha_action"] = step.Uses
-		task.Metadata["gha_note"] = actionNote
-
-	default:
-		task.Type = "generic"
-		task.Config = map[string]any{
-			"command": "echo",
-			"args":    []string{"empty step"},
-			"env":     env,
+			in = append(in, ref)
 		}
 	}
-
-	return task
+	return
 }
 
-// ── Fluxor native YAML parser ─────────────────────────────────────────────────
+// Fluxor native YAML parser
 
-// fluxorYAML is the YAML representation of a WorkflowDefinition.
-// Field names use snake_case to match JSON tags.
 type fluxorYAML struct {
 	Name        string            `yaml:"name"`
 	Description string            `yaml:"description"`
@@ -403,11 +437,10 @@ func parseFluxorNative(data []byte) (*models.WorkflowDefinition, error) {
 		def.GlobalRetry = convertRetry(fy.GlobalRetry)
 	}
 
-	// Build a set of declared IDs for dependency validation
 	declared := make(map[string]bool)
 	for _, t := range fy.Tasks {
 		if t.ID == "" {
-			return nil, fmt.Errorf("fluxor YAML: every task must have an 'id' field")
+			return nil, fmt.Errorf("fluxor YAML: every task must have an 'id'")
 		}
 		declared[t.ID] = true
 	}
@@ -474,10 +507,8 @@ func parseFluxorNative(data []byte) (*models.WorkflowDefinition, error) {
 	return def, nil
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Helpers
 
-// stableID creates a deterministic, URL-safe task ID from a string.
-// It is short enough to read in the DAG but unique within a workflow.
 var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 func stableID(s string) string {
@@ -493,7 +524,6 @@ func stableID(s string) string {
 	return s
 }
 
-// extractMapKeys returns the YAML map keys in document order.
 func extractMapKeys(n *yaml.Node) []string {
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil

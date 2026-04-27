@@ -252,8 +252,25 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	var artifactsOut []models.ResolvedArtifact
 	var execErr error
 
-	// Route: container isolation if a ContainerSpec is present and Docker is available
-	if msg.Container != nil && w.executor != nil {
+	// Route: gha_job gets its own executor that preserves job-level shared state
+	if msg.TaskType == "gha_job" && w.executor != nil {
+		stdout, arts, runErr := w.executor.RunGHAJob(taskCtx, msg, addLog)
+		artifactsOut = arts
+		execErr = runErr
+		if runErr == nil {
+			if json.Unmarshal([]byte(stdout), &output) != nil {
+				output = map[string]any{"output": stdout}
+			}
+			if len(arts) > 0 {
+				keys := make([]string, len(arts))
+				for i, a := range arts {
+					keys[i] = a.MinioKey
+				}
+				output["artifacts"] = keys
+			}
+		}
+	} else if msg.Container != nil && w.executor != nil {
+		// Route: container isolation if a ContainerSpec is present and Docker is available
 		stdout, arts, runErr := w.executor.Run(taskCtx, msg, addLog)
 		artifactsOut = arts
 		execErr = runErr
@@ -314,6 +331,9 @@ type logFn func(level, message string, fields map[string]any)
 
 func (w *Worker) dispatchInProcess(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
 	switch msg.TaskType {
+	case "gha_job":
+		// Docker unavailable — run steps as sequential shell commands in a sandbox
+		return w.execGHAJobFallback(ctx, msg, addLog)
 	case "http_request":
 		return w.execHTTP(ctx, msg, addLog)
 	case "database_query":
@@ -823,6 +843,62 @@ func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLo
 		return map[string]any{"output": parsed, "exit_code": exitCode}, nil
 	}
 	return map[string]any{"output": out, "exit_code": exitCode}, nil
+}
+
+// execGHAJobFallback runs a gha_job in-process (no Docker) by executing each
+// run: step as a sequential shell command in a sandbox directory.
+// Steps using uses: are skipped with a warning — they require the runner image.
+func (w *Worker) execGHAJobFallback(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
+	stepsRaw, ok := msg.Config["steps"]
+	if !ok {
+		return nil, fmt.Errorf("gha_job: missing steps in config")
+	}
+	b, _ := json.Marshal(stepsRaw)
+	var steps []models.GHAStep
+	if err := json.Unmarshal(b, &steps); err != nil {
+		return nil, fmt.Errorf("gha_job: parse steps: %w", err)
+	}
+
+	sandbox, err := createSandbox()
+	if err != nil {
+		return nil, fmt.Errorf("gha_job: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(sandbox) }()
+
+	addLog("warn", "Docker unavailable — running gha_job steps in-process (reduced fidelity)", nil)
+
+	for i, step := range steps {
+		if step.Run == "" {
+			addLog("warn", fmt.Sprintf("Step %d (%s): skipped (uses: %s requires runner image)", i+1, step.Name, step.Uses), nil)
+			continue
+		}
+		addLog("info", fmt.Sprintf("▶ Step %d: %s", i+1, step.Name), nil)
+
+		cmdCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		cmd := exec.CommandContext(cmdCtx, "sh", "-c", step.Run)
+		cmd.Dir = sandbox
+		cmd.Env = sandboxEnv(msg)
+		for k, v := range step.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		runErr := cmd.Run()
+		cancel()
+
+		if stdout.Len() > 0 {
+			addLog("info", stdout.String(), nil)
+		}
+		if stderr.Len() > 0 {
+			addLog("warn", stderr.String(), nil)
+		}
+		if runErr != nil {
+			return nil, fmt.Errorf("gha_job fallback: step %d (%s) failed: %w", i+1, step.Name, runErr)
+		}
+	}
+	return map[string]any{"steps": len(steps), "mode": "fallback"}, nil
 }
 
 // createSandbox creates a fresh, empty, world-inaccessible temporary directory

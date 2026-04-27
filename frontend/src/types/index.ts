@@ -184,6 +184,19 @@ export const STATUS_BG: Record<TaskStatus | WorkflowStatus, string> = {
 	paused: '#FEF3C7',
 }
 
+export interface GHAStep {
+	id?: string
+	name: string
+	uses?: string
+	run?: string
+	shell?: string
+	'working-directory'?: string
+	env?: Record<string, string>
+	if?: string
+	with?: Record<string, unknown>
+	'continue-on-error'?: boolean
+}
+
 export const TASK_TYPES = [
 	{ value: 'http_request', label: 'HTTP Request' },
 	{ value: 'data_transform', label: 'Data Transform' },
