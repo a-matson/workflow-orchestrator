@@ -3,13 +3,17 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
+	"github.com/a-matson/workflow-orchestrator/backend/internal/importer"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
@@ -57,6 +61,9 @@ func (h *Handler) Routes() *http.ServeMux {
 	// System
 	mux.HandleFunc("GET /api/metrics", h.GetMetrics)
 	mux.HandleFunc("GET /api/health", h.Health)
+
+	// YAML import
+	mux.HandleFunc("POST /api/import/yaml", h.ImportYAML)
 
 	// Artifacts
 	mux.HandleFunc("GET /api/tasks/{id}/artifacts", h.ListTaskArtifacts)
@@ -332,6 +339,80 @@ func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"url": url, "key": key})
+}
+
+// ==================== YAML Import ====================
+
+// ImportYAML accepts a YAML workflow definition (GitHub Actions or Fluxor native)
+// and returns the parsed WorkflowDefinition as JSON without saving it.
+// The frontend can preview the result in the DAG builder and save manually.
+//
+// Accepts:
+//   - multipart/form-data with a "file" field containing the .yml/.yaml file
+//   - application/x-yaml or text/yaml body (raw YAML bytes)
+//   - application/octet-stream body (raw YAML bytes, used by drag-drop)
+//
+// POST /api/import/yaml
+func (h *Handler) ImportYAML(w http.ResponseWriter, r *http.Request) {
+	const maxBodySize = 512 * 1024 // 512 KB — well above any real workflow file
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
+	var yamlBytes []byte
+	var sourceName string
+
+	ct := r.Header.Get("Content-Type")
+	switch {
+	case strings.HasPrefix(ct, "multipart/form-data"):
+		if err := r.ParseMultipartForm(maxBodySize); err != nil {
+			writeError(w, r, http.StatusBadRequest, "failed to parse multipart form", err)
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			writeError(w, r, http.StatusBadRequest, "missing 'file' field in form", err)
+			return
+		}
+		defer func() { _ = file.Close() }()
+		sourceName = header.Filename
+		if buf, readErr := io.ReadAll(file); readErr != nil {
+			writeError(w, r, http.StatusBadRequest, "failed to read uploaded file", err)
+			return
+		} else {
+			yamlBytes = buf
+		}
+	default:
+		// Raw body — used for application/x-yaml, text/yaml, octet-stream
+		if buf, err := io.ReadAll(r.Body); err != nil {
+			writeError(w, r, http.StatusBadRequest, "failed to read request body", err)
+			return
+		} else {
+			yamlBytes = buf
+		}
+		// Try to get the filename from Content-Disposition header
+		if cd := r.Header.Get("Content-Disposition"); cd != "" {
+			if _, params, err := mime.ParseMediaType(cd); err == nil {
+				sourceName = params["filename"]
+			}
+		}
+		if sourceName == "" {
+			sourceName = r.URL.Query().Get("filename")
+		}
+	}
+
+	def, err := importer.ParseYAML(yamlBytes, sourceName)
+	if err != nil {
+		log.Warn().Err(err).Str("source", sourceName).Msg("yaml import failed")
+		writeError(w, r, http.StatusUnprocessableEntity, err.Error(), err)
+		return
+	}
+
+	log.Info().
+		Str("source", sourceName).
+		Str("workflow_name", def.Name).
+		Int("tasks", len(def.Tasks)).
+		Msg("yaml workflow imported")
+
+	writeJSON(w, http.StatusOK, def)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

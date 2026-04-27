@@ -38,13 +38,13 @@ Open **http://localhost:3000** — the Builder page loads immediately.
 │  │  exponential backoff · dead-letter · crash recovery           │     │
 │  └──────────────┬────────────────────────────┬───────────────────┘     │
 │                 │                            │                         │
-│  ┌──────────────▼─────┐    ┌────────────────▼────────────────────┐     │
+│  ┌──────────────▼──────┐    ┌────────────────▼───────────────────┐     │
 │  │  PostgreSQL 16      │    │  Redis 7 Broker                    │     │
 │  │  definitions        │    │  task queue   (LIST BLPOP)         │     │
 │  │  executions/tasks   │    │  retry ZSet   (scored by time)     │     │
 │  │  artifacts (JSONB)  │    │  dead_letter  (LIST)               │     │
 │  └─────────────────────┘    │  locks        (SET NX EX)          │     │
-│                              └──────────────┬────────────────────┘     │
+│                             └───────────────┬────────────────────┘     │
 │                                             │                          │
 │  ┌──────────────────────────────────────────▼───────────────────────┐  │
 │  │  Worker Pool                                                     │  │

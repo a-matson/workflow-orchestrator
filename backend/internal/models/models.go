@@ -49,6 +49,39 @@ type ContainerSpec struct {
 	WorkDir   string            `json:"work_dir"`   // working directory inside container (default /workspace)
 }
 
+// GitHub Actions types
+
+// GHAStep mirrors a single step inside a GitHub Actions job.
+// The full list is stored in TaskDefinition.Config["steps"] so that all steps
+// in a job share a single Fluxor task (and therefore share one container).
+type GHAStep struct {
+	ID      string            `json:"id,omitempty"`
+	Name    string            `json:"name"`
+	Uses    string            `json:"uses,omitempty"`
+	Run     string            `json:"run,omitempty"`
+	With    map[string]any    `json:"with,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	If      string            `json:"if,omitempty"`
+	Shell   string            `json:"shell,omitempty"`
+	WorkDir string            `json:"working-directory,omitempty"`
+}
+
+// GHAContext carries GitHub context values evaluated before step execution.
+// Populated from git metadata and workflow trigger data at runtime.
+type GHAContext struct {
+	SHA        string            `json:"sha"`
+	Ref        string            `json:"ref"`
+	RefName    string            `json:"ref_name"`
+	Repository string            `json:"repository"`
+	RunID      string            `json:"run_id"`
+	RunNumber  string            `json:"run_number"`
+	Actor      string            `json:"actor"`
+	EventName  string            `json:"event_name"`
+	Workspace  string            `json:"workspace"`
+	Env        map[string]string `json:"env"`
+	Inputs     map[string]string `json:"inputs"`
+}
+
 // RetryPolicy defines retry behavior for tasks
 type RetryPolicy struct {
 	MaxRetries      int           `json:"max_retries"`

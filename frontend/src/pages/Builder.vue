@@ -4,7 +4,12 @@
 		<aside class="wf-sidebar">
 			<div class="sidebar-header">
 				<span class="sidebar-title">Workflows</span>
-				<button class="btn-new" title="New workflow" @click="createNew">+</button>
+				<div class="header-actions">
+					<button class="btn-icon" @click="showImport = true" title="Import YAML / GitHub Actions">
+						⬆
+					</button>
+					<button class="btn-new" @click="createNew" title="New workflow">+</button>
+				</div>
 			</div>
 
 			<div v-if="store.loading" class="sidebar-loading">Loading…</div>
@@ -46,9 +51,17 @@
 			<DAGEditor ref="editorRef" @triggered="onTriggered" />
 		</div>
 	</div>
+
+	<ImportYAMLModal
+		v-if="showImport"
+		@close="showImport = false"
+		@loaded="onImportLoaded"
+		@saved="onImportSaved"
+	/>
 </template>
 
 <script setup lang="ts">
+	import ImportYAMLModal from '../components/ImportYAMLModal.vue'
 	import { ref, onMounted, inject } from 'vue'
 	import { useRouter } from 'vue-router'
 	import { useWorkflowStore } from '../stores/workflow'
@@ -63,6 +76,7 @@
 
 	const editorRef = ref<InstanceType<typeof DAGEditor> | null>(null)
 	const activeWorkflowId = ref<string | null>(null)
+	const showImport = ref(false)
 
 	onMounted(async () => {
 		await store.fetchDefinitions()
@@ -103,6 +117,31 @@
 		showToast?.('▶ Workflow triggered', 'success')
 		router.push({ name: 'execution-detail', params: { execId } })
 	}
+
+	function onImportLoaded(def: WorkflowDefinition) {
+		// Load into builder without saving — user can review and save manually
+		activeWorkflowId.value = null
+		editorRef.value?.loadWorkflow(def.name, def.tasks)
+		showToast?.(`Loaded "${def.name}" — ${def.tasks.length} tasks. Save when ready.`, 'info')
+	}
+
+	async function onImportSaved(def: WorkflowDefinition) {
+		try {
+			const saved = await store.createDefinition({
+				name: def.name,
+				description: def.description,
+				version: def.version,
+				tasks: def.tasks,
+				max_parallel: def.max_parallel,
+				tags: def.tags,
+			})
+			activeWorkflowId.value = saved.id
+			editorRef.value?.loadWorkflow(saved.name, saved.tasks, saved.id)
+			showToast?.(`Imported & saved "${saved.name}"`, 'success')
+		} catch {
+			showToast?.('Import succeeded but save failed', 'error')
+		}
+	}
 </script>
 
 <style scoped>
@@ -138,22 +177,36 @@
 		letter-spacing: 0.08em;
 		color: var(--text3);
 	}
-	.btn-new {
+	.header-actions {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.btn-new,
+	.btn-icon {
 		width: 22px;
 		height: 22px;
 		border-radius: 5px;
 		border: 1px solid var(--border2);
 		background: var(--surface);
 		color: var(--text2);
-		font-size: 16px;
+		font-size: 13px;
 		line-height: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 	}
-	.btn-new:hover {
+	.btn-new {
+		font-size: 16px;
+	}
+	.btn-new:hover,
+	.btn-icon:hover {
 		background: var(--surface2);
 		color: var(--text);
+	}
+	.btn-icon:hover {
+		color: var(--accent);
+		border-color: rgba(124, 106, 255, 0.4);
 	}
 
 	.sidebar-loading {

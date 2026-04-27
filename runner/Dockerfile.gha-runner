@@ -1,0 +1,53 @@
+# fluxor/gha-runner — GitHub Actions compatible runner image
+#
+# This image is used by the gha_job executor to run GHA jobs locally with
+# high fidelity. It mirrors what GitHub's ubuntu-latest runner provides.
+#
+# Build:
+#   docker build -f runner/Dockerfile.gha-runner -t fluxor/gha-runner:latest .
+#
+# The container reads /fluxor/steps.json (injected by the Fluxor worker) and
+# executes each step sequentially using the step-runner.sh entrypoint, which:
+#   - Evaluates ${{ }} expressions against /fluxor/context.json
+#   - Manages $GITHUB_ENV / $GITHUB_OUTPUT / $GITHUB_PATH between steps
+#   - Intercepts actions/upload-artifact and actions/download-artifact
+#   - Handles docker:// actions via the mounted Docker socket
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RUNNER_OS=Linux
+ENV RUNNER_ARCH=X64
+ENV RUNNER_TEMP=/tmp
+ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
+ENV GITHUB_WORKSPACE=/workspace
+ENV CI=true
+
+# ── System packages ────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash curl wget git jq unzip zip tar \
+    ca-certificates gnupg lsb-release \
+    build-essential python3 python3-pip nodejs npm \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Go (for projects that compile Go) ─────────────────────────────────────────
+ARG GO_VERSION=1.22.3
+RUN curl -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -xz -C /usr/local
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# ── act (nektos/act) — optional local GHA runner for complex actions ───────────
+# act is available as a fallback for uses: steps that need full GHA compatibility.
+RUN curl -fsSL https://raw.githubusercontent.com/nektos/act/master/install.sh \
+    | bash -s -- -b /usr/local/bin 2>/dev/null || true
+
+# ── Tool cache directory ───────────────────────────────────────────────────────
+RUN mkdir -p /opt/hostedtoolcache /workspace /fluxor
+
+# ── Step-runner entrypoint ─────────────────────────────────────────────────────
+COPY runner/step-runner.sh /usr/local/bin/step-runner.sh
+RUN chmod +x /usr/local/bin/step-runner.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/step-runner.sh"]

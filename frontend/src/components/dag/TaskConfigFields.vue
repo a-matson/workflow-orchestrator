@@ -253,6 +253,158 @@
 			</div>
 		</template>
 
+		<template v-else-if="type === 'gha_job'">
+			<div class="field">
+				<label>Runner Image</label>
+				<input
+					class="cf-input cf-code"
+					:value="(cfg.runner_image as string) ?? 'fluxor/gha-runner:latest'"
+					placeholder="fluxor/gha-runner:latest"
+					@input="patch('runner_image', ($event.target as HTMLInputElement).value)"
+				/>
+				<span class="field-hint">Docker image used to run all steps in this job</span>
+			</div>
+			<div class="field-row">
+				<div class="field" style="flex: 1">
+					<label>Runs-on</label>
+					<input
+						class="cf-input"
+						:value="(cfg.runs_on as string) ?? 'ubuntu-latest'"
+						readonly
+						disabled
+					/>
+				</div>
+				<div class="field" style="flex: 1">
+					<label>Job Key</label>
+					<input class="cf-input cf-code" :value="cfg.job_key as string" readonly disabled />
+				</div>
+			</div>
+
+			<!-- Steps list -->
+			<div class="gha-steps-header">
+				<span class="section-label-inline">Steps ({{ steps.length }})</span>
+				<button class="btn-add-step" @click="addStep">+ Add Step</button>
+			</div>
+
+			<!-- ── GitHub Actions Job ───────────────────────────────────────── -->
+			<div class="gha-steps-list">
+				<div v-for="(step, i) in steps" :key="i" class="gha-step-card">
+					<div class="step-card-header">
+						<span class="step-num">{{ i + 1 }}</span>
+						<input
+							class="cf-input step-name-input"
+							:value="step.name"
+							placeholder="Step name"
+							@input="patchStep(i, 'name', ($event.target as HTMLInputElement).value)"
+						/>
+						<button class="step-remove" @click="removeStep(i)">×</button>
+					</div>
+
+					<div class="step-type-row">
+						<button
+							class="step-type-btn"
+							:class="{ active: !step.uses }"
+							@click="setStepType(i, 'run')"
+						>
+							run:
+						</button>
+						<button
+							class="step-type-btn"
+							:class="{ active: !!step.uses }"
+							@click="setStepType(i, 'uses')"
+						>
+							uses:
+						</button>
+					</div>
+
+					<template v-if="!step.uses">
+						<div class="field" style="margin-top: 6px">
+							<label>Shell Script</label>
+							<div class="code-editor-wrap">
+								<div class="code-line-numbers" aria-hidden="true">
+									<span v-for="n in stepScriptLines(step.run)" :key="n">{{ n }}</span>
+								</div>
+								<textarea
+									class="cf-input cf-textarea cf-code code-editor-ta"
+									:value="step.run ?? ''"
+									placeholder="npm ci&#10;npm test"
+									rows="4"
+									spellcheck="false"
+									@input="patchStep(i, 'run', ($event.target as HTMLTextAreaElement).value)"
+								/>
+							</div>
+						</div>
+						<div class="field">
+							<label>Shell <span class="label-hint">bash / sh / python / node</span></label>
+							<input
+								class="cf-input cf-code"
+								:value="step.shell ?? 'bash'"
+								@input="patchStep(i, 'shell', ($event.target as HTMLInputElement).value)"
+							/>
+						</div>
+					</template>
+
+					<template v-else>
+						<div class="field" style="margin-top: 6px">
+							<label>Action / Image</label>
+							<input
+								class="cf-input cf-code"
+								:value="step.uses"
+								placeholder="actions/checkout@v4  or  docker://alpine:3.19"
+								@input="patchStep(i, 'uses', ($event.target as HTMLInputElement).value)"
+							/>
+						</div>
+					</template>
+
+					<details class="step-extras">
+						<summary>env / if / working-directory</summary>
+						<div class="field" style="margin-top: 6px">
+							<label>env <span class="label-hint">KEY=value per line</span></label>
+							<textarea
+								class="cf-input cf-textarea cf-code"
+								:value="stepEnvStr(step.env)"
+								rows="2"
+								spellcheck="false"
+								@input="patchStepEnv(i, ($event.target as HTMLTextAreaElement).value)"
+							/>
+						</div>
+						<div class="field-row">
+							<div class="field" style="flex: 1">
+								<label>if:</label>
+								<input
+									class="cf-input cf-code"
+									:value="step.if ?? ''"
+									placeholder="success()"
+									@input="patchStep(i, 'if', ($event.target as HTMLInputElement).value)"
+								/>
+							</div>
+							<div class="field" style="flex: 1">
+								<label>working-directory</label>
+								<input
+									class="cf-input cf-code"
+									:value="step['working-directory'] ?? ''"
+									placeholder="/workspace"
+									@input="
+										patchStep(i, 'working-directory', ($event.target as HTMLInputElement).value)
+									"
+								/>
+							</div>
+						</div>
+					</details>
+				</div>
+
+				<div v-if="steps.length === 0" class="gha-steps-empty">
+					No steps yet — click "+ Add Step" to add one.
+				</div>
+			</div>
+
+			<div class="editor-footer">
+				<span class="footer-hint"
+					>💡 All steps share one container, <code>/workspace</code>, and env vars</span
+				>
+			</div>
+		</template>
+
 		<!-- ── Generic / Shell ───────────────────────────────────────── -->
 		<template v-else>
 			<div class="field">
@@ -317,6 +469,7 @@
 
 <script setup lang="ts">
 	import { computed } from 'vue'
+	import type { GHAStep } from '../../types'
 
 	const props = defineProps<{
 		type: string
@@ -444,6 +597,70 @@
 		return Array.from({ length: n }, (_, i) => i + 1)
 	}
 
+	// ── GHA step helpers ──────────────────────────────────────────────────
+	const steps = computed<GHAStep[]>(() => {
+		const s = cfg.value.steps
+		if (Array.isArray(s)) return s as GHAStep[]
+		return []
+	})
+
+	function updateSteps(newSteps: GHAStep[]) {
+		emit('update', { ...props.config, steps: newSteps })
+	}
+
+	function addStep() {
+		updateSteps([
+			...steps.value,
+			{ name: `Step ${steps.value.length + 1}`, run: '', shell: 'bash' },
+		])
+	}
+
+	function removeStep(i: number) {
+		const s = [...steps.value]
+		s.splice(i, 1)
+		updateSteps(s)
+	}
+
+	function patchStep(i: number, key: string, value: unknown) {
+		const s = steps.value.map((step, idx) => (idx === i ? { ...step, [key]: value } : step))
+		updateSteps(s)
+	}
+
+	function setStepType(i: number, type: 'run' | 'uses') {
+		const step = { ...steps.value[i] }
+		if (type === 'run') {
+			delete step.uses
+			if (!step.run) step.run = ''
+		} else {
+			delete step.run
+			delete step.shell
+			if (!step.uses) step.uses = ''
+		}
+		const s = steps.value.map((orig, idx) => (idx === i ? step : orig))
+		updateSteps(s)
+	}
+
+	function patchStepEnv(i: number, val: string) {
+		const env: Record<string, string> = {}
+		for (const line of val.split('\n')) {
+			const idx = line.indexOf('=')
+			if (idx > 0) env[line.slice(0, idx).trim()] = line.slice(idx + 1).trim()
+		}
+		patchStep(i, 'env', env)
+	}
+
+	function stepEnvStr(env: Record<string, string> | undefined): string {
+		if (!env) return ''
+		return Object.entries(env)
+			.map(([k, v]) => `${k}=${v}`)
+			.join('\n')
+	}
+
+	function stepScriptLines(script: string | undefined): number[] {
+		const n = Math.max(4, (script ?? '').split('\n').length)
+		return Array.from({ length: n }, (_, i) => i + 1)
+	}
+
 	function syncScroll(e: Event, _area: string) {
 		const ta = e.target as HTMLTextAreaElement
 		const ln = ta.previousElementSibling as HTMLElement
@@ -463,10 +680,12 @@
 		flex-direction: column;
 		gap: 4px;
 	}
+
 	.field-row {
 		display: flex;
 		gap: 8px;
 	}
+
 	.field-row .field {
 		flex: 1;
 	}
@@ -479,6 +698,7 @@
 		letter-spacing: 0.06em;
 		color: var(--text3);
 	}
+
 	.label-hint {
 		text-transform: none;
 		letter-spacing: 0;
@@ -498,31 +718,36 @@
 		width: 100%;
 		box-sizing: border-box;
 	}
+
 	.cf-input:focus {
 		border-color: var(--accent);
 	}
+
 	.cf-textarea {
 		resize: vertical;
 		min-height: 56px;
 		line-height: 1.6;
 	}
+
 	.cf-code {
 		font-family: var(--mono);
 		font-size: 11px;
 	}
 
-	/* ── Code editor widget ──────────────────────────────────── */
+	/* Code editor widget */
 	.code-editor-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: 4px;
 	}
+
 	.editor-actions {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 	}
+
 	.editor-hint {
 		font-size: 9px;
 		color: #333;
@@ -536,6 +761,7 @@
 		overflow: hidden;
 		background: #0a0a14;
 	}
+
 	.code-editor-wrap:focus-within {
 		border-color: var(--accent);
 	}
@@ -556,6 +782,7 @@
 		overflow: hidden;
 		pointer-events: none;
 	}
+
 	.code-line-numbers span {
 		display: block;
 		height: calc(1.6 * 11px);
@@ -572,6 +799,7 @@
 		outline: none;
 		overflow: auto;
 	}
+
 	.code-editor-ta:focus {
 		border-color: transparent !important;
 	}
@@ -579,10 +807,12 @@
 	.editor-footer {
 		margin-top: 3px;
 	}
+
 	.footer-hint {
 		font-size: 9.5px;
 		color: #333;
 	}
+
 	.footer-hint code {
 		font-family: var(--mono);
 		background: rgba(255, 255, 255, 0.04);
@@ -591,12 +821,13 @@
 		color: #666;
 	}
 
-	/* ── Notification type selector ──────────────────────────── */
+	/* Notification type selector */
 	.notify-type-row {
 		display: flex;
 		gap: 5px;
 		flex-wrap: wrap;
 	}
+
 	.notify-type-btn {
 		display: flex;
 		align-items: center;
@@ -609,15 +840,160 @@
 		color: var(--text2);
 		cursor: pointer;
 	}
+
 	.notify-type-btn:hover {
 		background: var(--surface2);
 	}
+
 	.notify-type-btn.active {
 		background: rgba(124, 106, 255, 0.12);
 		border-color: rgba(124, 106, 255, 0.4);
 		color: var(--accent);
 	}
+
 	.notify-icon {
 		font-size: 12px;
+	}
+
+	/* GHA job styles */
+	.gha-steps-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-top: 2px;
+	}
+
+	.section-label-inline {
+		font-size: 10px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--text3);
+	}
+
+	.btn-add-step {
+		font-size: 10px;
+		padding: 3px 9px;
+		background: rgba(124, 106, 255, 0.1);
+		border: 1px solid rgba(124, 106, 255, 0.25);
+		border-radius: 4px;
+		color: var(--accent);
+	}
+
+	.btn-add-step:hover {
+		background: rgba(124, 106, 255, 0.2);
+	}
+
+	.gha-steps-list {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.gha-steps-empty {
+		font-size: 11px;
+		color: var(--text3);
+		padding: 10px;
+		text-align: center;
+		font-style: italic;
+	}
+
+	.gha-step-card {
+		background: rgba(255, 255, 255, 0.02);
+		border: 1px solid var(--border2);
+		border-radius: 6px;
+		padding: 8px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.step-card-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.step-num {
+		font-size: 9px;
+		font-weight: 800;
+		color: var(--text3);
+		font-family: var(--mono);
+		width: 16px;
+		text-align: center;
+		flex-shrink: 0;
+	}
+
+	.step-name-input {
+		flex: 1;
+		font-size: 12px;
+		font-weight: 500;
+		padding: 4px 8px;
+	}
+
+	.step-remove {
+		background: none;
+		border: none;
+		color: var(--text3);
+		font-size: 16px;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.step-remove:hover {
+		color: var(--red);
+	}
+
+	.step-type-row {
+		display: flex;
+		gap: 4px;
+	}
+
+	.step-type-btn {
+		padding: 3px 10px;
+		background: var(--surface);
+		border: 1px solid var(--border2);
+		border-radius: 4px;
+		font-size: 10px;
+		font-family: var(--mono);
+		color: var(--text3);
+	}
+
+	.step-type-btn:hover {
+		background: var(--surface2);
+		color: var(--text2);
+	}
+
+	.step-type-btn.active {
+		background: rgba(124, 106, 255, 0.1);
+		border-color: rgba(124, 106, 255, 0.3);
+		color: var(--accent);
+	}
+
+	.step-extras {
+		border-top: 1px solid var(--border);
+		padding-top: 6px;
+		margin-top: 2px;
+	}
+
+	.step-extras summary {
+		font-size: 10px;
+		color: var(--text3);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.step-extras summary:hover {
+		color: var(--text2);
+	}
+
+	.step-extras[open] summary {
+		margin-bottom: 4px;
+	}
+
+	.field-hint {
+		font-size: 9px;
+		color: var(--text3);
+		margin-top: 2px;
 	}
 </style>

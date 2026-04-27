@@ -1,5 +1,3 @@
-version: '3.9'
-
 # ── Networks ──────────────────────────────────────────────────────────────────
 # fluxor-internal: backend services (postgres, redis, minio, backend)
 #                  NOT accessible from task containers.

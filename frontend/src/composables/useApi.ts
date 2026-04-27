@@ -20,7 +20,7 @@ export const api = {
 	delete: <T>(path: string) => request<T>('DELETE', path),
 }
 
-export function wsUrl(path = '/ws'): string {
+function wsUrl(path = '/ws'): string {
 	const base = BASE_URL
 		? BASE_URL.replace(/^https?/, 'ws')
 		: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
