@@ -211,6 +211,7 @@ make migrate
 | Replay | `POST /api/executions/:id/retry` resets and re-runs |
 | Concurrency control | Per-workflow Go channel semaphore (`max_parallel`) |
 | Crash recovery | State reconstructed from PostgreSQL on restart |
+| Queue durability | Redis runs with `maxmemory-policy noeviction`; the backend refuses to start on an evicting policy |
 | DAG validation | Kahn's BFS at submission time — rejects cycles & missing deps |
 
 ## Building for Production
