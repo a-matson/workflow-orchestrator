@@ -159,7 +159,7 @@ npm run format
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 
-Deployments on a real hostname must list their public origin in `FLUXOR_ALLOWED_ORIGINS`.
+Deployments on a real hostname must list their public origin in `FLUXOR_ALLOWED_ORIGINS`; likewise, reaching the backend through a LAN IP or hostname requires listing that origin, or requests are rejected with 421.
 
 ---
 

@@ -87,8 +87,19 @@ func TestAPI_DNSRebindingRejected(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden || ran {
-		t.Fatalf("code=%d ran=%v, want 403 and handler not run", rec.Code, ran)
+	if rec.Code != http.StatusMisdirectedRequest || ran {
+		t.Fatalf("code=%d ran=%v, want 421 and handler not run", rec.Code, ran)
+	}
+}
+
+func TestAPI_UntrustedHostRejected(t *testing.T) {
+	ran := false
+	h := OriginPolicy(nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { ran = true }))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://rebind.evil:8080/api/workflows", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMisdirectedRequest || ran {
+		t.Fatalf("code=%d ran=%v, want 421 and handler not run", rec.Code, ran)
 	}
 }
 
