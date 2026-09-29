@@ -12,6 +12,12 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
     -o /workflow-server \
     ./cmd/server
 
+# ── Stage 1b: Binary only ─────────────────────────────────────
+# CI exports this stage per platform to check the binary's architecture; exporting
+# `builder` would copy the whole Go toolchain and module cache out (minutes).
+FROM scratch AS binaries
+COPY --from=builder /workflow-server /workflow-server
+
 # ── Stage 2: Minimal runtime ──────────────────────────────────
 FROM alpine:3.22
 RUN apk --no-cache add ca-certificates tzdata wget
