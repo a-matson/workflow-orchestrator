@@ -175,7 +175,7 @@
 							<label>Docker Image</label>
 							<input
 								class="cf-input cf-code"
-								:value="selectedNode.data.taskDef.container.image ?? 'alpine:3.19'"
+								:value="selectedNode.data.taskDef.container.image ?? 'alpine:3.22'"
 								placeholder="python:3.12-slim"
 								@input="patchContainer('image', ($event.target as HTMLInputElement).value)"
 							/>
@@ -488,7 +488,7 @@
 			selectedNode.value.data.taskDef.container = undefined
 		} else {
 			selectedNode.value.data.taskDef.container = {
-				image: 'alpine:3.19',
+				image: 'alpine:3.22',
 				memory_mb: 256,
 				cpu_millis: 500,
 			}

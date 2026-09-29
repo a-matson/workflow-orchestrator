@@ -110,7 +110,7 @@ In the **Builder → task config panel → Container Isolation**, toggle Enabled
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| Docker Image | `alpine:3.19` | Any image on the Docker daemon |
+| Docker Image | `alpine:3.22` | Any image on the Docker daemon |
 | Memory MB | 256 | Hard memory limit |
 | CPU millis | 500 | 500 = 0.5 vCPU |
 
