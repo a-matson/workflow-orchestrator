@@ -28,21 +28,25 @@ import (
 const (
 	pollInterval = 10 * time.Millisecond
 	drainTimeout = 5 * time.Second
-	// Long enough to outlive `go test`'s default 10m timeout; refreshed on
-	// every Env call. A crashed run's lease simply expires.
-	leaseTTL = time.Hour
+	// Leases are released in t.Cleanup; the TTL only frees the index of a
+	// process that crashed. It matches `go test`'s default 10m timeout so a
+	// live test cannot outlast its own lease.
+	leaseTTL = 10 * time.Minute
 	leaseKey = "fluxor:testutil:db:%d"
 )
 
 var (
 	// The broker uses fixed key names (persistence.TaskQueueKey, ...), so the
 	// only way to keep test binaries apart is a separate Redis DB index.
-	// `go test ./...` runs packages as parallel processes, so each process
-	// leases its own index (SET NX in DB 0) and FLUSHDBs it at the start of
-	// every test. Within one process the index is shared, so Env refuses
-	// concurrent use instead of letting parallel tests flush each other.
-	envMu    sync.Mutex
-	leasedDB int
+	// `go test ./...` runs packages as parallel processes, so every Env call
+	// leases a free index (SET NX in DB 0), FLUSHDBs it, and releases it when
+	// the test ends. Env refuses concurrent use within a process so a process
+	// never holds more than one lease.
+	envMu sync.Mutex
+
+	// Deletes the lease only if this test still owns it, so a lease that
+	// expired and was taken by another process is left alone.
+	releaseLease = redis.NewScript(`if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`)
 
 	rawMu sync.Mutex
 	raw   = map[*persistence.RedisClient]*redis.Client{}
@@ -151,38 +155,38 @@ func newRedis(t *testing.T) *persistence.RedisClient {
 	return client
 }
 
-// leaseDB returns this process's Redis DB index, leasing one on first use.
+// leaseDB leases a free Redis DB index for the rest of t.
 func leaseDB(t *testing.T, addr string) int {
 	t.Helper()
 	ctx := context.Background()
 	admin := redis.NewClient(&redis.Options{Addr: addr})
-	defer func() {
+	t.Cleanup(func() {
 		if err := admin.Close(); err != nil {
 			t.Errorf("close redis lease client: %v", err)
 		}
-	}()
+	})
 	if err := admin.Ping(ctx).Err(); err != nil {
 		unavailable(t, "redis unavailable: %v", err)
 	}
 
-	if leasedDB != 0 {
-		if err := admin.Expire(ctx, fmt.Sprintf(leaseKey, leasedDB), leaseTTL).Err(); err != nil {
-			t.Fatalf("refresh redis db lease: %v", err)
-		}
-		return leasedDB
-	}
+	owner := uuid.NewString()
 	// DB 0 holds the leases, so tests get 1..15 (Redis defaults to 16 DBs).
 	for db := 1; db < 16; db++ {
-		ok, err := admin.SetNX(ctx, fmt.Sprintf(leaseKey, db), os.Getpid(), leaseTTL).Result()
+		key := fmt.Sprintf(leaseKey, db)
+		ok, err := admin.SetNX(ctx, key, owner, leaseTTL).Result()
 		if err != nil {
 			t.Fatalf("lease redis db: %v", err)
 		}
 		if ok {
-			leasedDB = db
+			t.Cleanup(func() {
+				if err := releaseLease.Run(ctx, admin, []string{key}, owner).Err(); err != nil {
+					t.Errorf("release redis db lease %d: %v", db, err)
+				}
+			})
 			return db
 		}
 	}
-	t.Fatal("no free redis db index: 15 test processes hold leases (stale leases expire after 1h)")
+	t.Fatalf("no free redis db index: 15 leases held (a crashed process's lease expires after %s)", leaseTTL)
 	return 0
 }
 
