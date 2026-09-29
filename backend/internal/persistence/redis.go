@@ -12,14 +12,12 @@ import (
 )
 
 const (
-	TaskQueueKey     = "workflow:tasks:queue"
-	ResultQueueKey   = "workflow:results:queue"
-	RetryZSetKey     = "workflow:tasks:retry"
-	DeadLetterKey    = "workflow:tasks:dead_letter"
-	WorkflowStateKey = "workflow:state:%s"
-	TaskLockKey      = "workflow:task:lock:%s"
-	IdempotencyKey   = "workflow:idempotency:%s"
-	MetricsKey       = "workflow:metrics"
+	TaskQueueKey   = "workflow:tasks:queue"
+	ResultQueueKey = "workflow:results:queue"
+	RetryZSetKey   = "workflow:tasks:retry"
+	DeadLetterKey  = "workflow:tasks:dead_letter"
+	TaskLockKey    = "workflow:task:lock:%s"
+	IdempotencyKey = "workflow:idempotency:%s"
 )
 
 // RedisClient wraps go-redis for workflow broker operations
@@ -204,14 +202,6 @@ func (r *RedisClient) CheckIdempotency(ctx context.Context, key string) (bool, e
 }
 
 // ==================== Metrics ====================
-
-func (r *RedisClient) IncrMetric(ctx context.Context, field string) error {
-	return r.client.HIncrBy(ctx, MetricsKey, field, 1).Err()
-}
-
-func (r *RedisClient) GetMetrics(ctx context.Context) (map[string]string, error) {
-	return r.client.HGetAll(ctx, MetricsKey).Result()
-}
 
 // QueueDepth returns the number of tasks currently in the task queue
 func (r *RedisClient) QueueDepth(ctx context.Context) (int64, error) {
