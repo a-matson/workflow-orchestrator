@@ -17,7 +17,7 @@ services:
       retries: 30
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     # Matches production: the broker refuses evicting policies.
     command: redis-server --save "" --appendonly no --maxmemory-policy noeviction
     ports: ["127.0.0.1:56379:6379"]
