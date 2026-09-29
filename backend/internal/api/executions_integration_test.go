@@ -94,10 +94,13 @@ func TestAPI_ListExecutions_HasTasks(t *testing.T) {
 		if len(tasks) != 2 {
 			t.Fatalf("%s: got %d tasks, want 2", tc.name, len(tasks))
 		}
-		for i, want := range []string{tc.name + " A", tc.name + " B"} {
-			task := tasks[i]
-			if task.ID == "" || task.Status == "" || task.TaskName != want {
-				t.Errorf("%s task %d: want name %q with id and status, got %+v", tc.name, i, want, task)
+		// StartWorkflow stamps every task with one created_at, so only the
+		// (created_at, id) ordering contract is checked, not A-before-B.
+		names := map[string]bool{}
+		for i, task := range tasks {
+			names[task.TaskName] = true
+			if task.ID == "" || task.Status == "" {
+				t.Errorf("%s task %d missing id/status: %+v", tc.name, i, task)
 			}
 			if task.WorkflowExecID != tc.id {
 				t.Errorf("%s task %d belongs to %s", tc.name, i, task.WorkflowExecID)
@@ -105,6 +108,15 @@ func TestAPI_ListExecutions_HasTasks(t *testing.T) {
 			if len(task.Output) != 0 || len(task.Logs) != 0 {
 				t.Errorf("%s task %d: output/logs must be omitted, got %s / %d logs", tc.name, i, task.Output, len(task.Logs))
 			}
+			if i > 0 {
+				prev := tasks[i-1]
+				if task.CreatedAt.Before(prev.CreatedAt) || (task.CreatedAt.Equal(prev.CreatedAt) && task.ID < prev.ID) {
+					t.Errorf("%s tasks not sorted by (created_at, id): %s before %s", tc.name, prev.ID, task.ID)
+				}
+			}
+		}
+		if !names[tc.name+" A"] || !names[tc.name+" B"] {
+			t.Errorf("%s: task names = %v, want A and B", tc.name, names)
 		}
 	}
 
