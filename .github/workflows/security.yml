@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
-          # Cache off: a poisoned cache must not influence a security gate.
+          # No module cache: each gate run resolves and verifies dependencies fresh.
           cache: false
       - name: govulncheck
         working-directory: backend
@@ -45,10 +45,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Scan Dockerfiles and compose files
+      - name: Scan Dockerfiles
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
+          version: v0.74.0
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: "1"
@@ -62,11 +63,13 @@ jobs:
           load: true
           push: false
           tags: fluxor-backend:scan
+          # Read-only: only trusted main runs write scope=backend, and base images are re-resolved.
           cache-from: type=gha,scope=backend
       - name: Scan backend image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
+          version: v0.74.0
           image-ref: fluxor-backend:scan
           severity: HIGH,CRITICAL
           # Unfixed CVEs (docker/docker, see .govulncheck-allow) cannot be acted on.

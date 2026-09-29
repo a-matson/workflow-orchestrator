@@ -15,7 +15,17 @@ allowed=$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$allow_file" | grep -v '^$' |
 new=$(comm -23 <(echo "$found") <(echo "$allowed") | grep -v '^$' || true)
 stale=$(comm -13 <(echo "$found") <(echo "$allowed") | grep -v '^$' || true)
 
+# An exception is a decision with a deadline; past it the gate fails until someone re-decides.
+today=$(date -u +%F)
+expired=$(grep -oE '^GO-[0-9]+-[0-9]+.*revisit-by [0-9]{4}-[0-9]{2}-[0-9]{2}' "$allow_file" |
+  awk -v t="$today" '{d=$NF} d < t {print $1" (revisit-by "d")"}')
+
 rc=0
+if [ -n "$expired" ]; then
+  echo "Allow-list entries past their revisit-by date:" >&2
+  echo "$expired" | sed 's/^/  /' >&2
+  rc=1
+fi
 if [ -n "$new" ]; then
   echo "Reachable vulnerabilities not in $allow_file:" >&2
   echo "$new" | sed 's/^/  /' >&2
