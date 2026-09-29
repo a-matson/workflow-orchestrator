@@ -11,6 +11,8 @@ permissions:
 jobs:
   cleanup:
     name: Delete PR caches
+    # Fork PRs get a read-only token, so the delete would fail; their caches expire after 7 days unused.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       # Each PR saves its own caches under refs/pull/N/merge; they are unreachable once it closes
