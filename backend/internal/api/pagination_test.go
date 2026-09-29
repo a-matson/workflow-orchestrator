@@ -40,7 +40,7 @@ func TestParsePagination(t *testing.T) {
 
 func TestListWorkflows_RejectsInvalidPagination(t *testing.T) {
 	// A nil store is safe: the handler must reject before touching it.
-	mux := NewHandler(nil, nil, nil, nil).Routes()
+	mux := NewHandler(nil, nil, nil, nil, nil).Routes()
 	r := httptest.NewRequestWithContext(t.Context(), "GET", "/api/workflows?limit=-1", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
