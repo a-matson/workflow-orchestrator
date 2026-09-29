@@ -4,6 +4,7 @@ package persistence_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -117,6 +118,35 @@ func TestStore_ListWorkflowDefinitions(t *testing.T) {
 	if len(list) != 3 {
 		t.Errorf("expected 3, got %d", len(list))
 	}
+}
+
+func TestStore_ListWorkflowDefinitions_Paging(t *testing.T) {
+	store := setupStore(t)
+	ctx := context.Background()
+
+	base := time.Now().Add(-time.Hour)
+	for i := range 5 {
+		def := makeWorkflowDef(fmt.Sprintf("WF%d", i))
+		def.CreatedAt = base.Add(time.Duration(i) * time.Minute)
+		testutil.SaveDef(t, store, def)
+	}
+
+	page, err := store.ListWorkflowDefinitions(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	// Newest first is WF4..WF0, so offset 2 limit 2 is the 3rd and 4th newest.
+	if len(page) != 2 || page[0].Name != "WF2" || page[1].Name != "WF1" {
+		t.Errorf("got %v, want [WF2 WF1]", names(page))
+	}
+}
+
+func names(defs []*models.WorkflowDefinition) []string {
+	out := make([]string, len(defs))
+	for i, d := range defs {
+		out[i] = d.Name
+	}
+	return out
 }
 
 // ── Workflow Execution CRUD ──────────────────────────────────────

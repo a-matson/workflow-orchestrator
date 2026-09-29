@@ -16,6 +16,7 @@ export const useWorkflowStore = defineStore('workflows', () => {
 	async function fetchDefinitions() {
 		try {
 			loading.value = true
+			// The API caps a page at 200, so the sidebar shows only the newest 200 until the API reports a total.
 			const data = await api.get<{ workflows: WorkflowDefinition[] }>('/api/workflows?limit=200')
 			definitions.value = data.workflows || []
 		} catch (err) {

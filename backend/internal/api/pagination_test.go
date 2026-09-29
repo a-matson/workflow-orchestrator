@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -34,5 +35,16 @@ func TestParsePagination(t *testing.T) {
 				t.Errorf("got (%d, %d), want (%d, %d)", limit, offset, tt.limit, tt.offset)
 			}
 		})
+	}
+}
+
+func TestListWorkflows_RejectsInvalidPagination(t *testing.T) {
+	// A nil store is safe: the handler must reject before touching it.
+	mux := NewHandler(nil, nil, nil, nil).Routes()
+	r := httptest.NewRequestWithContext(t.Context(), "GET", "/api/workflows?limit=-1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
