@@ -64,7 +64,7 @@ func TestAPI_ListExecutions_HasTasks(t *testing.T) {
 		t.Fatalf("update task: %v", err)
 	}
 
-	h := api.NewHandlerWithStorage(store, redis, orch, api.NewHub(), nil).Routes()
+	h := api.NewHandler(store, redis, orch, api.NewHub(), nil).Routes()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/executions", nil)
 	req.Host = "localhost"
 	rr := httptest.NewRecorder()
