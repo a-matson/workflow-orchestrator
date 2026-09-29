@@ -119,9 +119,12 @@ func TestE2E_NoopWorkflowCompletes(t *testing.T) {
 	}
 }
 
+// Every client-side route must fall back to the SPA so refreshes and deep links work.
 func TestE2E_FrontendServesSPA(t *testing.T) {
-	status, body := send(t, http.MethodGet, frontendURL+"/", nil)
-	if status != http.StatusOK || !strings.Contains(string(body), `<div id="app">`) {
-		t.Fatalf("GET %s/: status %d, body lacks the SPA mount:\n%s", frontendURL, status, body)
+	for _, path := range []string{"/", "/executions", "/metrics"} {
+		status, body := send(t, http.MethodGet, frontendURL+path, nil)
+		if status != http.StatusOK || !strings.Contains(string(body), `<div id="app">`) {
+			t.Errorf("GET %s%s: status %d, body lacks the SPA mount:\n%s", frontendURL, path, status, body)
+		}
 	}
 }
