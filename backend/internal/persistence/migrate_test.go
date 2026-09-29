@@ -76,11 +76,6 @@ func TestMigrations_Rerun(t *testing.T) {
 	ctx := context.Background()
 	pool := newMigrationDB(t)
 
-	// Isolates re-apply safety from the trigram extension, which the old
-	// initdb path could not provide either.
-	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
-		t.Fatalf("pg_trgm: %v", err)
-	}
 	// Simulates the old initdb mount: files applied with no tracking.
 	files, err := fs.Glob(migrations.FS, "*.sql")
 	if err != nil {

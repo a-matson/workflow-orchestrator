@@ -2,10 +2,12 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,25 +18,36 @@ const migrateLockID int64 = 0x666c75786f72 // "fluxor"
 // Migrate applies every *.sql file in fsys, in lexical order, that is not yet
 // recorded in schema_migrations. Each file runs in its own transaction with
 // its bookkeeping row.
-func Migrate(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) error {
+func Migrate(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (err error) {
 	// A session-level lock must be taken and released on the same connection,
 	// so hold one dedicated connection for the whole run. It makes replicas
 	// starting together serialize instead of racing on the same DDL.
-	conn, err := pool.Acquire(ctx)
+	pc, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquiring connection: %w", err)
 	}
-	defer conn.Release()
+	conn := pc.Conn()
 
 	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrateLockID); err != nil {
+		pc.Release()
 		return fmt.Errorf("taking migration lock: %w", err)
 	}
 	defer func() {
-		// ctx may already be cancelled, and the lock must not leak onto a
-		// pooled connection.
-		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrateLockID)
+		// ctx may already be cancelled; the unlock must still be attempted.
+		if _, uerr := conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrateLockID); uerr != nil {
+			// Releasing would hand a lock-holding session back to the pool.
+			// Closing the connection ends the session and drops the lock.
+			_ = pc.Hijack().Close(context.WithoutCancel(ctx))
+			err = errors.Join(err, fmt.Errorf("releasing migration lock: %w", uerr))
+			return
+		}
+		pc.Release()
 	}()
 
+	return applyMigrations(ctx, conn, fsys)
+}
+
+func applyMigrations(ctx context.Context, conn *pgx.Conn, fsys fs.FS) error {
 	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -69,12 +82,10 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) error {
 			return fmt.Errorf("beginning %s: %w", name, err)
 		}
 		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("applying %s: %w", name, err)
+			return errors.Join(fmt.Errorf("applying %s: %w", name, err), tx.Rollback(ctx))
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("recording %s: %w", name, err)
+			return errors.Join(fmt.Errorf("recording %s: %w", name, err), tx.Rollback(ctx))
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("committing %s: %w", name, err)
