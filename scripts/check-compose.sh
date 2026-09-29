@@ -4,8 +4,14 @@ set -eu
 
 fail=0
 
-# --profile: redis-commander is profile-gated and would otherwise be skipped.
-open=$(docker compose --profile '*' --env-file .env.example config --format json |
+# Capture first: sh has no pipefail, so a failing compose would otherwise feed jq empty input and pass.
+cfg=$(docker compose --profile '*' --env-file .env.example config --format json)
+ports=$(printf '%s' "$cfg" | jq '[.services[].ports // [] | length] | add')
+if [ "${ports:-0}" -eq 0 ]; then
+  echo "FAIL: no published ports found in compose config" >&2
+  exit 1
+fi
+open=$(printf '%s' "$cfg" |
   jq -r '.services | to_entries[] | .key as $s | (.value.ports // [])[]
          | select((.host_ip // "") != "127.0.0.1")
          | "\($s): \(.published):\(.target) host_ip=\(.host_ip // "unset")"')
