@@ -1,9 +1,3 @@
-# Fluxor API — Example Workflow Definitions
-# Use these with: curl -X POST http://localhost:8080/api/workflows -d @examples/etl-pipeline.json
-
-# ──────────────────────────────────────────────────────────────────
-# 1. ETL Pipeline
-# ──────────────────────────────────────────────────────────────────
 {
   "name": "ETL Pipeline",
   "description": "Extract, validate, transform, and load data to the warehouse",
