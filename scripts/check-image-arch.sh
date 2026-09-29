@@ -2,7 +2,8 @@
 # Usage: check-image-arch.sh linux/arm64|linux/amd64
 set -eu
 
-platform=$1
+platform=${1:-}
+[ -n "$platform" ] || { echo "usage: $0 linux/arm64|linux/amd64" >&2; exit 2; }
 tmp=$(mktemp -d)
 img=check-image-arch:$$
 cid=
@@ -11,13 +12,15 @@ cleanup() {
   docker rmi -f "$img" >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # Checks the builder stage so the result does not depend on the runtime stage building.
+# The builder stage is FROM --platform=$BUILDPLATFORM, so the loaded image is the
+# host platform; only the binary inside is cross-compiled, hence no --platform on create.
 # Loaded and copied out because exporting the whole builder rootfs (Go toolchain,
 # read-only module cache) to a local dir is slow and fails on permissions.
 docker buildx build --platform "$platform" --target builder --load -t "$img" ./backend
-cid=$(docker create --platform "$platform" "$img")
+cid=$(docker create "$img")
 docker cp "$cid:/workflow-server" "$tmp/workflow-server"
 
 case $platform in
