@@ -3,8 +3,11 @@ package api
 import (
 	"bufio"
 	"context"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,30 +115,64 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// CORSMiddleware handles preflight requests and injects CORS headers.
-func CORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
-	allowAll := len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*")
+// originChecker decides whether a browser Origin may talk to the API: it must be
+// allowlisted or match the request's own Host (same-origin).
+type originChecker map[string]bool
 
-	originSet := make(map[string]bool)
-	for _, o := range allowedOrigins {
-		originSet[o] = true
+func newOriginChecker(allowed []string) originChecker {
+	c := originChecker{}
+	for _, o := range allowed {
+		if o = strings.TrimSpace(o); o != "" {
+			c[o] = true
+		}
 	}
+	return c
+}
 
+func (c originChecker) allows(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" || c[origin] {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && u.Host != "" && u.Host == r.Host
+}
+
+// OriginPolicy enforces the origin allowlist (plus same-origin) and requires a
+// JSON Content-Type on mutating requests, so cross-site pages cannot drive the API.
+func OriginPolicy(allowed []string) func(http.Handler) http.Handler {
+	checker := newOriginChecker(allowed)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
+			ok := checker.allows(r)
+			mutating := r.Method == http.MethodPost || r.Method == http.MethodPut ||
+				r.Method == http.MethodPatch || r.Method == http.MethodDelete
 
-			if allowAll || originSet[origin] {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
+			switch {
+			case !ok && (r.Method == http.MethodOptions || mutating):
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin not allowed"})
+				return
+			case ok && origin != "":
+				h := w.Header()
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Add("Vary", "Origin")
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+				h.Set("Access-Control-Expose-Headers", "X-Request-ID")
+				h.Set("Access-Control-Max-Age", "86400")
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
-			w.Header().Set("Access-Control-Max-Age", "86400")
 
-			if r.Method == http.MethodOptions {
+			if ok && r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
+			}
+			if mutating {
+				mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if err != nil || mt != "application/json" {
+					writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "content type must be application/json"})
+					return
+				}
 			}
 			next.ServeHTTP(w, r)
 		})
@@ -217,9 +254,4 @@ func (rl *RateLimiter) cleanupLoop() {
 		}
 		rl.mu.Unlock()
 	}
-}
-
-// OriginPolicy is a stub until the fix commit.
-func OriginPolicy(_ []string) func(http.Handler) http.Handler {
-	return CORSMiddleware([]string{"*"})
 }

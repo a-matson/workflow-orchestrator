@@ -336,8 +336,6 @@ func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

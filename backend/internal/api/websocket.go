@@ -12,14 +12,6 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Configure proper CORS in production
-	},
-	ReadBufferSize:  1024,
-	WriteBufferSize: 4096,
-}
-
 // Client represents a connected WebSocket client
 type Client struct {
 	conn    *websocket.Conn
@@ -36,15 +28,37 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
+	upgrader   websocket.Upgrader
 }
 
-func NewHub() *Hub {
-	return &Hub{
+// HubOption configures a Hub.
+type HubOption func(*Hub)
+
+// WithAllowedOrigins sets the WebSocket handshake allowlist; same-origin and
+// Origin-less (non-browser) clients are always allowed.
+func WithAllowedOrigins(allowed []string) HubOption {
+	return func(h *Hub) {
+		checker := newOriginChecker(allowed)
+		h.upgrader.CheckOrigin = checker.allows
+	}
+}
+
+func NewHub(opts ...HubOption) *Hub {
+	h := &Hub{
 		clients:    make(map[*Client]bool),
 		broadcast:  make(chan models.WebSocketEvent, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 4096,
+		},
 	}
+	WithAllowedOrigins(nil)(h)
+	for _, o := range opts {
+		o(h)
+	}
+	return h
 }
 
 // Run starts the hub event loop
@@ -118,7 +132,7 @@ func (h *Hub) Broadcast(event models.WebSocketEvent) {
 
 // ServeWS handles incoming WebSocket upgrade requests
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Error().Err(err).Msg("WebSocket upgrade failed")
 		return

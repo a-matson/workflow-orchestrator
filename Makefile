@@ -38,7 +38,7 @@ dev-infra:
 
 dev-backend:
 	cd backend && POSTGRES_URL="$(DB_URL)" REDIS_ADDR="$(REDIS)" \
-	  go run ./cmd/server
+	  FLUXOR_ALLOWED_ORIGINS=http://localhost:5173 go run ./cmd/server
 
 dev-frontend:
 	cd frontend && npm install && npm run dev
