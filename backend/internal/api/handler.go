@@ -165,7 +165,7 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
-	limit, offset := parsePagination(r, 50)
+	limit, offset, _ := parsePagination(r, 50)
 
 	execs, err := h.store.ListWorkflowExecutions(r.Context(), limit, offset)
 	if err != nil {
@@ -359,11 +359,11 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, publicMsg st
 	})
 }
 
-func parsePagination(r *http.Request, defaultLimit int) (int, int) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+func parsePagination(r *http.Request, defaultLimit int) (limit, offset int, err error) {
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = defaultLimit
 	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	return limit, offset
+	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	return limit, offset, nil
 }
