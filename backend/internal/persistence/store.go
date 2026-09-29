@@ -219,8 +219,47 @@ func (s *Store) ListWorkflowExecutions(ctx context.Context, limit, offset int) (
 		}
 		execs = append(execs, exec)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-	return execs, rows.Err()
+	return execs, s.attachTasks(ctx, execs)
+}
+
+// attachTasks loads the tasks of all execs in one query. Output and logs are
+// left out (NULL) because they can be large and the list view does not show them.
+func (s *Store) attachTasks(ctx context.Context, execs []*models.WorkflowExecution) error {
+	if len(execs) == 0 {
+		return nil
+	}
+	byID := make(map[string]*models.WorkflowExecution, len(execs))
+	ids := make([]string, len(execs))
+	for i, e := range execs {
+		byID[e.ID] = e
+		ids[i] = e.ID
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
+		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
+		       next_retry_at, NULL, error, NULL, metadata, created_at, updated_at,
+		       artifacts_in, artifacts_out
+		FROM task_executions WHERE workflow_exec_id = ANY($1) ORDER BY created_at ASC
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		task, err := scanTaskExecution(rows)
+		if err != nil {
+			return err
+		}
+		e := byID[task.WorkflowExecID]
+		e.Tasks = append(e.Tasks, task)
+	}
+	return rows.Err()
 }
 
 // ==================== Task Executions ====================
