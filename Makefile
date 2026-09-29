@@ -59,6 +59,7 @@ build-frontend:
 # ── Docker ───────────────────────────────────────────────
 docker-build:
 	docker build -t workflow-backend:latest ./backend
+	docker build -t workflow-frontend:latest ./frontend
 
 docker-up:
 	docker compose up -d --build
