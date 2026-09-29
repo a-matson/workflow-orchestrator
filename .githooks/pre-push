@@ -1,0 +1,3 @@
+#!/bin/sh
+# CI runs the same gate; failing here saves a red push.
+exec make check
