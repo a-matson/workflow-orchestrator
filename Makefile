@@ -1,6 +1,6 @@
 .PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs migrate migrate-reset \
-	test test-dag test-orchestrator test-integration check lint clean load-test
+	test test-dag test-orchestrator test-integration check lint clean load-test hooks
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
@@ -94,6 +94,9 @@ test-integration:
 lint:
 	cd backend && golangci-lint run ./...
 	cd frontend && npm run lint && npm run type-check
+
+hooks:
+	git config core.hooksPath .githooks
 
 # gofmt -l exits 0 even when files need formatting, so test its output.
 check:

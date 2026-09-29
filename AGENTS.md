@@ -11,6 +11,7 @@ the PR, labelled as an assumption.
 ## Workflow
 - One concern per branch, cut from the latest `main`: fix/ feat/ sec/ obs/ test/ ci/ chore/ docs/ perf/ a11y/ refactor/.
 - Conventional commit subjects: `fix(orchestrator): …`.
+- Run `make hooks` once per clone to enable the commit-msg and pre-push hooks.
 - A bug fix starts **red**:
   1. Re-run its reproducing test on the current `main`. If it is already green, close the item as "fixed by #N" and keep the test.
   2. Commit the failing test alone. If it needs a new entry point, add a no-op stub so the test fails on its assertion, not on compilation.

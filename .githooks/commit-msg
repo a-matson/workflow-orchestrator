@@ -1,0 +1,15 @@
+#!/bin/sh
+subject=$(head -n 1 "$1")
+case "$subject" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *) exit 0 ;;
+esac
+if printf '%s\n' "$subject" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|sec|obs|a11y)(\([a-z0-9._/-]+\))?!?: .+'; then
+  exit 0
+fi
+cat >&2 <<MSG
+Rejected subject: $subject
+Use a conventional commit subject: type(scope)!: description
+  types: feat fix docs style refactor perf test build ci chore revert sec obs a11y
+  scope is optional, lowercase [a-z0-9._/-]
+MSG
+exit 1
