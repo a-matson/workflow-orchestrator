@@ -1,26 +1,33 @@
 version: 2
+# Cooldown: a new release waits 7 days before Dependabot proposes it, so a compromised or
+# yanked release is usually caught upstream first. Security updates are not delayed.
 updates:
   - package-ecosystem: gomod
     directory: /backend
     schedule: {interval: weekly}
+    cooldown: {default-days: 7}
     groups: {gomod: {patterns: ["*"]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: npm
     directory: /frontend
     schedule: {interval: weekly}
+    cooldown: {default-days: 7}
     groups: {npm: {patterns: ["*"]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
+    cooldown: {default-days: 7}
     groups: {github-actions: {patterns: ["*"]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: docker
     directories: [/backend, /frontend]
     schedule: {interval: weekly}
+    cooldown: {default-days: 7}
     groups: {docker: {patterns: ["*"]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: docker-compose
     directory: /
     schedule: {interval: weekly}
+    cooldown: {default-days: 7}
     commit-message: {prefix: build, include: scope}
