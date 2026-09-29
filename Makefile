@@ -99,15 +99,18 @@ test-integration:
 	$(TEST_COMPOSE) down -v; \
 	exit $$status
 
-# Builds and runs the full stack under its own project with the committed
-# example env (never the developer's .env), runs the API suite and the smoke
-# test against it, and always tears it down, keeping the test exit status.
+# A separate compose project with the committed example env, so the run never
+# touches the developer's stack or volumes (exported shell variables still
+# override the env file). Logs are dumped on failure because CI tears the stack
+# down before anyone can inspect it.
 E2E_COMPOSE = docker compose --env-file .env.example -p fluxor-e2e
 e2e:
 	@status=0; \
+	trap '$(E2E_COMPOSE) down -v' INT TERM; \
 	$(E2E_COMPOSE) up -d --build --wait && \
 	  (cd backend && go test -tags e2e -count=1 -v ./e2e/) && \
 	  examples/smoke-test.sh || status=$$?; \
+	[ $$status -eq 0 ] || $(E2E_COMPOSE) logs --no-color --tail=200; \
 	$(E2E_COMPOSE) down -v; \
 	exit $$status
 
