@@ -134,7 +134,7 @@ func (h *Hub) Broadcast(event models.WebSocketEvent) {
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Error().Err(err).Msg("WebSocket upgrade failed")
+		log.Warn().Err(err).Msg("WebSocket upgrade failed")
 		return
 	}
 
