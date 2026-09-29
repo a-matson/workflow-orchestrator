@@ -4,32 +4,25 @@ package persistence_test
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/testutil"
 )
 
 func setupStore(t *testing.T) *persistence.Store {
 	t.Helper()
-	dsn := os.Getenv("POSTGRES_URL")
-	if dsn == "" {
-		dsn = "postgres://workflow:workflow@localhost:5432/workflow_test?sslmode=disable"
-	}
-	store, err := persistence.NewStore(context.Background(), dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
-	}
-	t.Cleanup(store.Close)
+	store, _ := testutil.Env(t)
 	return store
 }
 
-func makeWorkflowDef(id, name string) *models.WorkflowDefinition {
+func makeWorkflowDef(name string) *models.WorkflowDefinition {
 	return &models.WorkflowDefinition{
-		ID:      id,
+		ID:      uuid.NewString(),
 		Name:    name,
 		Version: "1.0.0",
 		Tasks: []models.TaskDefinition{
@@ -42,17 +35,33 @@ func makeWorkflowDef(id, name string) *models.WorkflowDefinition {
 	}
 }
 
+// createExecution saves def and an execution of it in the given status.
+func createExecution(t *testing.T, store *persistence.Store, def *models.WorkflowDefinition, status models.WorkflowStatus) *models.WorkflowExecution {
+	t.Helper()
+	testutil.SaveDef(t, store, def)
+	now := time.Now()
+	exec := &models.WorkflowExecution{
+		ID:           uuid.NewString(),
+		WorkflowID:   def.ID,
+		WorkflowName: def.Name,
+		Status:       status,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := store.CreateWorkflowExecution(context.Background(), exec); err != nil {
+		t.Fatalf("create execution: %v", err)
+	}
+	return exec
+}
+
 // ── Workflow Definition CRUD ─────────────────────────────────────
 
 func TestStore_SaveAndGetWorkflowDefinition(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	def := makeWorkflowDef("test-wf-"+t.Name(), "Test Workflow")
-
-	if err := store.SaveWorkflowDefinition(ctx, def); err != nil {
-		t.Fatalf("save failed: %v", err)
-	}
+	def := makeWorkflowDef("Test Workflow")
+	testutil.SaveDef(t, store, def)
 
 	got, err := store.GetWorkflowDefinition(ctx, def.ID)
 	if err != nil {
@@ -63,7 +72,7 @@ func TestStore_SaveAndGetWorkflowDefinition(t *testing.T) {
 		t.Errorf("ID mismatch: %s != %s", got.ID, def.ID)
 	}
 	if got.Name != def.Name {
-		t.Errorf("Name mismatch")
+		t.Errorf("Name mismatch: %s != %s", got.Name, def.Name)
 	}
 	if len(got.Tasks) != 2 {
 		t.Errorf("expected 2 tasks, got %d", len(got.Tasks))
@@ -74,8 +83,8 @@ func TestStore_SaveWorkflowDefinition_Upsert(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	def := makeWorkflowDef("test-upsert-"+t.Name(), "Original")
-	store.SaveWorkflowDefinition(ctx, def)
+	def := makeWorkflowDef("Original")
+	testutil.SaveDef(t, store, def)
 
 	def.Name = "Updated"
 	def.UpdatedAt = time.Now()
@@ -96,17 +105,17 @@ func TestStore_ListWorkflowDefinitions(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
-		def := makeWorkflowDef("list-test-"+t.Name()+"-"+string(rune('0'+i)), "WF")
-		store.SaveWorkflowDefinition(ctx, def)
+	for range 3 {
+		testutil.SaveDef(t, store, makeWorkflowDef("WF"))
 	}
 
 	list, err := store.ListWorkflowDefinitions(ctx)
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
-	if len(list) < 3 {
-		t.Errorf("expected at least 3, got %d", len(list))
+	// The database is fresh per test, so the count is exact.
+	if len(list) != 3 {
+		t.Errorf("expected 3, got %d", len(list))
 	}
 }
 
@@ -114,26 +123,10 @@ func TestStore_ListWorkflowDefinitions(t *testing.T) {
 
 func TestStore_CreateAndGetWorkflowExecution(t *testing.T) {
 	store := setupStore(t)
-	ctx := context.Background()
 
-	def := makeWorkflowDef("exec-wf-"+t.Name(), "Exec WF")
-	store.SaveWorkflowDefinition(ctx, def)
+	exec := createExecution(t, store, makeWorkflowDef("Exec WF"), models.WorkflowStatusPending)
 
-	now := time.Now()
-	exec := &models.WorkflowExecution{
-		ID:           "exec-" + t.Name(),
-		WorkflowID:   def.ID,
-		WorkflowName: def.Name,
-		Status:       models.WorkflowStatusPending,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	if err := store.CreateWorkflowExecution(ctx, exec); err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-
-	got, err := store.GetWorkflowExecution(ctx, exec.ID)
+	got, err := store.GetWorkflowExecution(context.Background(), exec.ID)
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -146,17 +139,9 @@ func TestStore_UpdateWorkflowExecution(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	def := makeWorkflowDef("upd-wf-"+t.Name(), "Update WF")
-	store.SaveWorkflowDefinition(ctx, def)
+	exec := createExecution(t, store, makeWorkflowDef("Update WF"), models.WorkflowStatusPending)
 
 	now := time.Now()
-	exec := &models.WorkflowExecution{
-		ID: "exec-upd-" + t.Name(), WorkflowID: def.ID,
-		WorkflowName: def.Name, Status: models.WorkflowStatusPending,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	store.CreateWorkflowExecution(ctx, exec)
-
 	exec.Status = models.WorkflowStatusCompleted
 	exec.StartedAt = &now
 	completed := now.Add(5 * time.Second)
@@ -185,20 +170,13 @@ func TestStore_CreateAndListTaskExecutions(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	def := makeWorkflowDef("task-wf-"+t.Name(), "Task WF")
-	store.SaveWorkflowDefinition(ctx, def)
+	def := makeWorkflowDef("Task WF")
+	exec := createExecution(t, store, def, models.WorkflowStatusRunning)
 
 	now := time.Now()
-	exec := &models.WorkflowExecution{
-		ID: "exec-task-" + t.Name(), WorkflowID: def.ID,
-		WorkflowName: def.Name, Status: models.WorkflowStatusRunning,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	store.CreateWorkflowExecution(ctx, exec)
-
-	for i, td := range def.Tasks {
+	for _, td := range def.Tasks {
 		taskExec := &models.TaskExecution{
-			ID:               "task-" + t.Name() + string(rune('a'+i)),
+			ID:               uuid.NewString(),
 			WorkflowExecID:   exec.ID,
 			TaskDefinitionID: td.ID,
 			TaskName:         td.Name,
@@ -225,13 +203,12 @@ func TestStore_AppendTaskLog(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	def := makeWorkflowDef("log-wf-"+t.Name(), "Log WF")
-	store.SaveWorkflowDefinition(ctx, def)
+	exec := createExecution(t, store, makeWorkflowDef("Log WF"), models.WorkflowStatusRunning)
 	now := time.Now()
-	exec := &models.WorkflowExecution{ID: "exec-log-" + t.Name(), WorkflowID: def.ID, WorkflowName: def.Name, Status: models.WorkflowStatusRunning, CreatedAt: now, UpdatedAt: now}
-	store.CreateWorkflowExecution(ctx, exec)
-	task := &models.TaskExecution{ID: "task-log-" + t.Name(), WorkflowExecID: exec.ID, TaskDefinitionID: "t1", TaskName: "Task 1", TaskType: "generic", Status: models.TaskStatusRunning, CreatedAt: now, UpdatedAt: now}
-	store.CreateTaskExecution(ctx, task)
+	task := &models.TaskExecution{ID: uuid.NewString(), WorkflowExecID: exec.ID, TaskDefinitionID: "t1", TaskName: "Task 1", TaskType: "generic", Status: models.TaskStatusRunning, CreatedAt: now, UpdatedAt: now}
+	if err := store.CreateTaskExecution(ctx, task); err != nil {
+		t.Fatalf("create task failed: %v", err)
+	}
 
 	entry := models.LogEntry{
 		Timestamp: time.Now(),
@@ -249,33 +226,33 @@ func TestStore_AppendTaskLog(t *testing.T) {
 		t.Fatalf("get task failed: %v", err)
 	}
 	if len(got.Logs) != 1 {
-		t.Errorf("expected 1 log, got %d", len(got.Logs))
+		t.Fatalf("expected 1 log, got %d", len(got.Logs))
 	}
 	if got.Logs[0].Message != "test log entry" {
 		t.Errorf("log message mismatch: %s", got.Logs[0].Message)
 	}
-	_ = json.Marshal // suppress unused import
 }
 
 func TestStore_GetTasksReadyForRetry(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
 
-	def := makeWorkflowDef("retry-wf-"+t.Name(), "Retry WF")
-	store.SaveWorkflowDefinition(ctx, def)
+	exec := createExecution(t, store, makeWorkflowDef("Retry WF"), models.WorkflowStatusRunning)
 	now := time.Now()
-	exec := &models.WorkflowExecution{ID: "exec-retry-" + t.Name(), WorkflowID: def.ID, WorkflowName: def.Name, Status: models.WorkflowStatusRunning, CreatedAt: now, UpdatedAt: now}
-	store.CreateWorkflowExecution(ctx, exec)
-
 	past := now.Add(-1 * time.Minute)
 	task := &models.TaskExecution{
-		ID: "task-retry-" + t.Name(), WorkflowExecID: exec.ID,
+		ID: uuid.NewString(), WorkflowExecID: exec.ID,
 		TaskDefinitionID: "t1", TaskName: "T1", TaskType: "generic",
 		Status: models.TaskStatusRetrying, RetryCount: 1, MaxRetries: 3,
 		NextRetryAt: &past, CreatedAt: now, UpdatedAt: now,
 	}
-	store.CreateTaskExecution(ctx, task)
-	store.UpdateTaskExecution(ctx, task)
+	if err := store.CreateTaskExecution(ctx, task); err != nil {
+		t.Fatalf("create task failed: %v", err)
+	}
+	// CreateTaskExecution does not persist next_retry_at; the update does.
+	if err := store.UpdateTaskExecution(ctx, task); err != nil {
+		t.Fatalf("update task failed: %v", err)
+	}
 
 	ready, err := store.GetTasksReadyForRetry(ctx)
 	if err != nil {

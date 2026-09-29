@@ -7,49 +7,52 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"go.uber.org/goleak"
+
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
-	"github.com/a-matson/workflow-orchestrator/backend/internal/retry"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/testutil"
 )
 
-// mockBroadcaster captures events for assertions
-type mockBroadcaster struct {
-	events []models.WebSocketEvent
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
 }
 
-func (m *mockBroadcaster) Broadcast(event models.WebSocketEvent) {
-	m.events = append(m.events, event)
-}
+const eventWait = 2 * time.Second
 
-func setupOrchestrator(t *testing.T) (*orchestrator.Orchestrator, *mockBroadcaster) {
+func setupOrchestrator(t *testing.T) (*orchestrator.Orchestrator, *persistence.Store, *persistence.RedisClient, *testutil.Recorder) {
 	t.Helper()
+	store, redis := testutil.Env(t)
+	rec := &testutil.Recorder{}
+	return orchestrator.NewOrchestrator(store, redis, rec), store, redis, rec
+}
 
-	ctx := context.Background()
-
-	store, err := persistence.NewStore(ctx, "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable")
+func startWorkflow(t *testing.T, orch *orchestrator.Orchestrator, store *persistence.Store, def *models.WorkflowDefinition) *models.WorkflowExecution {
+	t.Helper()
+	testutil.SaveDef(t, store, def)
+	exec, err := orch.StartWorkflow(context.Background(), def, nil)
 	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
+		t.Fatalf("StartWorkflow: %v", err)
 	}
-	t.Cleanup(store.Close)
+	return exec
+}
 
-	redis := persistence.NewRedisClient("localhost:6379", "", 1)
-	if err := redis.Ping(ctx); err != nil {
-		t.Skipf("redis unavailable: %v", err)
+func hasEvent(rec *testutil.Recorder, typ string) bool {
+	for _, ev := range rec.Events() {
+		if ev.Type == typ {
+			return true
+		}
 	}
-	t.Cleanup(func() { redis.Close() })
-
-	broadcaster := &mockBroadcaster{}
-	orch := orchestrator.NewOrchestrator(store, redis, broadcaster)
-	return orch, broadcaster
+	return false
 }
 
 func TestOrchestrator_StartWorkflow_LinearDAG(t *testing.T) {
-	orch, broadcaster := setupOrchestrator(t)
-	ctx := context.Background()
+	orch, store, redis, rec := setupOrchestrator(t)
 
-	def := &models.WorkflowDefinition{
-		ID:   "test-wf-linear",
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
 		Name: "Linear Test",
 		Tasks: []models.TaskDefinition{
 			{ID: "step-a", Name: "Step A", Type: "generic", Dependencies: []string{}},
@@ -57,12 +60,7 @@ func TestOrchestrator_StartWorkflow_LinearDAG(t *testing.T) {
 			{ID: "step-c", Name: "Step C", Type: "generic", Dependencies: []string{"step-b"}},
 		},
 		MaxParallel: 10,
-	}
-
-	exec, err := orch.StartWorkflow(ctx, def, nil)
-	if err != nil {
-		t.Fatalf("StartWorkflow failed: %v", err)
-	}
+	})
 
 	if exec.ID == "" {
 		t.Error("expected non-empty execution ID")
@@ -71,57 +69,62 @@ func TestOrchestrator_StartWorkflow_LinearDAG(t *testing.T) {
 		t.Errorf("expected Running, got %s", exec.Status)
 	}
 
-	// Check event was broadcast
-	time.Sleep(50 * time.Millisecond)
-	if len(broadcaster.events) == 0 {
-		t.Error("expected at least one broadcast event")
+	events := rec.Events()
+	if len(events) == 0 {
+		t.Fatal("expected at least one broadcast event")
 	}
-	if broadcaster.events[0].Type != models.WSEventWorkflowStarted {
-		t.Errorf("expected workflow.started, got %s", broadcaster.events[0].Type)
+	if events[0].Type != models.WSEventWorkflowStarted {
+		t.Errorf("expected first event %s, got %s", models.WSEventWorkflowStarted, events[0].Type)
+	}
+
+	// Only the root of a linear DAG is ready at start.
+	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
+	if msg := testutil.Drain(t, redis, 1)[0]; msg.TaskDefinitionID != "step-a" {
+		t.Errorf("expected step-a dispatched first, got %s", msg.TaskDefinitionID)
 	}
 }
 
 func TestOrchestrator_ProcessResult_AdvancesDAG(t *testing.T) {
-	orch, _ := setupOrchestrator(t)
-	ctx := context.Background()
+	orch, store, redis, _ := setupOrchestrator(t)
 
-	def := &models.WorkflowDefinition{
-		ID:   "test-wf-advance",
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
 		Name: "Advance Test",
 		Tasks: []models.TaskDefinition{
 			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
 			{ID: "b", Name: "B", Type: "generic", Dependencies: []string{"a"}},
 		},
 		MaxParallel: 10,
+	})
+
+	msgA := testutil.Drain(t, redis, 1)[0]
+	if msgA.TaskDefinitionID != "a" {
+		t.Fatalf("expected a dispatched first, got %s", msgA.TaskDefinitionID)
+	}
+	// dispatchReadyTasks persists "queued" only after the enqueue, so a
+	// result processed before that write lands is overwritten back to queued.
+	// Wait for the write so this test checks DAG advancement, not that race.
+	testutil.Eventually(t, eventWait, func() bool {
+		return testutil.TaskRow(t, store, exec.ID, "a").Status == models.TaskStatusQueued
+	})
+	if err := orch.ProcessResult(context.Background(), testutil.Ok(msgA)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
 	}
 
-	exec, _ := orch.StartWorkflow(ctx, def, nil)
-
-	// Simulate task A completing
-	taskA := exec.Tasks[0]
-	result := &models.TaskResult{
-		TaskExecID:     taskA.ID,
-		WorkflowExecID: exec.ID,
-		WorkerID:       "test-worker",
-		Success:        true,
-		StartedAt:      time.Now().Add(-2 * time.Second),
-		CompletedAt:    time.Now(),
+	msgB := testutil.Drain(t, redis, 1)[0]
+	if msgB.TaskDefinitionID != "b" {
+		t.Errorf("expected b dispatched after a completed, got %s", msgB.TaskDefinitionID)
 	}
-
-	if err := orch.ProcessResult(ctx, result); err != nil {
-		t.Fatalf("ProcessResult failed: %v", err)
+	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusCompleted {
+		t.Errorf("task a status = %s, want %s", got, models.TaskStatusCompleted)
 	}
-
-	// B should now be queued/dispatched (check redis queue depth)
-	// In a real integration test, consume from redis and verify
 }
 
 func TestOrchestrator_RetryOnFailure(t *testing.T) {
-	orch, broadcaster := setupOrchestrator(t)
-	ctx := context.Background()
+	orch, store, redis, rec := setupOrchestrator(t)
 
-	def := &models.WorkflowDefinition{
-		ID:   "test-wf-retry",
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
 		Name: "Retry Test",
 		Tasks: []models.TaskDefinition{
 			{
@@ -137,89 +140,37 @@ func TestOrchestrator_RetryOnFailure(t *testing.T) {
 			},
 		},
 		MaxParallel: 10,
+	})
+
+	msg := testutil.Drain(t, redis, 1)[0]
+	if err := orch.ProcessResult(context.Background(), testutil.Fail(msg, "transient error")); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
 	}
 
-	exec, _ := orch.StartWorkflow(ctx, def, nil)
-	taskExec := exec.Tasks[0]
-
-	// Fail once
-	failResult := &models.TaskResult{
-		TaskExecID:     taskExec.ID,
-		WorkflowExecID: exec.ID,
-		WorkerID:       "test-worker",
-		Success:        false,
-		Error:          "transient error",
-		StartedAt:      time.Now().Add(-time.Second),
-		CompletedAt:    time.Now(),
-	}
-
-	if err := orch.ProcessResult(ctx, failResult); err != nil {
-		t.Fatalf("ProcessResult (fail) error: %v", err)
-	}
-
-	// Look for retry event
-	time.Sleep(50 * time.Millisecond)
-	var foundRetry bool
-	for _, ev := range broadcaster.events {
-		if ev.Type == models.WSEventTaskRetrying {
-			foundRetry = true
-			break
-		}
-	}
-	if !foundRetry {
-		t.Error("expected task.retrying broadcast event after failure with retries remaining")
-	}
+	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskRetrying) })
 }
 
 func TestOrchestrator_DeadLetter_MaxRetriesExceeded(t *testing.T) {
-	orch, broadcaster := setupOrchestrator(t)
-	ctx := context.Background()
+	orch, store, redis, rec := setupOrchestrator(t)
 
-	def := &models.WorkflowDefinition{
-		ID:   "test-wf-dlq",
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
 		Name: "DLQ Test",
 		Tasks: []models.TaskDefinition{
 			{
 				ID: "doomed", Name: "Doomed Task", Type: "generic",
 				Dependencies: []string{},
-				RetryPolicy:  &models.RetryPolicy{MaxRetries: 0}, // no retries
+				RetryPolicy:  &models.RetryPolicy{MaxRetries: 0},
 			},
 		},
 		MaxParallel: 10,
+	})
+
+	msg := testutil.Drain(t, redis, 1)[0]
+	if err := orch.ProcessResult(context.Background(), testutil.Fail(msg, "fatal error")); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
 	}
 
-	exec, _ := orch.StartWorkflow(ctx, def, nil)
-	taskExec := exec.Tasks[0]
-
-	failResult := &models.TaskResult{
-		TaskExecID:     taskExec.ID,
-		WorkflowExecID: exec.ID,
-		WorkerID:       "test-worker",
-		Success:        false,
-		Error:          "fatal error",
-		StartedAt:      time.Now().Add(-time.Second),
-		CompletedAt:    time.Now(),
-	}
-
-	orch.ProcessResult(ctx, failResult)
-
-	time.Sleep(50 * time.Millisecond)
-
-	var foundDLQ, foundFail bool
-	for _, ev := range broadcaster.events {
-		if ev.Type == models.WSEventTaskFailed {
-			foundDLQ = true
-		}
-		if ev.Type == models.WSEventWorkflowFailed {
-			foundFail = true
-		}
-	}
-
-	if !foundDLQ {
-		t.Error("expected task.failed broadcast for dead-lettered task")
-	}
-	if !foundFail {
-		t.Error("expected workflow.failed broadcast when task dead-lettered")
-	}
-	_ = retry.DefaultPolicy
+	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskFailed) })
+	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventWorkflowFailed) })
 }
