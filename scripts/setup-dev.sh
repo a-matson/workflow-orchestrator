@@ -1,6 +1,7 @@
 #!/bin/sh
 # One-shot local dev setup. The backend applies migrations on startup, so none run here.
 set -eu
+cd "$(dirname "$0")/.."
 
 for cmd in go node npm docker; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd is required but not installed." >&2; exit 1; }

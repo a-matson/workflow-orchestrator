@@ -10,6 +10,8 @@ check() { # expected-exit subject
   if [ "$rc" -ne "$1" ]; then echo "WRONG verdict ($rc, want $1): $2"; fail=1; fi
 }
 check 0 "feat: add hooks"
+check 0 "revert: x"
+check 0 "feat!: x"
 check 0 "fix(orchestrator): retry on redelivery"
 check 0 "refactor(api)!: drop v1 route"
 check 0 "chore(deps.go): bump"

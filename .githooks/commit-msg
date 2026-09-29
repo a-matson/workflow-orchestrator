@@ -1,5 +1,4 @@
 #!/bin/sh
-# $1 is the commit message file; only the subject line is checked.
 subject=$(head -n 1 "$1")
 case "$subject" in
   Merge\ *|Revert\ *|fixup!\ *|squash!\ *) exit 0 ;;
