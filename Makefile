@@ -1,12 +1,10 @@
 .PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
-	docker-build docker-up docker-down docker-logs migrate migrate-reset proto \
+	docker-build docker-up docker-down docker-logs migrate migrate-reset \
 	test test-dag test-orchestrator test-integration check lint clean load-test
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
 BINARY       = ./bin/workflow-server
-PROTO_DIR    = ./backend/proto
-PROTO_OUT    = ./backend/proto/gen
 FRONTEND_DIR = ./frontend
 
 # Compose has no default credentials; dev targets must use the same .env.
@@ -78,16 +76,6 @@ migrate-reset:
 	psql "$(DB_URL)" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 	@make migrate
 
-# ── gRPC codegen ─────────────────────────────────────────
-proto:
-	@mkdir -p $(PROTO_OUT)
-	protoc \
-	  --go_out=$(PROTO_OUT) --go_opt=paths=source_relative \
-	  --go-grpc_out=$(PROTO_OUT) --go-grpc_opt=paths=source_relative \
-	  -I $(PROTO_DIR) \
-	  $(PROTO_DIR)/orchestrator.proto
-	@echo "Proto files generated in $(PROTO_OUT)"
-
 # ── Testing ──────────────────────────────────────────────
 test:
 	cd backend && go test ./... -v -race -cover
@@ -119,7 +107,6 @@ check:
 clean:
 	rm -rf bin/
 	rm -rf frontend/dist/
-	rm -rf backend/proto/gen/
 	@echo "Cleaned."
 
 # ── Load testing ─────────────────────────────────────────

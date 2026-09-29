@@ -20,7 +20,6 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 | **UI**            | http://localhost:3000                       |
 | **REST API**      | http://localhost:8080/api                   |
 | **WebSocket**     | ws://localhost:8080/ws                      |
-| **gRPC**          | localhost:9090                              |
 | **MinIO Console** | http://localhost:9001 (credentials from .env) |
 | **Redis UI**      | http://localhost:8081 (profile: tools)      |
 
@@ -42,7 +41,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
                               │ REST + WebSocket
 ┌─────────────────────────────▼──────────────────────────────────────────┐
 │  Go Backend                                                            │
-│  REST /api/* │ WS Hub /ws │ gRPC :9090 │ Prometheus :9091              │
+│  REST /api/* │ WS Hub /ws │ Prometheus :9091                            │
 │                                                                        │
 │  ┌───────────────────────────────────────────────────────────────┐     │
 │  │  Orchestrator                                                 │     │
@@ -156,7 +155,6 @@ npm run format
 | `WORKER_COUNT` | `3` | Number of worker goroutines |
 | `WORKER_CONCURRENCY` | `5` | Tasks per worker |
 | `HTTP_ADDR` | `:8080` | HTTP listen address |
-| `GRPC_ADDR` | `:9090` | gRPC listen address |
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 

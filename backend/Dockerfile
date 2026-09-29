@@ -19,5 +19,5 @@ WORKDIR /app
 COPY --from=builder /workflow-server .
 RUN adduser -D -u 10001 appuser
 USER appuser
-EXPOSE 8080 9090 9091
+EXPOSE 8080 9091
 CMD ["./workflow-server"]

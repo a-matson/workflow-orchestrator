@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,7 +13,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"google.golang.org/grpc"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/api"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/metrics"
@@ -53,7 +51,6 @@ func main() {
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	httpAddr := getEnv("HTTP_ADDR", ":8080")
-	grpcAddr := getEnv("GRPC_ADDR", ":9090")
 	metricsAddr := getEnv("METRICS_ADDR", ":9091")
 	workerCount := getEnvInt("WORKER_COUNT", 3)
 	workerConc := getEnvInt("WORKER_CONCURRENCY", 5)
@@ -169,25 +166,6 @@ func main() {
 		}
 	}()
 
-	// gRPC server
-	grpcSrv := grpc.NewServer(
-		grpc.UnaryInterceptor(api.UnaryInterceptor),
-	)
-	grpcServer := api.NewGRPCServer(store, redisClient, orch, hub)
-	grpcServer.Register(grpcSrv)
-
-	go func() {
-		var lc net.ListenConfig
-		lis, err := lc.Listen(ctx, "tcp", grpcAddr)
-		if err != nil {
-			log.Fatal().Err(err).Str("addr", grpcAddr).Msg("gRPC listener failed")
-		}
-		log.Info().Str("addr", grpcAddr).Msg("gRPC server listening")
-		if err := grpcSrv.Serve(lis); err != nil {
-			log.Error().Err(err).Msg("gRPC server error")
-		}
-	}()
-
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -198,9 +176,6 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-
-	grpcSrv.GracefulStop()
-	log.Info().Msg("gRPC server stopped")
 
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("HTTP shutdown error")

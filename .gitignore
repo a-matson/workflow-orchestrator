@@ -1,7 +1,6 @@
 # Go
 backend/bin/
 backend/vendor/
-backend/proto/gen/
 *.test
 *.out
 coverage.out
