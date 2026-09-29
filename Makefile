@@ -1,6 +1,6 @@
 .PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs migrate migrate-reset \
-	test test-dag test-orchestrator test-integration check lint clean load-test hooks
+	test test-dag test-orchestrator test-integration e2e check lint clean load-test hooks
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
@@ -97,6 +97,21 @@ test-integration:
 	    REDIS_ADDR=127.0.0.1:56379 FLUXOR_IT=1 \
 	    go test -race -count=1 -tags integration ./...) || status=$$?; \
 	$(TEST_COMPOSE) down -v; \
+	exit $$status
+
+# A separate compose project with the committed example env, so the run never
+# touches the developer's stack or volumes (exported shell variables still
+# override the env file). Logs are dumped on failure because CI tears the stack
+# down before anyone can inspect it.
+E2E_COMPOSE = docker compose --env-file .env.example -p fluxor-e2e
+e2e:
+	@status=0; \
+	trap '$(E2E_COMPOSE) down -v' INT TERM; \
+	$(E2E_COMPOSE) up -d --build --wait && \
+	  (cd backend && go test -tags e2e -count=1 -v ./e2e/) && \
+	  examples/smoke-test.sh || status=$$?; \
+	[ $$status -eq 0 ] || $(E2E_COMPOSE) logs --no-color --tail=200; \
+	$(E2E_COMPOSE) down -v; \
 	exit $$status
 
 # ── Linting ──────────────────────────────────────────────

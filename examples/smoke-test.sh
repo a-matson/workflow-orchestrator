@@ -29,6 +29,7 @@ HEALTH=$(curl -sf "$BASE/api/health" | python3 -c "import sys,json; d=json.load(
 [ "$HEALTH" = "ok" ] && ok "Health: $HEALTH" || fail "Health check failed: $HEALTH"
 
 # ── Create workflow ────────────────────────────────────────────
+# The ETL tasks need external services, so this only checks the definition is accepted.
 info "Creating ETL workflow..."
 WF=$(curl -sf -X POST "$BASE/api/workflows" \
   -H "Content-Type: application/json" \
@@ -50,9 +51,18 @@ LIST=$(curl -sf "$BASE/api/workflows")
 COUNT=$(echo "$LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['count'])")
 [ "$COUNT" -ge 1 ] && ok "List workflows: $COUNT total" || fail "Expected at least 1 workflow"
 
+# ── Create no-op workflow ──────────────────────────────────────
+# A generic task without a command is a no-op, so this one can run to completion.
+info "Creating no-op workflow..."
+NOOP=$(curl -sf -X POST "$BASE/api/workflows" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"smoke-noop","tasks":[{"id":"noop","name":"No-op","type":"generic","dependencies":[]}]}')
+NOOP_ID=$(echo "$NOOP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+ok "Created workflow: 'smoke-noop' ($NOOP_ID)"
+
 # ── Trigger execution ──────────────────────────────────────────
 info "Triggering workflow execution..."
-EXEC=$(curl -sf -X POST "$BASE/api/workflows/$WF_ID/trigger" \
+EXEC=$(curl -sf -X POST "$BASE/api/workflows/$NOOP_ID/trigger" \
   -H "Content-Type: application/json" \
   -d '{"triggered_by": "smoke-test", "env": "test"}')
 

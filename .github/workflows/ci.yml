@@ -80,6 +80,27 @@ jobs:
       - name: Validate example JSON
         run: jq empty examples/*.json
 
+  # ── End-to-end: full compose stack ────────────────────────────
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      # On Linux the socket belongs to the docker group, not root (see docker-compose.yml).
+      - name: Run make e2e
+        run: |
+          DOCKER_SOCKET_GID="$(stat -c %g /var/run/docker.sock)"
+          export DOCKER_SOCKET_GID
+          make e2e
+
   # ── Backend: test + lint + build ──────────────────────────────
   backend:
     name: Backend (Go)
