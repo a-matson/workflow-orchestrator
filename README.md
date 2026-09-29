@@ -165,6 +165,8 @@ Deployments on a real hostname must list their public origin in `FLUXOR_ALLOWED_
 
 ## REST API
 
+Example: `curl -X POST http://localhost:8080/api/workflows -H 'Content-Type: application/json' -d @examples/etl-pipeline.json`
+
 ```
 POST   /api/workflows                  Create workflow definition
 GET    /api/workflows                  List all definitions
