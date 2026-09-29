@@ -184,12 +184,10 @@ GET    /ws                             WebSocket (real-time events)
 
 ## Running Migrations
 
-Migrations run automatically on `docker compose up` via the PostgreSQL init directory. For manual runs:
+The backend applies embedded migrations on startup, tracked in `schema_migrations`. For manual runs:
 
 ```bash
-psql "$POSTGRES_URL" -f backend/migrations/001_initial_schema.sql
-psql "$POSTGRES_URL" -f backend/migrations/002_performance_indexes.sql
-psql "$POSTGRES_URL" -f backend/migrations/003_artifacts.sql
+make migrate
 ```
 
 ---

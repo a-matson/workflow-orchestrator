@@ -30,9 +30,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) error {
 		return fmt.Errorf("taking migration lock: %w", err)
 	}
 	defer func() {
-		// Background context: ctx may already be cancelled, and the lock must
-		// not leak onto a pooled connection.
-		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrateLockID)
+		// ctx may already be cancelled, and the lock must not leak onto a
+		// pooled connection.
+		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrateLockID)
 	}()
 
 	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (

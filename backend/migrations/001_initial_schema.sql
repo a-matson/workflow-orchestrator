@@ -84,14 +84,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER workflow_definitions_updated_at
+CREATE OR REPLACE TRIGGER workflow_definitions_updated_at
     BEFORE UPDATE ON workflow_definitions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER workflow_executions_updated_at
+CREATE OR REPLACE TRIGGER workflow_executions_updated_at
     BEFORE UPDATE ON workflow_executions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER task_executions_updated_at
+CREATE OR REPLACE TRIGGER task_executions_updated_at
     BEFORE UPDATE ON task_executions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
