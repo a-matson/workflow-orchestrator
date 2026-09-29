@@ -6,11 +6,35 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: "ci-${{ github.ref }}"
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ── Workflow lint ─────────────────────────────────────────────
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Run actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
   # ── Detect Changes ────────────────────────────────────────────
   changes:
     name: Detect Changes
@@ -71,7 +95,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: backend/go.mod
           cache: true
           cache-dependency-path: backend/go.sum
 
@@ -123,7 +147,7 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           working-directory: backend
-          version: latest
+          version: v2.13.2
 
   # ── Frontend: type-check + build ──────────────────────────────
   frontend:
@@ -149,8 +173,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
       - name: Type check
-        run: npm run type-check 2>/dev/null || npx vue-tsc --noEmit
+        run: npm run type-check
 
       - name: Build
         run: npm run build

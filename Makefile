@@ -1,4 +1,6 @@
-.PHONY: all dev build clean test proto migrate lint
+.PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
+	docker-build docker-up docker-down docker-logs migrate migrate-reset proto \
+	test test-dag test-orchestrator test-integration check lint clean load-test
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
@@ -46,7 +48,6 @@ build-frontend:
 # ── Docker ───────────────────────────────────────────────
 docker-build:
 	docker build -t workflow-backend:latest ./backend
-	docker build -t workflow-frontend:latest ./frontend
 
 docker-up:
 	docker compose up -d --build
@@ -88,16 +89,24 @@ test-dag:
 	cd backend && go test ./internal/dag/... -v
 
 test-orchestrator:
-	cd backend && go test ./internal/orchestrator/... -v
+	cd backend && go test -tags integration ./internal/orchestrator/... -v
 
 test-integration:
 	cd backend && POSTGRES_URL="$(DB_URL)" REDIS_ADDR="$(REDIS)" \
-	  go test ./... -tags=integration -v
+	  go test -race -count=1 -tags integration ./...
 
 # ── Linting ──────────────────────────────────────────────
 lint:
 	cd backend && golangci-lint run ./...
-	cd frontend && npm run type-check
+	cd frontend && npm run lint && npm run type-check
+
+# gofmt -l exits 0 even when files need formatting, so test its output.
+check:
+	@test -z "$$(gofmt -l backend)" || { gofmt -l backend; echo "gofmt: files need formatting"; exit 1; }
+	cd backend && go vet ./...
+	cd backend && golangci-lint run ./...
+	cd backend && go test -race -count=1 ./...
+	cd frontend && npm run lint && npm run type-check
 
 # ── Cleanup ──────────────────────────────────────────────
 clean:
