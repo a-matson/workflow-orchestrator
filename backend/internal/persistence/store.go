@@ -209,7 +209,8 @@ func (s *Store) ListWorkflowExecutions(ctx context.Context, limit, offset int) (
 
 	var execs []*models.WorkflowExecution
 	for rows.Next() {
-		exec := &models.WorkflowExecution{}
+		// Non-nil so a task-less execution serializes as [] (the UI calls .find on it).
+		exec := &models.WorkflowExecution{Tasks: []*models.TaskExecution{}}
 		var errorStr *string
 		if err := rows.Scan(&exec.ID, &exec.WorkflowID, &exec.WorkflowName, &exec.Status,
 			&exec.StartedAt, &exec.CompletedAt, &errorStr, &exec.CreatedAt, &exec.UpdatedAt); err != nil {
@@ -245,7 +246,7 @@ func (s *Store) attachTasks(ctx context.Context, execs []*models.WorkflowExecuti
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
 		       next_retry_at, NULL, error, NULL, metadata, created_at, updated_at,
 		       artifacts_in, artifacts_out
-		FROM task_executions WHERE workflow_exec_id = ANY($1) ORDER BY created_at ASC
+		FROM task_executions WHERE workflow_exec_id = ANY($1) ORDER BY created_at ASC, id ASC
 	`, ids)
 	if err != nil {
 		return err

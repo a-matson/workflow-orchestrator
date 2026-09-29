@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,23 +20,52 @@ import (
 
 func TestAPI_ListExecutions_HasTasks(t *testing.T) {
 	store, redis := testutil.Env(t)
+	ctx := context.Background()
 	orch := orchestrator.NewOrchestrator(store, redis, &testutil.Recorder{})
-	def := &models.WorkflowDefinition{
-		ID:   uuid.NewString(),
-		Name: "List Tasks",
-		Tasks: []models.TaskDefinition{
-			{ID: "a", Name: "Task A", Type: "generic", Dependencies: []string{}},
-			{ID: "b", Name: "Task B", Type: "generic", Dependencies: []string{"a"}},
-		},
-		MaxParallel: 10,
+	newDef := func(name string) *models.WorkflowDefinition {
+		def := &models.WorkflowDefinition{
+			ID:   uuid.NewString(),
+			Name: name,
+			Tasks: []models.TaskDefinition{
+				{ID: "a", Name: name + " A", Type: "generic", Dependencies: []string{}},
+				{ID: "b", Name: name + " B", Type: "generic", Dependencies: []string{"a"}},
+			},
+			MaxParallel: 10,
+		}
+		testutil.SaveDef(t, store, def)
+		return def
 	}
-	testutil.SaveDef(t, store, def)
-	if _, err := orch.StartWorkflow(context.Background(), def, nil); err != nil {
-		t.Fatalf("StartWorkflow: %v", err)
+	defOne, defTwo := newDef("One"), newDef("Two")
+	one, err := orch.StartWorkflow(ctx, defOne, nil)
+	if err != nil {
+		t.Fatalf("StartWorkflow one: %v", err)
+	}
+	two, err := orch.StartWorkflow(ctx, defTwo, nil)
+	if err != nil {
+		t.Fatalf("StartWorkflow two: %v", err)
+	}
+	now := time.Now()
+	empty := &models.WorkflowExecution{
+		ID: uuid.NewString(), WorkflowID: defOne.ID, WorkflowName: "Empty",
+		Status: models.WorkflowStatusPending, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.CreateWorkflowExecution(ctx, empty); err != nil {
+		t.Fatalf("create empty execution: %v", err)
+	}
+
+	// Give a task heavy columns; the list must not return them.
+	stored, err := store.ListTaskExecutions(ctx, one.ID)
+	if err != nil || len(stored) == 0 {
+		t.Fatalf("list tasks of first execution: %v (%d)", err, len(stored))
+	}
+	stored[0].Output = json.RawMessage(`{"big":"payload"}`)
+	stored[0].Logs = []models.LogEntry{{Timestamp: now, Level: "info", Message: "hello"}}
+	if err := store.UpdateTaskExecution(ctx, stored[0]); err != nil {
+		t.Fatalf("update task: %v", err)
 	}
 
 	h := api.NewHandlerWithStorage(store, redis, orch, api.NewHub(), nil).Routes()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/executions", nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/executions", nil)
 	req.Host = "localhost"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -49,16 +79,48 @@ func TestAPI_ListExecutions_HasTasks(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Executions) != 1 {
-		t.Fatalf("got %d executions, want 1", len(body.Executions))
+	if len(body.Executions) != 3 {
+		t.Fatalf("got %d executions, want 3", len(body.Executions))
 	}
-	tasks := body.Executions[0].Tasks
-	if len(tasks) != 2 {
-		t.Fatalf("got %d tasks, want 2", len(tasks))
+	byID := map[string]models.WorkflowExecution{}
+	for _, e := range body.Executions {
+		byID[e.ID] = e
 	}
-	for _, task := range tasks {
-		if task.ID == "" || task.Status == "" || task.TaskName == "" {
-			t.Errorf("task missing id/status/task_name: %+v", task)
+
+	for _, tc := range []struct {
+		id, name string
+	}{{one.ID, "One"}, {two.ID, "Two"}} {
+		tasks := byID[tc.id].Tasks
+		if len(tasks) != 2 {
+			t.Fatalf("%s: got %d tasks, want 2", tc.name, len(tasks))
+		}
+		for i, want := range []string{tc.name + " A", tc.name + " B"} {
+			task := tasks[i]
+			if task.ID == "" || task.Status == "" || task.TaskName != want {
+				t.Errorf("%s task %d: want name %q with id and status, got %+v", tc.name, i, want, task)
+			}
+			if task.WorkflowExecID != tc.id {
+				t.Errorf("%s task %d belongs to %s", tc.name, i, task.WorkflowExecID)
+			}
+			if len(task.Output) != 0 || len(task.Logs) != 0 {
+				t.Errorf("%s task %d: output/logs must be omitted, got %s / %d logs", tc.name, i, task.Output, len(task.Logs))
+			}
+		}
+	}
+
+	// Decode raw so nil and [] are distinguishable.
+	var raw struct {
+		Executions []struct {
+			ID    string          `json:"id"`
+			Tasks json.RawMessage `json:"tasks"`
+		} `json:"executions"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	for _, e := range raw.Executions {
+		if e.ID == empty.ID && string(e.Tasks) != "[]" {
+			t.Errorf("task-less execution: tasks = %s, want []", e.Tasks)
 		}
 	}
 }
