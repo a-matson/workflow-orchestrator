@@ -44,6 +44,11 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{pool: pool}, nil
 }
 
+// Pool exposes the underlying pool for the migrator.
+func (s *Store) Pool() *pgxpool.Pool {
+	return s.pool
+}
+
 func (s *Store) Close() {
 	s.pool.Close()
 }
