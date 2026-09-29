@@ -28,4 +28,12 @@ for s in 'minioadmin' 'POSTGRES_PASSWORD: workflow' 'workflow:workflow@'; do
   fi
 done
 
+# A cached local image hides an upstream removal until a fresh clone or CI tries to pull it.
+for img in $(printf '%s' "$cfg" | jq -r '[.services[].image // empty] | unique[]'); do
+  if ! docker manifest inspect "$img" >/dev/null 2>&1; then
+    echo "FAIL: image $img cannot be resolved from its registry" >&2
+    fail=1
+  fi
+done
+
 exit $fail
