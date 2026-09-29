@@ -71,7 +71,7 @@ docker-logs:
 
 # ── Database ─────────────────────────────────────────────
 migrate:
-	cd backend && POSTGRES_URL=$(DB_URL) go run ./cmd/migrate
+	cd backend && POSTGRES_URL="$(DB_URL)" go run ./cmd/migrate
 
 migrate-reset:
 	psql "$(DB_URL)" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
