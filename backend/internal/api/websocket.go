@@ -31,11 +31,12 @@ type Hub struct {
 	upgrader   websocket.Upgrader
 }
 
-// HubOption configures a Hub.
+// HubOption keeps NewHub() callable without arguments while the origin policy
+// stays optional.
 type HubOption func(*Hub)
 
-// WithAllowedOrigins sets the WebSocket handshake allowlist; same-origin and
-// Origin-less (non-browser) clients are always allowed.
+// WithAllowedOrigins sets the WebSocket handshake allowlist. Origin-less
+// (non-browser) clients are always allowed; same-origin only on a trusted host.
 func WithAllowedOrigins(allowed []string) HubOption {
 	return func(h *Hub) {
 		checker := newOriginChecker(allowed)

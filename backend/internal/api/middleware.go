@@ -140,6 +140,13 @@ func newOriginChecker(allowed []string) originChecker {
 	return c
 }
 
+// trustedHost rejects any Host we do not serve: a rebound DNS name reaches the
+// loopback listener with its own Host, even from a request that sends no Origin.
+func (c originChecker) trustedHost(r *http.Request) bool {
+	u, err := url.Parse("//" + r.Host)
+	return err == nil && c.hosts[strings.ToLower(u.Hostname())]
+}
+
 func (c originChecker) allows(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" || c.origins[origin] {
@@ -158,6 +165,10 @@ func OriginPolicy(allowed []string) func(http.Handler) http.Handler {
 	checker := newOriginChecker(allowed)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !checker.trustedHost(r) {
+				writeJSON(w, http.StatusMisdirectedRequest, map[string]string{"error": "host not allowed"})
+				return
+			}
 			origin := r.Header.Get("Origin")
 			ok := checker.allows(r)
 			mutating := r.Method == http.MethodPost || r.Method == http.MethodPut ||
