@@ -86,6 +86,12 @@ func main() {
 		log.Fatal().Err(err).Msg("Redis connection failed")
 	}
 	log.Info().Msg("Redis connected")
+	// Managed Redis often disables CONFIG, so an unreadable policy is not fatal.
+	if policy, err := redisClient.EvictionPolicy(ctx); err != nil {
+		log.Warn().Err(err).Msg("could not verify Redis maxmemory-policy")
+	} else if err := persistence.CheckEvictionPolicy(policy); err != nil {
+		log.Fatal().Err(err).Msg("unsafe Redis configuration")
+	}
 	defer func() { _ = redisClient.Close() }()
 
 	// MinIO (artifact storage)
