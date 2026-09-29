@@ -1,0 +1,8 @@
+misconfigurations:
+  # Path-scoped so a missing USER in the backend image still fails the gate.
+  # nginx:alpine needs root to bind :80; the fix (nginxinc/nginx-unprivileged on :8080)
+  # also changes nginx.conf, compose ports and healthchecks, so it is its own change.
+  - id: DS-0002
+    paths:
+      - frontend/Dockerfile
+    statement: frontend nginx runs as root to bind port 80; tracked as a separate hardening change
