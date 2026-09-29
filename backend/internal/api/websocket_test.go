@@ -30,6 +30,7 @@ func TestWritePump_OneJSONPerFrame(t *testing.T) {
 		client.writePump()
 	}))
 	defer srv.Close()
+	defer close(client.send) // lets writePump return instead of leaking past the test
 
 	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
 	if err != nil {
@@ -37,6 +38,7 @@ func TestWritePump_OneJSONPerFrame(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	defer func() { _ = conn.Close() }() // test teardown; nothing to act on
+	// A deadline error would surface as a ReadMessage failure below.
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
 	_, first, err := conn.ReadMessage()
