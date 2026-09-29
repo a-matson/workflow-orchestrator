@@ -29,3 +29,4 @@ redis_data/
 secrets/
 *.pem
 *.key
+frontend/coverage/
