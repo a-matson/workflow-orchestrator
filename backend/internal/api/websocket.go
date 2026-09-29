@@ -64,16 +64,14 @@ func NewHub(opts ...HubOption) *Hub {
 
 // Run starts the hub event loop
 func (h *Hub) Run() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
+			total := len(h.clients)
 			h.mu.Unlock()
-			log.Info().Int("total_clients", len(h.clients)).Msg("WebSocket client connected")
+			log.Info().Int("total_clients", total).Msg("WebSocket client connected")
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -81,8 +79,9 @@ func (h *Hub) Run() {
 				delete(h.clients, client)
 				close(client.send)
 			}
+			total := len(h.clients)
 			h.mu.Unlock()
-			log.Info().Int("total_clients", len(h.clients)).Msg("WebSocket client disconnected")
+			log.Info().Int("total_clients", total).Msg("WebSocket client disconnected")
 
 		case event := <-h.broadcast:
 			data, err := json.Marshal(event)
@@ -91,7 +90,10 @@ func (h *Hub) Run() {
 				continue
 			}
 
-			h.mu.RLock()
+			// Write lock: slow-client eviction below mutates h.clients. Deleting
+			// during range is safe, and delete-then-close keeps close(send) to
+			// once because unregister only closes clients still in the map.
+			h.mu.Lock()
 			for client := range h.clients {
 				// Apply event filters if set
 				if !client.shouldReceive(event) {
@@ -106,18 +108,7 @@ func (h *Hub) Run() {
 					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
-
-		case <-ticker.C:
-			// Ping all clients to detect dead connections
-			h.mu.RLock()
-			for client := range h.clients {
-				_ = client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					_ = client.conn.Close()
-				}
-			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
