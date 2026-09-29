@@ -20,6 +20,14 @@ Open **http://localhost:3000** — the Builder page loads immediately.
 | **MinIO Console** | http://localhost:9001 (admin / minioadmin)  |
 | **Redis UI**      | http://localhost:8081 (profile: tools)      |
 
+## Security status
+
+- The API and WebSocket are currently unauthenticated.
+- The backend mounts the Docker socket, which is host-root equivalent.
+- In-process task types can run shell commands on the backend.
+- `docker-compose.yml` currently publishes every port on all interfaces (0.0.0.0).
+- Bind every port to 127.0.0.1 and never expose the stack to a network.
+
 ## Architecture
 
 ```

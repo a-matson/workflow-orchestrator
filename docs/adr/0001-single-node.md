@@ -1,0 +1,15 @@
+# 0001. Single-node deployment
+
+## Status
+Accepted, 2026-09-29
+
+## Context
+Workers run inside the backend process and execution state is held in memory as a cache.
+Running several backend replicas would let them race over the same tasks.
+
+## Decision
+One backend replica owns all executions. Workers run in-process. High availability is deferred.
+
+## Consequences
+- A backend restart kills every worker, so recovery must re-queue every open task.
+- Scaling out is not supported until this decision is revisited.
