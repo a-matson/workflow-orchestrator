@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -100,7 +101,12 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
-	defs, err := h.store.ListWorkflowDefinitions(r.Context())
+	limit, offset, err := parsePagination(r, 50)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error(), err)
+		return
+	}
+	defs, err := h.store.ListWorkflowDefinitions(r.Context(), limit, offset)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "failed to list workflows", err)
 		return
@@ -173,7 +179,11 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
-	limit, offset, _ := parsePagination(r, 50)
+	limit, offset, err := parsePagination(r, 50)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error(), err)
+		return
+	}
 
 	execs, err := h.store.ListWorkflowExecutions(r.Context(), limit, offset)
 	if err != nil {
@@ -367,11 +377,27 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, publicMsg st
 	})
 }
 
+// maxPageLimit bounds a single page so one request cannot load the whole table.
+const maxPageLimit = 200
+
+// parsePagination reads limit/offset; malformed or negative values are an
+// error (Postgres rejects a negative OFFSET, which would surface as a 500).
 func parsePagination(r *http.Request, defaultLimit int) (limit, offset int, err error) {
-	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = defaultLimit
+	limit = defaultLimit
+	q := r.URL.Query()
+	if v := q.Get("limit"); v != "" {
+		if limit, err = strconv.Atoi(v); err != nil || limit < 0 {
+			return 0, 0, fmt.Errorf("invalid limit %q", v)
+		}
+		// limit=0 falls back to the default, as before.
+		if limit == 0 {
+			limit = defaultLimit
+		}
 	}
-	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
-	return limit, offset, nil
+	if v := q.Get("offset"); v != "" {
+		if offset, err = strconv.Atoi(v); err != nil || offset < 0 {
+			return 0, 0, fmt.Errorf("invalid offset %q", v)
+		}
+	}
+	return min(limit, maxPageLimit), offset, nil
 }

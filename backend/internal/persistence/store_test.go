@@ -109,7 +109,7 @@ func TestStore_ListWorkflowDefinitions(t *testing.T) {
 		testutil.SaveDef(t, store, makeWorkflowDef("WF"))
 	}
 
-	list, err := store.ListWorkflowDefinitions(ctx)
+	list, err := store.ListWorkflowDefinitions(ctx, 50, 0)
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
