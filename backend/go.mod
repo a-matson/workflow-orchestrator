@@ -11,6 +11,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/prometheus/client_golang v1.19.0
 	github.com/rs/zerolog v1.32.0
+	go.uber.org/goleak v1.3.0
 )
 
 require (
