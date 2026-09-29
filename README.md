@@ -12,6 +12,8 @@ docker compose up -d
 Open **http://localhost:3000** — the Builder page loads immediately.
 ```
 
+Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created (for an existing volume, run `ALTER USER` or recreate the volume). Use alphanumeric passwords, since they are embedded in a URL and a command line.
+
 | Service           | URL                                         |
 |-------------------|---------------------------------------------|
 | **UI**            | http://localhost:3000                       |
