@@ -1,27 +1,11 @@
 #!/bin/sh
-# Usage: check-image-arch.sh linux/arm64|linux/amd64
+# Usage: check-image-arch.sh linux/arm64|linux/amd64 [binary]
+# With no binary, builds the Dockerfile's `binaries` stage for the platform into a temp dir.
 set -eu
 
 platform=${1:-}
-[ -n "$platform" ] || { echo "usage: $0 linux/arm64|linux/amd64" >&2; exit 2; }
-tmp=$(mktemp -d)
-img=check-image-arch:$$
-cid=
-cleanup() {
-  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || true
-  docker rmi -f "$img" >/dev/null 2>&1 || true
-  rm -rf "$tmp"
-}
-trap cleanup EXIT INT TERM
-
-# Checks the builder stage so the result does not depend on the runtime stage building.
-# The builder stage is FROM --platform=$BUILDPLATFORM, so the loaded image is the
-# host platform; only the binary inside is cross-compiled, hence no --platform on create.
-# Loaded and copied out because exporting the whole builder rootfs (Go toolchain,
-# read-only module cache) to a local dir is slow and fails on permissions.
-docker buildx build --platform "$platform" --target builder --load -t "$img" ./backend
-cid=$(docker create "$img")
-docker cp "$cid:/workflow-server" "$tmp/workflow-server"
+bin=${2:-}
+[ -n "$platform" ] || { echo "usage: $0 linux/arm64|linux/amd64 [binary]" >&2; exit 2; }
 
 case $platform in
   linux/arm64) want=b7 ;;
@@ -29,7 +13,16 @@ case $platform in
   *) echo "unsupported platform: $platform" >&2; exit 2 ;;
 esac
 
-got=$(od -An -tx1 -j18 -N1 "$tmp/workflow-server" | tr -d ' \n')
+if [ -z "$bin" ]; then
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+  # `binaries` is FROM scratch, so only the cross-compiled binary is exported.
+  docker buildx build --platform "$platform" --target binaries -o "type=local,dest=$tmp" ./backend
+  bin=$tmp/workflow-server
+fi
+
+# ELF e_machine is the 2 bytes at offset 18; the low byte identifies both targets.
+got=$(od -An -tx1 -j18 -N1 "$bin" | tr -d ' \n')
 case $got in
   3e) name=x86-64 ;;
   b7) name=aarch64 ;;
