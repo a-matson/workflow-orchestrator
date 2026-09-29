@@ -218,3 +218,8 @@ func (rl *RateLimiter) cleanupLoop() {
 		rl.mu.Unlock()
 	}
 }
+
+// OriginPolicy is a stub until the fix commit.
+func OriginPolicy(_ []string) func(http.Handler) http.Handler {
+	return CORSMiddleware([]string{"*"})
+}
