@@ -74,7 +74,7 @@ func main() {
 			log.Error().Err(err).Msg("metrics server failed")
 		}
 	}()
-	_ = prom // used via prometheus.MustRegister in metrics package
+	_ = prom
 
 	// Redis
 	log.Info().Str("addr", redisAddr).Msg("connecting to Redis")
@@ -128,16 +128,14 @@ func main() {
 	// Background services
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
 	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
-	workerPool := worker.NewPoolFull(redisClient, workerCount, workerConc, orch, minioClient)
-	watchdog := worker.NewTaskWatchdog(redisClient)
+	workerPool := worker.NewPool(redisClient, workerCount, workerConc, orch, minioClient)
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
 	go workerPool.Start(ctx)
-	go watchdog.Run(ctx)
 
 	// HTTP server
-	handler := api.NewHandlerWithStorage(store, redisClient, orch, hub, minioClient)
+	handler := api.NewHandler(store, redisClient, orch, hub, minioClient)
 	rawMux := handler.Routes()
 
 	// Compose middleware chain
@@ -184,9 +182,6 @@ func main() {
 
 	log.Info().Msg("shutdown complete")
 }
-
-// ChainMiddleware is defined here to avoid circular imports
-func init() {} // package init placeholder
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

@@ -50,20 +50,9 @@ type Pool struct {
 	redis   *persistence.RedisClient
 }
 
-// NewPool creates workers without Docker/MinIO (legacy in-process mode)
-func NewPool(redis *persistence.RedisClient, workerCount, concurrencyPerWorker int) *Pool {
-	return NewPoolWithNotifier(redis, workerCount, concurrencyPerWorker, nil)
-}
-
-// NewPoolWithNotifier creates workers with a TaskNotifier and optional
-// ContainerExecutor for isolated task execution.
-func NewPoolWithNotifier(redis *persistence.RedisClient, workerCount, concurrencyPerWorker int, notifier TaskNotifier) *Pool {
-	return NewPoolFull(redis, workerCount, concurrencyPerWorker, notifier, nil)
-}
-
-// NewPoolFull creates workers with all capabilities: task notification,
+// NewPool creates workers with all capabilities: task notification,
 // container isolation, and artifact storage.
-func NewPoolFull(
+func NewPool(
 	redis *persistence.RedisClient,
 	workerCount, concurrencyPerWorker int,
 	notifier TaskNotifier,

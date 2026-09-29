@@ -21,14 +21,10 @@ var DefaultPolicy = models.RetryPolicy{
 }
 
 // Manager handles retry scheduling with exponential backoff
-type Manager struct {
-	deadLetterQueue chan *models.TaskExecution
-}
+type Manager struct{}
 
 func NewManager() *Manager {
-	return &Manager{
-		deadLetterQueue: make(chan *models.TaskExecution, 1000),
-	}
+	return &Manager{}
 }
 
 // ShouldRetry returns true if the task has retries remaining
@@ -85,46 +81,4 @@ func (m *Manager) ScheduleRetry(ctx context.Context, task *models.TaskExecution,
 		Dur("delay", delay).
 		Time("next_retry_at", nextRetry).
 		Msg("task scheduled for retry")
-}
-
-// SendToDeadLetter moves a task to the dead letter queue after exhausting retries
-func (m *Manager) SendToDeadLetter(task *models.TaskExecution) {
-	task.Status = models.TaskStatusDeadLetter
-	task.UpdatedAt = time.Now()
-
-	log.Warn().
-		Str("task_exec_id", task.ID).
-		Str("task_name", task.TaskName).
-		Int("retry_count", task.RetryCount).
-		Str("error", task.Error).
-		Msg("task moved to dead letter queue")
-
-	select {
-	case m.deadLetterQueue <- task:
-	default:
-		log.Error().
-			Str("task_exec_id", task.ID).
-			Msg("dead letter queue full, dropping task")
-	}
-}
-
-// DeadLetterQueue returns the channel for dead letter tasks (for monitoring)
-func (m *Manager) DeadLetterQueue() <-chan *models.TaskExecution {
-	return m.deadLetterQueue
-}
-
-// ReplayFromDeadLetter resets a dead letter task for re-execution
-func (m *Manager) ReplayFromDeadLetter(task *models.TaskExecution) {
-	task.Status = models.TaskStatusPending
-	task.RetryCount = 0
-	task.Error = ""
-	task.NextRetryAt = nil
-	task.StartedAt = nil
-	task.CompletedAt = nil
-	task.UpdatedAt = time.Now()
-
-	log.Info().
-		Str("task_exec_id", task.ID).
-		Str("task_name", task.TaskName).
-		Msg("task replayed from dead letter queue")
 }

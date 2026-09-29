@@ -205,14 +205,6 @@ func (r *RedisClient) CheckIdempotency(ctx context.Context, key string) (bool, e
 
 // ==================== Metrics ====================
 
-func (r *RedisClient) IncrMetric(ctx context.Context, field string) error {
-	return r.client.HIncrBy(ctx, MetricsKey, field, 1).Err()
-}
-
-func (r *RedisClient) GetMetrics(ctx context.Context) (map[string]string, error) {
-	return r.client.HGetAll(ctx, MetricsKey).Result()
-}
-
 // QueueDepth returns the number of tasks currently in the task queue
 func (r *RedisClient) QueueDepth(ctx context.Context) (int64, error) {
 	return r.client.LLen(ctx, TaskQueueKey).Result()

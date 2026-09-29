@@ -25,11 +25,7 @@ type Handler struct {
 	storage      *storage.Client
 }
 
-func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub) *Handler {
-	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub}
-}
-
-func NewHandlerWithStorage(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub, sc *storage.Client) *Handler {
+func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub, sc *storage.Client) *Handler {
 	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc}
 }
 
@@ -270,12 +266,10 @@ func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 
 	queueDepth, _ := h.redis.QueueDepth(r.Context())
 	retryDepth, _ := h.redis.RetryQueueDepth(r.Context())
-	redisMetrics, _ := h.redis.GetMetrics(r.Context())
 
 	metrics["queue_depth"] = queueDepth
 	metrics["retry_queue_depth"] = retryDepth
 	metrics["ws_clients"] = int64(h.hub.ConnectedClients())
-	_ = redisMetrics
 
 	writeJSON(w, http.StatusOK, metrics)
 }

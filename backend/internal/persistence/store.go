@@ -297,51 +297,6 @@ func (s *Store) ListTaskExecutions(ctx context.Context, workflowExecID string) (
 	return tasks, rows.Err()
 }
 
-// GetTasksReadyForRetry returns tasks whose retry time has passed
-func (s *Store) GetTasksReadyForRetry(ctx context.Context) ([]*models.TaskExecution, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
-		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at,
-		       artifacts_in, artifacts_out
-		FROM task_executions 
-		WHERE status = 'retrying' AND next_retry_at <= NOW()
-		ORDER BY next_retry_at ASC
-		LIMIT 100
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tasks []*models.TaskExecution
-	for rows.Next() {
-		task, err := scanTaskExecution(rows)
-		if err != nil {
-			return nil, err
-		}
-		tasks = append(tasks, task)
-	}
-
-	return tasks, rows.Err()
-}
-
-// AppendTaskLog adds a log entry to a task execution (idempotent via timestamp)
-func (s *Store) AppendTaskLog(ctx context.Context, taskExecID string, entry models.LogEntry) error {
-	entryJSON, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.pool.Exec(ctx, `
-		UPDATE task_executions 
-		SET logs = COALESCE(logs, '[]'::jsonb) || $2::jsonb, updated_at = NOW()
-		WHERE id = $1
-	`, taskExecID, string(entryJSON))
-
-	return err
-}
-
 // ==================== Scanner helpers ====================
 
 type scannable interface {
