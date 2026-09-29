@@ -90,9 +90,10 @@ func (h *Hub) Run() {
 				continue
 			}
 
-			// Write lock: slow-client eviction below mutates h.clients. Deleting
-			// during range is safe, and delete-then-close keeps close(send) to
-			// once because unregister only closes clients still in the map.
+			// Write lock: slow-client eviction below mutates h.clients. send is
+			// closed only while the client is still in the map, and eviction
+			// removes it in the same critical section, so unregister cannot
+			// close it a second time.
 			h.mu.Lock()
 			for client := range h.clients {
 				// Apply event filters if set
