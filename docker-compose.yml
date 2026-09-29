@@ -50,7 +50,12 @@ services:
       timeout: 3s
       retries: 10
   minio:
-    image: minio/minio:latest
+    # MinIO stopped publishing images to Docker Hub and quay.io; Chainguard builds the same
+    # server from source. Its free tier only serves :latest, so the digest pins it.
+    image: cgr.dev/chainguard/minio:latest@sha256:71674988a1c7ddd5724928633199152b11e4ddefd6c6ce2d60772ff4a8f22ca9
+    # Root, as with the previous image: existing minio_data volumes are root-owned and the
+    # image's default uid 65532 cannot open them. Non-root needs a one-time chown migration.
+    user: "0:0"
     restart: unless-stopped
     networks: [fluxor-internal]
     command: server /data --console-address ":9001"
@@ -63,7 +68,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 10
