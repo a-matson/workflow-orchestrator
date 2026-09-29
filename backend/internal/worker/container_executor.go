@@ -46,7 +46,7 @@ const (
 	TaskNetwork = "fluxor-tasks"
 
 	// DefaultImage is used when ContainerSpec.Image is empty.
-	DefaultImage = "alpine:3.19"
+	DefaultImage = "alpine:3.22"
 
 	// DefaultMemoryMB / DefaultCPUMillis applied when ContainerSpec omits them.
 	DefaultMemoryMB  int64 = 256
