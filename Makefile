@@ -1,6 +1,6 @@
 .PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs migrate migrate-reset \
-	test test-dag test-orchestrator test-integration check lint clean load-test hooks
+	test test-dag test-orchestrator test-integration e2e check lint clean load-test hooks
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
@@ -97,6 +97,18 @@ test-integration:
 	    REDIS_ADDR=127.0.0.1:56379 FLUXOR_IT=1 \
 	    go test -race -count=1 -tags integration ./...) || status=$$?; \
 	$(TEST_COMPOSE) down -v; \
+	exit $$status
+
+# Builds and runs the full stack under its own project with the committed
+# example env (never the developer's .env), runs the API suite and the smoke
+# test against it, and always tears it down, keeping the test exit status.
+E2E_COMPOSE = docker compose --env-file .env.example -p fluxor-e2e
+e2e:
+	@status=0; \
+	$(E2E_COMPOSE) up -d --build --wait && \
+	  (cd backend && go test -tags e2e -count=1 -v ./e2e/) && \
+	  examples/smoke-test.sh || status=$$?; \
+	$(E2E_COMPOSE) down -v; \
 	exit $$status
 
 # ── Linting ──────────────────────────────────────────────

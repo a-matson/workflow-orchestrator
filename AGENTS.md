@@ -24,6 +24,7 @@ the PR, labelled as an assumption.
 ## Verify before pushing
 - Backend: `cd backend && gofmt -l . && go vet ./... && golangci-lint run ./... && go test -race ./...`
 - Backend integration (self-contained; needs Docker): `make test-integration`. Plain `go test ./...` skips these without a warning.
+- End-to-end (full compose stack as project `fluxor-e2e`; needs Docker and free ports 3000, 8080, 5433, 6379, 9000, 9001): `make e2e`.
 - Frontend: `cd frontend && npm run lint && npm run type-check && npm run test:unit`
 
 ## UI tests
