@@ -192,6 +192,17 @@ jobs:
           path: frontend/dist/
           retention-days: 7
 
+  # ── Docker: PR build check (no push) ──────────────────────────
+  docker-build-pr:
+    name: Docker Build (PR)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build ./backend
+
   # ── Docker: build + push ──────────────────────────────────────
   docker:
     name: Docker Build & Push

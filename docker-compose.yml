@@ -97,6 +97,9 @@ services:
       DOCKER_HOST:      unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
+    # The socket's owning group differs by host: 0 on Docker Desktop, usually
+    # the `docker` group on Linux (`stat -c %g /var/run/docker.sock`).
+    group_add: ["${DOCKER_SOCKET_GID:-0}"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}

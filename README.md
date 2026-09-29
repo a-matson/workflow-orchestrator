@@ -97,6 +97,10 @@ Task B depends on Task A; artifacts_in: [{path: "output.json"}]
   → Task B reads /workspace/output.json
 ```
 
+### Docker socket access
+
+The backend container reaches the host Docker daemon through the mounted socket, and compose adds the container user to the socket's group via `DOCKER_SOCKET_GID` (default `0`, which matches Docker Desktop). On Linux the socket usually belongs to the `docker` group, so export its GID before starting: `export DOCKER_SOCKET_GID=$(stat -c %g /var/run/docker.sock)`.
+
 ### Configuring a task for isolation
 
 In the **Builder → task config panel → Container Isolation**, toggle Enabled and set:
@@ -209,7 +213,6 @@ cd frontend && npm run build
 # Build backend
 cd backend && go build -o workflow-server ./cmd/server
 
-# Or build the Docker image (Docker GID may vary by host)
-docker build --build-arg DOCKER_GID=$(getent group docker | cut -d: -f3) \
-  -t fluxor-backend ./backend
+# Or build the Docker image
+docker build -t fluxor-backend ./backend
 ```
