@@ -26,6 +26,7 @@ the PR, labelled as an assumption.
 - Backend integration (self-contained; needs Docker): `make test-integration`. Plain `go test ./...` skips these without a warning.
 - End-to-end (full compose stack as project `fluxor-e2e`; needs Docker and free ports 3000, 8080, 5433, 6379, 9000, 9001): `make e2e`.
 - Frontend: `cd frontend && npm run lint && npm run type-check && npm run test:unit`
+- Coverage may not drop below `coverage-baseline.json` (`scripts/coverage-ratchet.sh`); a PR that raises coverage should raise the baseline. The backend number is CI's (Go from `go.mod`); a newer local toolchain reports a different total.
 
 ## UI tests
 UI tests select elements by `data-testid`; add one when a test needs to find an element.

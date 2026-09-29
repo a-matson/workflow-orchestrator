@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage.enabled --coverage.reporter=json-summary",
     "test:unit:watch": "vitest",
     "lint": "eslint . --ext .vue,.ts,.tsx --max-warnings 0",
     "lint:fix": "eslint . --ext .vue,.ts,.tsx --fix",
