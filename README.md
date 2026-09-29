@@ -139,11 +139,12 @@ npm run format
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `POSTGRES_URL` | `postgres://workflow:workflow@localhost:5432/workflow` | PostgreSQL DSN |
+| `POSTGRES_URL` | `postgres://workflow:<POSTGRES_PASSWORD>@localhost:5432/workflow` | PostgreSQL DSN (password from `.env` with compose) |
 | `REDIS_ADDR` | `localhost:6379` | Redis address |
 | `MINIO_ENDPOINT` | `localhost:9000` | MinIO S3 endpoint |
-| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO access key |
-| `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key |
+| `REDIS_PASSWORD` | _(none)_ | Redis password (from `.env` with compose) |
+| `MINIO_ACCESS_KEY` | _(none)_ | MinIO access key (`MINIO_ROOT_USER` in `.env` with compose) |
+| `MINIO_SECRET_KEY` | _(none)_ | MinIO secret key (`MINIO_ROOT_PASSWORD` in `.env` with compose) |
 | `MINIO_BUCKET` | `fluxor-artifacts` | Artifact bucket name |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon socket |
 | `WORKER_COUNT` | `3` | Number of worker goroutines |

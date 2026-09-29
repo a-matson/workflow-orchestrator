@@ -10,7 +10,19 @@ PROTO_OUT    = ./backend/proto/gen
 FRONTEND_DIR = ./frontend
 MIGRATION_DIR = ./backend/migrations
 
-DB_URL ?= postgres://workflow:workflow@localhost:5433/workflow?sslmode=disable
+# Compose has no default credentials; dev targets must use the same .env.
+# Optional so CI (which sets its own env) still works without the file.
+-include .env
+POSTGRES_PASSWORD ?= workflow
+ifdef MINIO_ROOT_USER
+export MINIO_ACCESS_KEY = $(MINIO_ROOT_USER)
+export MINIO_SECRET_KEY = $(MINIO_ROOT_PASSWORD)
+endif
+ifdef REDIS_PASSWORD
+export REDIS_PASSWORD
+endif
+
+DB_URL ?= postgres://workflow:$(POSTGRES_PASSWORD)@localhost:5433/workflow?sslmode=disable
 REDIS  ?= localhost:6379
 
 # ── Default ───────────────────────────────────────────────
