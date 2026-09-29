@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -42,6 +42,10 @@ export default defineConfig({
 				},
 			},
 		},
+	},
+	test: {
+		environment: 'happy-dom',
+		include: ['src/**/*.spec.ts'],
 	},
 	optimizeDeps: {
 		include: ['@vue-flow/core', '@vue-flow/background', '@vue-flow/controls', '@vue-flow/minimap'],
