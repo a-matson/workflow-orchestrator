@@ -16,7 +16,7 @@ export const useWorkflowStore = defineStore('workflows', () => {
 	async function fetchDefinitions() {
 		try {
 			loading.value = true
-			const data = await api.get<{ workflows: WorkflowDefinition[] }>('/api/workflows')
+			const data = await api.get<{ workflows: WorkflowDefinition[] }>('/api/workflows?limit=200')
 			definitions.value = data.workflows || []
 		} catch (err) {
 			error.value = 'Failed to load workflows'

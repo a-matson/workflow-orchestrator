@@ -110,11 +110,12 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 	return def, nil
 }
 
-func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]*models.WorkflowDefinition, error) {
+func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) ([]*models.WorkflowDefinition, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, description, version, tasks, max_parallel, tags, created_at, updated_at
-		FROM workflow_definitions ORDER BY created_at DESC
-	`)
+		FROM workflow_definitions ORDER BY created_at DESC, id
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

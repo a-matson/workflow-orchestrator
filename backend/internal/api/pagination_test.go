@@ -22,7 +22,7 @@ func TestParsePagination(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest("GET", "/x?"+tt.query, nil)
+			r := httptest.NewRequestWithContext(t.Context(), "GET", "/x?"+tt.query, nil)
 			limit, offset, err := parsePagination(r, 50)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
