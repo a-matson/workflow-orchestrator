@@ -116,14 +116,25 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 }
 
 // originChecker decides whether a browser Origin may talk to the API: it must be
-// allowlisted or match the request's own Host (same-origin).
-type originChecker map[string]bool
+// allowlisted, or match the request's own Host on a trusted hostname. Host alone
+// is attacker-controlled under DNS rebinding, so same-origin also needs a trusted host.
+type originChecker struct {
+	origins map[string]bool
+	hosts   map[string]bool
+}
 
 func newOriginChecker(allowed []string) originChecker {
-	c := originChecker{}
+	c := originChecker{
+		origins: map[string]bool{},
+		hosts:   map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true},
+	}
 	for _, o := range allowed {
-		if o = strings.TrimSpace(o); o != "" {
-			c[o] = true
+		if o = strings.TrimSpace(o); o == "" {
+			continue
+		}
+		c.origins[o] = true
+		if u, err := url.Parse(o); err == nil && u.Hostname() != "" {
+			c.hosts[strings.ToLower(u.Hostname())] = true
 		}
 	}
 	return c
@@ -131,11 +142,14 @@ func newOriginChecker(allowed []string) originChecker {
 
 func (c originChecker) allows(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-	if origin == "" || c[origin] {
+	if origin == "" || c.origins[origin] {
 		return true
 	}
 	u, err := url.Parse(origin)
-	return err == nil && u.Host != "" && u.Host == r.Host
+	if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) {
+		return false
+	}
+	return c.hosts[strings.ToLower(u.Hostname())]
 }
 
 // OriginPolicy enforces the origin allowlist (plus same-origin) and requires a

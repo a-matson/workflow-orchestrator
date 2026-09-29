@@ -20,7 +20,7 @@ func run(t *testing.T, allowed []string, method, origin, ctype string) (*httptes
 		ran = true
 		w.WriteHeader(http.StatusOK)
 	}))
-	req := httptest.NewRequestWithContext(context.Background(), method, "http://api.local:8080/api/workflows", strings.NewReader("{}"))
+	req := httptest.NewRequestWithContext(context.Background(), method, "http://localhost:8080/api/workflows", strings.NewReader("{}"))
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}
@@ -63,7 +63,7 @@ func TestAPI_AllowedOrigin(t *testing.T) {
 		t.Fatalf("Vary = %q, want Origin", rec.Header().Get("Vary"))
 	}
 	// Same-origin: Origin host equals request Host, no allowlist entry needed.
-	_, ran := run(t, nil, http.MethodPost, "http://api.local:8080", "application/json")
+	_, ran := run(t, nil, http.MethodPost, "http://localhost:8080", "application/json")
 	if !ran {
 		t.Fatal("same-origin JSON POST did not reach handler")
 	}
@@ -79,8 +79,59 @@ func TestAPI_MutationRequiresJSON(t *testing.T) {
 	}
 }
 
+func TestAPI_DNSRebindingRejected(t *testing.T) {
+	ran := false
+	h := OriginPolicy(nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { ran = true }))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://rebind.evil:8080/api/workflows", strings.NewReader("{}"))
+	req.Header.Set("Origin", "http://rebind.evil:8080")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || ran {
+		t.Fatalf("code=%d ran=%v, want 403 and handler not run", rec.Code, ran)
+	}
+}
+
+func TestAPI_AllowedPreflight(t *testing.T) {
+	const ok = "http://localhost:5173"
+	rec, _ := run(t, []string{ok}, http.MethodOptions, ok, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("code=%d, want 204", rec.Code)
+	}
+}
+
+func TestAPI_ForeignGetReachesHandler(t *testing.T) {
+	rec, ran := run(t, nil, http.MethodGet, evil, "")
+	if !ran || rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("ran=%v acao=%q, want handler run without ACAO", ran, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestAPI_DeleteRequiresJSON(t *testing.T) {
+	rec, ran := run(t, nil, http.MethodDelete, "", "")
+	if rec.Code != http.StatusUnsupportedMediaType || ran {
+		t.Fatalf("code=%d ran=%v, want 415 and handler not run", rec.Code, ran)
+	}
+}
+
+func TestWS_AllowedOrigin(t *testing.T) {
+	hub := NewHub(WithAllowedOrigins([]string{"http://localhost:5173"}))
+	go hub.Run()
+	srv := httptest.NewServer(http.HandlerFunc(hub.ServeWS))
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, resp, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": {"http://localhost:5173"}})
+	if err != nil {
+		t.Fatalf("allowlisted origin handshake failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	_ = conn.Close()
+}
+
 func TestWS_ForeignOrigin(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(NewHub().ServeWS))
+	hub := NewHub()
+	go hub.Run()
+	srv := httptest.NewServer(http.HandlerFunc(hub.ServeWS))
 	defer srv.Close()
 	url := "ws" + strings.TrimPrefix(srv.URL, "http")
 
