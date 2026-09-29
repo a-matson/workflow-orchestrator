@@ -11,6 +11,8 @@ docker compose up -d --build
 Open **http://localhost:3000** — the Builder page loads immediately.
 ```
 
+`docker compose up -d --build` builds the frontend Vue UI inside a Docker image (no host-side npm build needed).
+
 Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created (for an existing volume, run `ALTER USER` or recreate the volume). Use alphanumeric passwords, since they are embedded in a URL and a command line.
 
 | Service           | URL                                         |
