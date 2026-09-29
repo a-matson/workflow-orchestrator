@@ -7,6 +7,7 @@
 ```bash
 git clone https://github.com/a-matson/workflow-orchestrator && cd fluxor
 cd frontend && npm install && npm run build && cd ..
+cp .env.example .env   # then edit the passwords
 docker compose up -d
 Open **http://localhost:3000** — the Builder page loads immediately.
 ```
@@ -17,7 +18,7 @@ Open **http://localhost:3000** — the Builder page loads immediately.
 | **REST API**      | http://localhost:8080/api                   |
 | **WebSocket**     | ws://localhost:8080/ws                      |
 | **gRPC**          | localhost:9090                              |
-| **MinIO Console** | http://localhost:9001 (admin / minioadmin)  |
+| **MinIO Console** | http://localhost:9001 (credentials from .env) |
 | **Redis UI**      | http://localhost:8081 (profile: tools)      |
 
 ## Security status
