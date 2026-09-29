@@ -25,10 +25,6 @@ CREATE INDEX IF NOT EXISTS idx_task_execs_logs
 CREATE INDEX IF NOT EXISTS idx_workflow_defs_tags
   ON workflow_definitions USING gin(tags);
 
--- Full-text search on workflow names
-CREATE INDEX IF NOT EXISTS idx_workflow_defs_name_trgm
-  ON workflow_definitions USING gin(name gin_trgm_ops);
-
 -- ==================== Views ====================
 
 -- Execution summary view (used by list endpoints)

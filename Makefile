@@ -8,7 +8,6 @@ BINARY       = ./bin/workflow-server
 PROTO_DIR    = ./backend/proto
 PROTO_OUT    = ./backend/proto/gen
 FRONTEND_DIR = ./frontend
-MIGRATION_DIR = ./backend/migrations
 
 # Compose has no default credentials; dev targets must use the same .env.
 # Optional so CI (which sets its own env) still works without the file.
@@ -72,12 +71,7 @@ docker-logs:
 
 # ── Database ─────────────────────────────────────────────
 migrate:
-	@echo "Running migrations..."
-	@for f in $(MIGRATION_DIR)/*.sql; do \
-	  echo "Applying $$f..."; \
-	  psql "$(DB_URL)" -f "$$f"; \
-	done
-	@echo "Migrations complete."
+	cd backend && POSTGRES_URL=$(DB_URL) go run ./cmd/migrate
 
 migrate-reset:
 	psql "$(DB_URL)" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"

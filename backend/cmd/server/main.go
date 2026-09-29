@@ -22,6 +22,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/scheduler"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/worker"
+	"github.com/a-matson/workflow-orchestrator/backend/migrations"
 )
 
 var (
@@ -102,6 +103,10 @@ func main() {
 	}
 	log.Info().Msg("PostgreSQL connected")
 	defer store.Close()
+
+	if err := persistence.Migrate(ctx, store.Pool(), migrations.FS); err != nil {
+		log.Fatal().Err(err).Msg("database migration failed")
+	}
 
 	// Core services
 	hub := api.NewHub()
