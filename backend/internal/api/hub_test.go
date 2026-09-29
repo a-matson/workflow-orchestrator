@@ -8,8 +8,8 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
-// Eviction of a slow client must mutate the client map under the write lock,
-// otherwise it races ConnectedClients readers.
+// Eviction is the only broadcast path that mutates the client map; guards
+// against doing so under a read lock while other goroutines read the map.
 func TestHub_SlowClientEviction(t *testing.T) {
 	hub := NewHub()
 	go hub.Run()
