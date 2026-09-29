@@ -124,10 +124,11 @@ Add file paths under **Artifact Outputs** (files this task writes) and **Artifac
 # Start infrastructure
 docker compose up -d postgres redis minio
 
-# Run backend
+# Run backend. The Vite dev server (http://localhost:5173) calls the API
+# cross-origin, so it must be allowlisted.
 cd backend
 go mod download
-go run ./cmd/server
+FLUXOR_ALLOWED_ORIGINS=http://localhost:5173 go run ./cmd/server
 
 # Run frontend dev server (separate terminal)
 cd frontend
@@ -155,6 +156,7 @@ npm run format
 | `WORKER_CONCURRENCY` | `5` | Tasks per worker |
 | `HTTP_ADDR` | `:8080` | HTTP listen address |
 | `GRPC_ADDR` | `:9090` | gRPC listen address |
+| `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin is always allowed) |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 
 ---

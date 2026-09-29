@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,7 +20,7 @@ func run(t *testing.T, allowed []string, method, origin, ctype string) (*httptes
 		ran = true
 		w.WriteHeader(http.StatusOK)
 	}))
-	req := httptest.NewRequest(method, "http://api.local:8080/api/workflows", strings.NewReader("{}"))
+	req := httptest.NewRequestWithContext(context.Background(), method, "http://api.local:8080/api/workflows", strings.NewReader("{}"))
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}
@@ -87,13 +88,17 @@ func TestWS_ForeignOrigin(t *testing.T) {
 	if err == nil {
 		t.Fatal("foreign origin handshake succeeded")
 	}
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if resp == nil || resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("resp = %v, want 403", resp)
 	}
 
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	conn, resp, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatalf("no-origin handshake failed: %v", err)
 	}
+	_ = resp.Body.Close()
 	_ = conn.Close()
 }

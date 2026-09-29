@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -109,7 +110,8 @@ func main() {
 	}
 
 	// Core services
-	hub := api.NewHub()
+	allowedOrigins := strings.Split(getEnv("FLUXOR_ALLOWED_ORIGINS", ""), ",")
+	hub := api.NewHub(api.WithAllowedOrigins(allowedOrigins))
 	go hub.Run()
 
 	orch := orchestrator.NewOrchestrator(store, redisClient, hub)
@@ -142,7 +144,7 @@ func main() {
 		api.RequestIDMiddleware,
 		api.RecoveryMiddleware,
 		api.LoggingMiddleware,
-		api.CORSMiddleware([]string{"*"}),
+		api.OriginPolicy(allowedOrigins),
 		rateLimiter.Middleware,
 	)
 
