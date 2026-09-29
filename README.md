@@ -6,9 +6,8 @@
 
 ```bash
 git clone https://github.com/a-matson/workflow-orchestrator && cd fluxor
-cd frontend && npm install && npm run build && cd ..
 cp .env.example .env   # then edit the passwords
-docker compose up -d
+docker compose up -d --build
 Open **http://localhost:3000** — the Builder page loads immediately.
 ```
 
