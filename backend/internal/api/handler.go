@@ -78,6 +78,10 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid request body: "+err.Error(), err)
 		return
 	}
+	if err := validateDefinition(&def); err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
 
 	if def.ID == "" {
 		def.ID = uuid.New().String()
@@ -111,6 +115,10 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	var def models.WorkflowDefinition
 	if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if err := validateDefinition(&def); err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 	def.ID = id // ensure URL ID wins
