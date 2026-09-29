@@ -2,6 +2,8 @@ module github.com/a-matson/workflow-orchestrator/backend
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/go-redis/redis/v8 v8.11.5
