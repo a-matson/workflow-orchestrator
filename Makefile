@@ -86,9 +86,18 @@ test-dag:
 test-orchestrator:
 	cd backend && go test -tags integration ./internal/orchestrator/... -v
 
+# Brings up its own throwaway Postgres and Redis, and always tears them down,
+# keeping the test exit status.
+TEST_COMPOSE = docker compose -f docker-compose.test.yml -p fluxor-test
 test-integration:
-	cd backend && POSTGRES_URL="$(DB_URL)" REDIS_ADDR="$(REDIS)" \
-	  go test -race -count=1 -tags integration ./...
+	@status=0; \
+	$(TEST_COMPOSE) up -d --wait && \
+	  (cd backend && \
+	    POSTGRES_URL="postgres://workflow:workflow@127.0.0.1:55432/workflow_test?sslmode=disable" \
+	    REDIS_ADDR=127.0.0.1:56379 FLUXOR_IT=1 \
+	    go test -race -count=1 -tags integration ./...) || status=$$?; \
+	$(TEST_COMPOSE) down -v; \
+	exit $$status
 
 # ── Linting ──────────────────────────────────────────────
 lint:

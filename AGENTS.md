@@ -23,7 +23,7 @@ the PR, labelled as an assumption.
 
 ## Verify before pushing
 - Backend: `cd backend && gofmt -l . && go vet ./... && golangci-lint run ./... && go test -race ./...`
-- Backend integration (needs Postgres and Redis, e.g. `docker compose up -d postgres redis`): `go test -race -tags integration ./...`. Plain `go test ./...` skips these without a warning.
+- Backend integration (self-contained; needs Docker): `make test-integration`. Plain `go test ./...` skips these without a warning.
 - Frontend: `cd frontend && npm run lint && npm run type-check && npm run test:unit`
 
 ## UI tests
