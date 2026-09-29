@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: "ci-${{ github.ref }}"
-  cancel-in-progress: true
+  # Don't cancel runs on main—they publish images and must complete.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   REGISTRY: ghcr.io
