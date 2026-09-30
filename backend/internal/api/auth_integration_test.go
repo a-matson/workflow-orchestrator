@@ -3,13 +3,17 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/api"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -71,6 +75,7 @@ func TestAPI_RequiresAuth(t *testing.T) {
 		{"no key on ws", http.MethodGet, "/ws", "", http.StatusUnauthorized},
 		{"no key on unknown route", http.MethodGet, "/api/nope", "", http.StatusUnauthorized},
 		{"viewer reads", http.MethodGet, "/api/workflows", viewer, http.StatusOK},
+		{"viewer on unknown route", http.MethodGet, "/api/nope", viewer, http.StatusNotFound},
 		{"viewer triggers", http.MethodPost, trigger, viewer, http.StatusForbidden},
 		{"operator triggers", http.MethodPost, trigger, operator, http.StatusAccepted},
 		{"health is public", http.MethodGet, "/api/health", "", http.StatusOK},
@@ -93,5 +98,58 @@ func TestAPI_RequiresAuth(t *testing.T) {
 				t.Errorf("%s: body = %s", tc.name, rr.Body)
 			}
 		}
+	}
+
+	// Key management is admin-only, and a key it issues works at once.
+	if rr := call(http.MethodGet, "/api/keys", operator); rr.Code != http.StatusForbidden {
+		t.Errorf("operator GET /api/keys = %d, want 403", rr.Code)
+	}
+	admin := key("admin", "admin")
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/keys", strings.NewReader(`{"name":"new","role":"viewer"}`))
+	req.Host = "localhost"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+admin)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	var created struct {
+		Key  string `json:"key"`
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil || rr.Code != http.StatusCreated || created.Role != "viewer" {
+		t.Fatalf("admin POST /api/keys = %d %s (%v)", rr.Code, rr.Body, err)
+	}
+	if rr := call(http.MethodGet, "/api/workflows", created.Key); rr.Code != http.StatusOK {
+		t.Errorf("issued key: GET /api/workflows = %d, want 200", rr.Code)
+	}
+	if rr := call(http.MethodGet, "/api/keys", admin); rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "hash") {
+		t.Errorf("admin GET /api/keys = %d %s, want 200 without hashes", rr.Code, rr.Body)
+	}
+}
+
+func TestAPI_AuthLogsKeyNotSecret(t *testing.T) {
+	store, redis := testutil.Env(t)
+	ctx := context.Background()
+	srv := api.NewHandler(store, redis, nil, api.NewHub(), nil).Server(nil)
+	plain, k, err := store.CreateAPIKey(ctx, "logged", "viewer")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	var buf bytes.Buffer
+	prev := log.Logger
+	log.Logger = zerolog.New(&buf)
+	t.Cleanup(func() { log.Logger = prev })
+
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/workflows", nil)
+	req.Host = "localhost"
+	req.Header.Set("Authorization", "Bearer "+plain)
+	srv.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, `"api_key_id":"`+k.ID+`"`) || !strings.Contains(out, `"key_name":"logged"`) {
+		t.Errorf("access log lacks the key id/name:\n%s", out)
+	}
+	if strings.Contains(out, plain) {
+		t.Errorf("access log contains the plaintext key:\n%s", out)
 	}
 }

@@ -25,7 +25,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 
 ## Security status
 
-- The API and WebSocket are currently unauthenticated.
+- The API and WebSocket require an API key (see [Authentication](#authentication)); the UI has no login yet, so it cannot reach the API.
 - The backend mounts the Docker socket, which is host-root equivalent.
 - `docker-compose.yml` currently publishes every port on all interfaces (0.0.0.0).
 - Bind every port to 127.0.0.1 and never expose the stack to a network.
@@ -157,6 +157,7 @@ npm run format
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `FLUXOR_EGRESS_ALLOW` | _(empty)_ | Comma-separated CIDRs (`10.20.0.0/16`) and exact `host:port` entries (`geo-service.internal:80`) that `http_request`, notification and `database_query` tasks may reach despite the egress guard |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
+| `FLUXOR_BOOTSTRAP_ADMIN_KEY` | _(empty)_ | Admin API key installed at startup, if set (see [Authentication](#authentication)) |
 | `LOG_FORMAT` | `json` | `json` (one object per line, with `request_id`) or `console` (pretty, local dev) |
 
 Deployments on a real hostname must list their public origin in `FLUXOR_ALLOWED_ORIGINS`; likewise, reaching the backend through a LAN IP or hostname requires listing that origin, or requests are rejected with 421.
@@ -169,7 +170,7 @@ On an IPv6-only host behind NAT64, a network-specific NAT64 prefix (RFC 6052) or
 
 ## REST API
 
-Example: `curl -X POST http://localhost:8080/api/workflows -H 'Content-Type: application/json' -d @examples/etl-pipeline.json`
+Example: `curl -X POST http://localhost:8080/api/workflows -H "Authorization: Bearer $FLUXOR_API_KEY" -H 'Content-Type: application/json' -d @examples/etl-pipeline.json`
 
 ```
 POST   /api/workflows                  Create workflow definition
@@ -189,7 +190,37 @@ GET    /api/metrics                    Platform metrics
 GET    /api/health                     Liveness (process up, no dependency checks)
 GET    /api/ready                      Readiness (Postgres, Redis, MinIO; 503 if any is down)
 GET    /ws                             WebSocket (real-time events)
+GET    /api/keys                       List API keys (admin)
+POST   /api/keys                       Create an API key: {"name","role"} (admin)
+DELETE /api/keys/{id}                  Revoke an API key (admin)
 ```
+
+---
+
+## Authentication
+
+Every endpoint except `GET /api/health` and `GET /api/ready` requires an API key, sent as
+`Authorization: Bearer flx_…`. That includes the `/ws` upgrade request. A missing, unknown or
+revoked key gets `401`; a key whose role is too low gets `403`.
+
+| Role | May |
+|------|-----|
+| `viewer` | every `GET`, including `/ws` |
+| `operator` | viewer, plus create/update workflows, trigger, cancel and retry executions |
+| `admin` | operator, plus manage API keys |
+
+Create the first key with the backend binary (it reads `POSTGRES_URL`). The key is printed once;
+only its SHA-256 is stored.
+
+```bash
+docker compose exec backend ./workflow-server apikey create --name me --role admin
+docker compose exec backend ./workflow-server apikey list
+docker compose exec backend ./workflow-server apikey revoke <id>
+```
+
+Alternatively, set `FLUXOR_BOOTSTRAP_ADMIN_KEY` in `.env` to a key you generated
+(`echo "flx_$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"`); the backend
+installs it as an admin key at startup. Revoking it is permanent, even if it stays in `.env`.
 
 ---
 

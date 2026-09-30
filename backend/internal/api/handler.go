@@ -70,6 +70,11 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/tasks/{id}/artifacts": h.ListTaskArtifacts,
 		"GET /api/artifacts/url":        h.GetArtifactURL,
 
+		// API keys
+		"GET /api/keys":         h.ListAPIKeys,
+		"POST /api/keys":        h.CreateAPIKey,
+		"DELETE /api/keys/{id}": h.RevokeAPIKey,
+
 		"GET /ws": func(w http.ResponseWriter, r *http.Request) { h.hub.ServeWS(w, r) },
 	}
 }

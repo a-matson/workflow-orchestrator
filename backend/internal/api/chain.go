@@ -15,13 +15,17 @@ func ChainMiddleware(h http.Handler, middlewares ...func(http.Handler) http.Hand
 }
 
 // Server returns the routes behind the production middleware chain.
+// Authentication runs after the rate limiter so a flood of bad keys is
+// throttled before it reaches Postgres.
 func (h *Handler) Server(allowedOrigins []string) http.Handler {
+	mux := h.Routes()
 	return ChainMiddleware(
-		h.Routes(),
+		mux,
 		RequestIDMiddleware,
 		RecoveryMiddleware,
 		LoggingMiddleware,
 		OriginPolicy(allowedOrigins),
 		NewRateLimiter(200, time.Minute).Middleware,
+		NewAuthenticator(h.store).Middleware(mux),
 	)
 }
