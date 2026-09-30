@@ -26,11 +26,6 @@ linters:
 
     exhaustive:
       default-signifies-exhaustive: true
-      # TaskStatusCancelled is not written by any code path yet, and the
-      # state-transitions refactor must not touch existing switches
-      # (orchestrator/recovery.go). Remove this once the cancel path moves
-      # onto Store.TransitionTask and those switches handle it.
-      ignore-enum-members: "models\\.TaskStatusCancelled$"
 
   exclusions:
     rules:

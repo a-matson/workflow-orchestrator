@@ -250,25 +250,22 @@ func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	exec, err := h.store.GetWorkflowExecution(r.Context(), id)
-	if err != nil {
+	// Read first only to tell a missing execution from a final one; the
+	// transition's conflict covers both.
+	if _, err := h.store.GetWorkflowExecution(r.Context(), id); err != nil {
 		writeError(w, r, http.StatusNotFound, "execution not found", err)
 		return
 	}
-	if exec.Status != models.WorkflowStatusRunning && exec.Status != models.WorkflowStatusPending {
+	exec, err := h.orchestrator.CancelExecution(r.Context(), id)
+	if errors.Is(err, persistence.ErrConflict) {
 		writeError(w, r, http.StatusConflict, "execution is not cancellable", err)
 		return
 	}
-	now := time.Now()
-	exec.Status = models.WorkflowStatusCancelled
-	exec.CompletedAt = &now
-	exec.UpdatedAt = now
-	if err := h.store.UpdateWorkflowExecution(r.Context(), exec); err != nil {
+	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "failed to cancel execution", err)
 		return
 	}
-	h.hub.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowFailed, Payload: exec})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": id})
+	writeJSON(w, http.StatusOK, exec)
 }
 
 func (h *Handler) RetryExecution(w http.ResponseWriter, r *http.Request) {

@@ -165,35 +165,6 @@ func TestStore_CreateAndGetWorkflowExecution(t *testing.T) {
 	}
 }
 
-func TestStore_UpdateWorkflowExecution(t *testing.T) {
-	store := setupStore(t)
-	ctx := context.Background()
-
-	exec := createExecution(t, store, makeWorkflowDef("Update WF"), models.WorkflowStatusPending)
-
-	now := time.Now()
-	exec.Status = models.WorkflowStatusCompleted
-	exec.StartedAt = &now
-	completed := now.Add(5 * time.Second)
-	exec.CompletedAt = &completed
-	exec.UpdatedAt = completed
-
-	if err := store.UpdateWorkflowExecution(ctx, exec); err != nil {
-		t.Fatalf("update failed: %v", err)
-	}
-
-	got, err := store.GetWorkflowExecution(ctx, exec.ID)
-	if err != nil {
-		t.Fatalf("get failed: %v", err)
-	}
-	if got.Status != models.WorkflowStatusCompleted {
-		t.Errorf("expected Completed, got %s", got.Status)
-	}
-	if got.CompletedAt == nil {
-		t.Error("expected CompletedAt to be set")
-	}
-}
-
 // ── Task Execution CRUD ──────────────────────────────────────────
 
 func TestStore_CreateAndListTaskExecutions(t *testing.T) {

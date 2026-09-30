@@ -214,6 +214,7 @@ const (
 	WSEventWorkflowStarted   = "workflow.started"
 	WSEventWorkflowCompleted = "workflow.completed"
 	WSEventWorkflowFailed    = "workflow.failed"
+	WSEventWorkflowCancelled = "workflow.cancelled"
 	WSEventTaskQueued        = "task.queued"
 	WSEventTaskStarted       = "task.started"
 	WSEventTaskCompleted     = "task.completed"
