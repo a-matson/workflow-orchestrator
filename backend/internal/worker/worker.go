@@ -114,7 +114,7 @@ func NewPool(
 	return &Pool{workers: workers, redis: redis, running: running}, nil
 }
 
-func (p *Pool) Start(ctx context.Context) {
+func (p *Pool) Start(ctx context.Context, grace time.Duration) {
 	var wg sync.WaitGroup
 	for _, w := range p.workers {
 		wg.Add(1)
