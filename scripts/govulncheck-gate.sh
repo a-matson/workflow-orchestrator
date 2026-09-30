@@ -18,7 +18,7 @@ stale=$(comm -13 <(echo "$found") <(echo "$allowed") | grep -v '^$' || true)
 # An exception is a decision with a deadline; past it the gate fails until someone re-decides.
 today=$(date -u +%F)
 expired=$(grep -oE '^GO-[0-9]+-[0-9]+.*revisit-by [0-9]{4}-[0-9]{2}-[0-9]{2}' "$allow_file" |
-  awk -v t="$today" '{d=$NF} d < t {print $1" (revisit-by "d")"}')
+  awk -v t="$today" '{d=$NF} d < t {print $1" (revisit-by "d")"}' || true)
 
 rc=0
 if [ -n "$expired" ]; then
