@@ -105,11 +105,14 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache: false
-      - name: gosec (report only)
+      - name: gosec
         working-directory: backend
-        # Non-blocking on purpose; plan row S13 makes it a gate once findings are triaged.
-        run: go run "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" -no-fail -fmt sarif -out gosec.sarif ./...
-      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        # A gate: any finding fails the job. Excuse a false positive in place with
+        # `#nosec Gxxx -- reason`, so the reason sits next to the code.
+        run: go run "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" -fmt sarif -out gosec.sarif ./...
+      # Uploaded even when the gate fails, so the findings show in code scanning.
+      - if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: backend/gosec.sarif
           category: gosec
