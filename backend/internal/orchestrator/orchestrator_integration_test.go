@@ -638,6 +638,34 @@ func TestResultForUnloadedExecutionIsApplied(t *testing.T) {
 	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
 }
 
+// A cancel that commits after a result's miss-load, while the execution is
+// not yet registered, must not leave the loaded context active for good.
+func TestExecutionCancelledDuringLoadIsNotLeftActive(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, chainDef())
+	msgA := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+
+	unloaded := orchestrator.NewOrchestrator(store, redis, rec)
+	var cancelErr error
+	t.Cleanup(orchestrator.SetBeforeRegister(func() { _, cancelErr = unloaded.CancelExecution(ctx, exec.ID) }))
+	if err := unloaded.ProcessResult(ctx, testutil.Ok(msgA)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	if cancelErr != nil {
+		t.Fatalf("CancelExecution: %v", cancelErr)
+	}
+	if n := unloaded.GetMetrics()["active_workflows"]; n != 0 {
+		t.Errorf("active workflows = %d, want 0", n)
+	}
+	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusCancelled {
+		t.Errorf("task a = %s, want %s", got, models.TaskStatusCancelled)
+	}
+}
+
 // recoverAfterCrash starts a one-task workflow whose task was running on a
 // worker that the restart killed, recovers it on a new orchestrator, and
 // returns that orchestrator with the killed worker's message and the re-sent one.
