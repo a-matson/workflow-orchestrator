@@ -51,7 +51,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 │  ┌──────────────▼─────┐    ┌────────────────▼────────────────────┐     │
 │  │  PostgreSQL 16      │    │  Redis 7 Broker                    │     │
 │  │  definitions        │    │  task queue   (LIST BLPOP)         │     │
-│  │  executions/tasks   │    │  retry ZSet   (scored by time)     │     │
+│  │  executions/tasks   │    │  idempotency  (SET EX)             │     │
 │  │  artifacts (JSONB)  │    │  dead_letter  (LIST)               │     │
 │  └─────────────────────┘    │  locks        (SET NX EX)          │     │
 │                              └──────────────┬────────────────────┘     │
@@ -211,6 +211,7 @@ make migrate
 | Exactly-once processing | Redis `SET NX EX` idempotency key per `(exec,task,retry)` |
 | Exponential backoff | `delay = initial × multiplier^n`, capped at `max_delay` |
 | Jitter | ±25% randomisation — prevents thundering herd |
+| Retry scheduling | A retry waits in its task row (`retrying`, `next_retry_at`); a 5s poller dispatches it once due |
 | Dead-letter | After `max_retries`, task → `workflow:tasks:dead_letter` |
 | Replay | `POST /api/executions/:id/retry` resets and re-runs |
 | Concurrency control | Per-workflow Go channel semaphore (`max_parallel`) |
