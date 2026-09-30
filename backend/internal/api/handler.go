@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
@@ -261,11 +262,18 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// Read first only to tell a missing execution from a final one; the
 	// transition's conflict covers both.
-	if _, err := h.store.GetWorkflowExecution(r.Context(), id); err != nil {
+	if _, err := h.store.GetWorkflowExecution(r.Context(), id); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, r, http.StatusNotFound, "execution not found", err)
 		return
+	} else if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load execution", err)
+		return
 	}
-	exec, err := h.orchestrator.CancelExecution(r.Context(), id)
+	// Detached so a client hanging up cannot abort the cancel after its
+	// transaction commits, and skip the cache update and event.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+	defer cancel()
+	exec, err := h.orchestrator.CancelExecution(ctx, id)
 	if errors.Is(err, persistence.ErrConflict) {
 		writeError(w, r, http.StatusConflict, "execution is not cancellable", err)
 		return
