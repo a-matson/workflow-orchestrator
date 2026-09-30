@@ -75,217 +75,227 @@
 					</div>
 				</Panel>
 			</VueFlow>
-		</div>
 
-		<!-- Right config panel -->
-		<Transition name="slide-right">
-			<div v-if="selectedNode" class="config-panel" data-testid="config-panel">
-				<div class="config-header">
-					<span class="config-title">Configure Task</span>
-					<button class="config-close" @click="selectedNode = null">✕</button>
-				</div>
-				<div class="config-body">
-					<!-- Basic fields -->
-					<div class="field">
-						<label>Task Name</label>
-						<input v-model="selectedNode.data.taskDef.name" class="cf-input" />
+			<!-- Right config panel -->
+			<Transition name="slide-right">
+				<div v-if="selectedNode" class="config-panel" data-testid="config-panel">
+					<div class="config-header">
+						<span class="config-title">Configure Task</span>
+						<button class="config-close" @click="selectedNode = null">✕</button>
 					</div>
-					<div class="field">
-						<label>Type</label>
-						<select v-model="selectedNode.data.taskDef.type" class="cf-input">
-							<option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">
-								{{ t.label }}
-							</option>
-						</select>
-					</div>
-
-					<!-- Per-type configuration -->
-					<div class="section-label">Task Config</div>
-					<TaskConfigFields
-						:type="selectedNode.data.taskDef.type"
-						:config="selectedNode.data.taskDef.config"
-						@update="updateConfig"
-					/>
-
-					<!-- Retry policy -->
-					<div class="section-label">Retry Policy</div>
-					<div class="field">
-						<label>Max Retries</label>
-						<input
-							type="number"
-							min="0"
-							max="20"
-							class="cf-input"
-							:value="selectedNode.data.taskDef.retry_policy?.max_retries ?? 3"
-							@change="setRetryField('max_retries', +($event.target as HTMLInputElement).value)"
-						/>
-					</div>
-					<div class="field">
-						<label>Initial Delay (s)</label>
-						<input
-							type="number"
-							min="0"
-							step="0.5"
-							class="cf-input"
-							data-testid="retry-initial-delay"
-							:value="(selectedNode.data.taskDef.retry_policy?.initial_delay ?? 2e9) / 1e9"
-							@change="
-								setRetryField(
-									'initial_delay',
-									secondsToNs(+($event.target as HTMLInputElement).value),
-								)
-							"
-						/>
-					</div>
-					<div class="field">
-						<label>Backoff Multiplier</label>
-						<input
-							type="number"
-							min="1"
-							max="10"
-							step="0.5"
-							class="cf-input"
-							:value="selectedNode.data.taskDef.retry_policy?.backoff_multiplier ?? 2"
-							@change="
-								setRetryField('backoff_multiplier', +($event.target as HTMLInputElement).value)
-							"
-						/>
-					</div>
-					<div class="field">
-						<label>Timeout (s)</label>
-						<input
-							type="number"
-							min="0"
-							class="cf-input"
-							data-testid="task-timeout"
-							:value="(selectedNode.data.taskDef.timeout ?? 300e9) / 1e9"
-							@change="
-								selectedNode!.data.taskDef.timeout = secondsToNs(
-									+($event.target as HTMLInputElement).value,
-								)
-							"
-						/>
-					</div>
-
-					<!-- Dependencies -->
-					<div class="section-label">Dependencies</div>
-					<div class="deps-list">
-						<span v-for="dep in selectedNode.data.taskDef.dependencies" :key="dep" class="dep-tag">
-							{{ nodeLabel(dep) }}
-							<button @click="removeDep(dep)">×</button>
-						</span>
-						<span v-if="!selectedNode.data.taskDef.dependencies.length" class="no-deps">
-							No dependencies — this is a root task
-						</span>
-					</div>
-					<p class="deps-hint">Connect nodes on the canvas to add dependencies</p>
-
-					<!-- ── Container Isolation ────────────────────────────────── -->
-					<div class="section-label">
-						Container Isolation
-						<label class="toggle-label">
-							<input
-								type="checkbox"
-								:checked="!!selectedNode.data.taskDef.container"
-								@change="toggleContainer"
-							/>
-							Enabled
-						</label>
-					</div>
-					<template v-if="selectedNode.data.taskDef.container">
+					<div class="config-body">
+						<!-- Basic fields -->
 						<div class="field">
-							<label>Docker Image</label>
+							<label>Task Name</label>
+							<input v-model="selectedNode.data.taskDef.name" class="cf-input" />
+						</div>
+						<div class="field">
+							<label>Type</label>
+							<select v-model="selectedNode.data.taskDef.type" class="cf-input">
+								<option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">
+									{{ t.label }}
+								</option>
+							</select>
+						</div>
+
+						<!-- Per-type configuration -->
+						<div class="section-label">Task Config</div>
+						<TaskConfigFields
+							:type="selectedNode.data.taskDef.type"
+							:config="selectedNode.data.taskDef.config"
+							@update="updateConfig"
+						/>
+
+						<!-- Retry policy -->
+						<div class="section-label">Retry Policy</div>
+						<div class="field">
+							<label>Max Retries</label>
 							<input
-								class="cf-input cf-code"
-								:value="selectedNode.data.taskDef.container.image ?? 'alpine:3.22'"
-								placeholder="python:3.12-slim"
-								@input="patchContainer('image', ($event.target as HTMLInputElement).value)"
+								type="number"
+								min="0"
+								max="20"
+								class="cf-input"
+								:value="selectedNode.data.taskDef.retry_policy?.max_retries ?? 3"
+								@change="setRetryField('max_retries', +($event.target as HTMLInputElement).value)"
 							/>
 						</div>
-						<div class="field-row">
-							<div class="field">
-								<label>Memory (MB)</label>
-								<input
-									type="number"
-									min="64"
-									max="16384"
-									class="cf-input"
-									:value="selectedNode.data.taskDef.container.memory_mb ?? 256"
-									@change="patchContainer('memory_mb', +($event.target as HTMLInputElement).value)"
-								/>
-							</div>
-							<div class="field">
-								<label>CPU (milli)</label>
-								<input
-									type="number"
-									min="50"
-									max="8000"
-									class="cf-input"
-									:value="selectedNode.data.taskDef.container.cpu_millis ?? 500"
-									@change="patchContainer('cpu_millis', +($event.target as HTMLInputElement).value)"
-								/>
-							</div>
+						<div class="field">
+							<label>Initial Delay (s)</label>
+							<input
+								type="number"
+								min="0"
+								step="0.5"
+								class="cf-input"
+								data-testid="retry-initial-delay"
+								:value="(selectedNode.data.taskDef.retry_policy?.initial_delay ?? 2e9) / 1e9"
+								@change="
+									setRetryField(
+										'initial_delay',
+										secondsToNs(+($event.target as HTMLInputElement).value),
+									)
+								"
+							/>
 						</div>
-					</template>
+						<div class="field">
+							<label>Backoff Multiplier</label>
+							<input
+								type="number"
+								min="1"
+								max="10"
+								step="0.5"
+								class="cf-input"
+								:value="selectedNode.data.taskDef.retry_policy?.backoff_multiplier ?? 2"
+								@change="
+									setRetryField('backoff_multiplier', +($event.target as HTMLInputElement).value)
+								"
+							/>
+						</div>
+						<div class="field">
+							<label>Timeout (s)</label>
+							<input
+								type="number"
+								min="0"
+								class="cf-input"
+								data-testid="task-timeout"
+								:value="(selectedNode.data.taskDef.timeout ?? 300e9) / 1e9"
+								@change="
+									selectedNode!.data.taskDef.timeout = secondsToNs(
+										+($event.target as HTMLInputElement).value,
+									)
+								"
+							/>
+						</div>
 
-					<!-- ── Artifacts ──────────────────────────────────────────── -->
-					<div class="section-label">Artifact Outputs</div>
-					<div class="deps-list">
-						<span
-							v-for="(art, i) in selectedNode.data.taskDef.artifacts_out ?? []"
-							:key="i"
-							class="dep-tag"
-						>
-							{{ art.path }}
-							<button @click="removeArtifactOut(i)">×</button>
-						</span>
-					</div>
-					<div class="artifact-add-row">
-						<input
-							v-model="newArtifactOutPath"
-							class="cf-input"
-							placeholder="output.json"
-							style="flex: 1"
-							@keydown.enter.prevent="addArtifactOut"
-						/>
-						<button class="btn-add" :disabled="!newArtifactOutPath" @click="addArtifactOut">
-							+
-						</button>
-					</div>
-					<p class="deps-hint">
-						Files written to /workspace that will be uploaded to MinIO after execution
-					</p>
+						<!-- Dependencies -->
+						<div class="section-label">Dependencies</div>
+						<div class="deps-list">
+							<span
+								v-for="dep in selectedNode.data.taskDef.dependencies"
+								:key="dep"
+								class="dep-tag"
+							>
+								{{ nodeLabel(dep) }}
+								<button @click="removeDep(dep)">×</button>
+							</span>
+							<span v-if="!selectedNode.data.taskDef.dependencies.length" class="no-deps">
+								No dependencies — this is a root task
+							</span>
+						</div>
+						<p class="deps-hint">Connect nodes on the canvas to add dependencies</p>
 
-					<div class="section-label">Artifact Inputs</div>
-					<div class="deps-list">
-						<span
-							v-for="(art, i) in selectedNode.data.taskDef.artifacts_in ?? []"
-							:key="i"
-							class="dep-tag dep-tag--in"
-						>
-							{{ art.path }}
-							<button @click="removeArtifactIn(i)">×</button>
-						</span>
-					</div>
-					<div class="artifact-add-row">
-						<input
-							v-model="newArtifactInPath"
-							class="cf-input"
-							placeholder="input.json"
-							style="flex: 1"
-							@keydown.enter.prevent="addArtifactIn"
-						/>
-						<button class="btn-add" :disabled="!newArtifactInPath" @click="addArtifactIn">+</button>
-					</div>
-					<p class="deps-hint">
-						Files produced by dependency tasks that will be injected into /workspace before
-						execution
-					</p>
+						<!-- ── Container Isolation ────────────────────────────────── -->
+						<div class="section-label">
+							Container Isolation
+							<label class="toggle-label">
+								<input
+									type="checkbox"
+									:checked="!!selectedNode.data.taskDef.container"
+									@change="toggleContainer"
+								/>
+								Enabled
+							</label>
+						</div>
+						<template v-if="selectedNode.data.taskDef.container">
+							<div class="field">
+								<label>Docker Image</label>
+								<input
+									class="cf-input cf-code"
+									:value="selectedNode.data.taskDef.container.image ?? 'alpine:3.22'"
+									placeholder="python:3.12-slim"
+									@input="patchContainer('image', ($event.target as HTMLInputElement).value)"
+								/>
+							</div>
+							<div class="field-row">
+								<div class="field">
+									<label>Memory (MB)</label>
+									<input
+										type="number"
+										min="64"
+										max="16384"
+										class="cf-input"
+										:value="selectedNode.data.taskDef.container.memory_mb ?? 256"
+										@change="
+											patchContainer('memory_mb', +($event.target as HTMLInputElement).value)
+										"
+									/>
+								</div>
+								<div class="field">
+									<label>CPU (milli)</label>
+									<input
+										type="number"
+										min="50"
+										max="8000"
+										class="cf-input"
+										:value="selectedNode.data.taskDef.container.cpu_millis ?? 500"
+										@change="
+											patchContainer('cpu_millis', +($event.target as HTMLInputElement).value)
+										"
+									/>
+								</div>
+							</div>
+						</template>
 
-					<button class="btn-delete" @click="deleteSelectedNode">Delete Task</button>
+						<!-- ── Artifacts ──────────────────────────────────────────── -->
+						<div class="section-label">Artifact Outputs</div>
+						<div class="deps-list">
+							<span
+								v-for="(art, i) in selectedNode.data.taskDef.artifacts_out ?? []"
+								:key="i"
+								class="dep-tag"
+							>
+								{{ art.path }}
+								<button @click="removeArtifactOut(i)">×</button>
+							</span>
+						</div>
+						<div class="artifact-add-row">
+							<input
+								v-model="newArtifactOutPath"
+								class="cf-input"
+								placeholder="output.json"
+								style="flex: 1"
+								@keydown.enter.prevent="addArtifactOut"
+							/>
+							<button class="btn-add" :disabled="!newArtifactOutPath" @click="addArtifactOut">
+								+
+							</button>
+						</div>
+						<p class="deps-hint">
+							Files written to /workspace that will be uploaded to MinIO after execution
+						</p>
+
+						<div class="section-label">Artifact Inputs</div>
+						<div class="deps-list">
+							<span
+								v-for="(art, i) in selectedNode.data.taskDef.artifacts_in ?? []"
+								:key="i"
+								class="dep-tag dep-tag--in"
+							>
+								{{ art.path }}
+								<button @click="removeArtifactIn(i)">×</button>
+							</span>
+						</div>
+						<div class="artifact-add-row">
+							<input
+								v-model="newArtifactInPath"
+								class="cf-input"
+								placeholder="input.json"
+								style="flex: 1"
+								@keydown.enter.prevent="addArtifactIn"
+							/>
+							<button class="btn-add" :disabled="!newArtifactInPath" @click="addArtifactIn">
+								+
+							</button>
+						</div>
+						<p class="deps-hint">
+							Files produced by dependency tasks that will be injected into /workspace before
+							execution
+						</p>
+
+						<button class="btn-delete" @click="deleteSelectedNode">Delete Task</button>
+					</div>
 				</div>
-			</div>
-		</Transition>
+			</Transition>
+		</div>
 	</div>
 </template>
 
@@ -896,8 +906,10 @@
 	}
 
 	/* Canvas */
+	/* Positioning context for the config panel, so it starts below the toolbar. */
 	.flow-wrap {
 		flex: 1;
+		position: relative;
 		overflow: hidden;
 	}
 	.dark-flow {
