@@ -31,7 +31,9 @@ type Orchestrator struct {
 	broadcaster EventBroadcaster
 	canceller   TaskCanceller
 
-	// In-memory state for active executions (keyed by workflow exec ID)
+	// In-memory state for active executions (keyed by workflow exec ID).
+	// Lock order: activeMu and an ExecutionContext's mu are never held
+	// together, in either order; keep it so, as dispatch holds ec.mu for long.
 	activeMu sync.RWMutex
 	active   map[string]*ExecutionContext
 
@@ -759,21 +761,45 @@ func (o *Orchestrator) activeExecution(ctx context.Context, id string) (*Executi
 	if err != nil {
 		return nil, fmt.Errorf("loading execution %s: %w", id, err)
 	}
-	// Open means a cancel could still close it: the same set recovery loads.
-	if !slices.Contains(models.ExecFrom(models.WorkflowStatusCancelled), loaded.Execution.Status) {
+	if !isOpen(loaded.Execution.Status) {
 		return nil, nil
 	}
 
+	beforeRegister()
 	o.activeMu.Lock()
-	defer o.activeMu.Unlock()
 	// Another result for the same execution may have registered it meanwhile;
 	// two contexts would each dispatch from their own copy of the rows.
 	if execCtx, ok := o.active[id]; ok {
+		o.activeMu.Unlock()
 		return execCtx, nil
 	}
 	o.active[id] = loaded
+	o.activeMu.Unlock()
+
+	// A cancel that committed after the load but looked the execution up
+	// before it was registered retired nothing, and the context would stay
+	// active for good. Re-read after registering: a cancel committed later
+	// finds the context in o.active and retires it itself.
+	row, err := o.store.GetWorkflowExecution(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("re-reading loaded execution %s: %w", id, err)
+	}
+	if !isOpen(row.Status) {
+		o.finish(loaded, row, nil)
+		return nil, nil
+	}
 	log.Info().Str("exec_id", id).Msg("execution loaded from the store for a result")
 	return loaded, nil
+}
+
+// beforeRegister runs between a miss-load and its registration. It is a test
+// seam: tests set it to finish the execution inside that window.
+var beforeRegister = func() {}
+
+// isOpen reports whether an execution can still change: a cancel could close
+// it. It is the set of statuses recovery loads.
+func isOpen(s models.WorkflowStatus) bool {
+	return slices.Contains(models.ExecFrom(models.WorkflowStatusCancelled), s)
 }
 
 // resolveArtifactsIn matches each ArtifactRef spec against the ResolvedArtifacts
