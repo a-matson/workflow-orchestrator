@@ -557,38 +557,62 @@ func TestRecoveryDoesNotExceedMaxParallel(t *testing.T) {
 	testutil.Never(t, 300*time.Millisecond, func() bool { return openTasks(t, store, exec.ID) > maxParallel })
 }
 
-// REL-8: a restart kills every in-process worker, so a task that was running
-// must be sent again, not left waiting for a message that no longer exists.
-func TestRecoveryRedeliversRunningTask(t *testing.T) {
-	orch, store, redis, rec := setupOrchestrator(t)
-	ctx := context.Background()
-	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
-		ID: uuid.NewString(), Name: "Redelivery", MaxParallel: 1,
-		Tasks: independentTasks("a"),
-	})
-	// The drained message is the one the killed worker held.
-	m := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount); err != nil {
-		t.Fatalf("MarkTaskRunning: %v", err)
+// REL-8: a restart kills every in-process worker, so a task left queued or
+// running must be sent again, not left waiting for a message that no longer
+// exists. A message that did survive in Redis only duplicates the re-sent
+// one, and the pickup lets exactly one of them run.
+func TestRecoveryRedeliversOpenTask(t *testing.T) {
+	tests := []struct {
+		name string
+		// held drains the task's message before the restart; pickedUp also
+		// marks it running on the worker the restart kills.
+		held, pickedUp bool
+		wantQueued     int
+	}{
+		{name: "running", held: true, pickedUp: true, wantQueued: 1},
+		{name: "queued, message lost", held: true, wantQueued: 1},
+		{name: "queued, message left in Redis", wantQueued: 2},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orch, store, redis, rec := setupOrchestrator(t)
+			ctx := context.Background()
+			exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+				ID: uuid.NewString(), Name: "Redelivery", MaxParallel: 1,
+				Tasks: independentTasks("a"),
+			})
+			if tt.held {
+				m := testutil.Drain(t, redis, 1)[0]
+				if tt.pickedUp {
+					if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount); err != nil {
+						t.Fatalf("MarkTaskRunning: %v", err)
+					}
+				}
+			}
 
-	restarted := orchestrator.NewOrchestrator(store, redis, rec)
-	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
-		t.Fatalf("RecoverInFlightExecutions: %v", err)
-	}
-	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
+			restarted := orchestrator.NewOrchestrator(store, redis, rec)
+			if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+				t.Fatalf("RecoverInFlightExecutions: %v", err)
+			}
+			testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == tt.wantQueued })
 
-	again := testutil.Drain(t, redis, 1)[0]
-	if err := restarted.MarkTaskRunning(ctx, again.TaskExecID, "testutil", again.RetryCount); err != nil {
-		t.Fatalf("MarkTaskRunning after recovery: %v", err)
+			var ran *models.TaskMessage
+			for _, m := range testutil.Drain(t, redis, tt.wantQueued) {
+				err := restarted.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount)
+				switch {
+				case err == nil && ran == nil:
+					ran = m
+				case errors.Is(err, persistence.ErrConflict) && ran != nil:
+				default:
+					t.Fatalf("MarkTaskRunning = %v, want one success and then conflicts", err)
+				}
+			}
+			if err := restarted.ProcessResult(ctx, testutil.Ok(ran)); err != nil {
+				t.Fatalf("ProcessResult: %v", err)
+			}
+			testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+		})
 	}
-	if err := restarted.ProcessResult(ctx, testutil.Ok(again)); err != nil {
-		t.Fatalf("ProcessResult: %v", err)
-	}
-	testutil.Eventually(t, eventWait, func() bool {
-		got, err := store.GetWorkflowExecution(ctx, exec.ID)
-		return err == nil && got.Status == models.WorkflowStatusCompleted
-	})
 }
 
 // recoverAfterCrash starts a one-task workflow whose task was running on a
