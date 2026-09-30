@@ -579,7 +579,7 @@ func TestRecoveryRedeliversRunningTask(t *testing.T) {
 	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
 
 	again := testutil.Drain(t, redis, 1)[0]
-	if err := restarted.MarkTaskRunning(ctx, again.TaskExecID, "worker-new", again.RetryCount); err != nil {
+	if err := restarted.MarkTaskRunning(ctx, again.TaskExecID, "testutil", again.RetryCount); err != nil {
 		t.Fatalf("MarkTaskRunning after recovery: %v", err)
 	}
 	if err := restarted.ProcessResult(ctx, testutil.Ok(again)); err != nil {
@@ -589,4 +589,81 @@ func TestRecoveryRedeliversRunningTask(t *testing.T) {
 		got, err := store.GetWorkflowExecution(ctx, exec.ID)
 		return err == nil && got.Status == models.WorkflowStatusCompleted
 	})
+}
+
+// recoverAfterCrash starts a one-task workflow whose task was running on a
+// worker that the restart killed, recovers it on a new orchestrator, and
+// returns that orchestrator with the killed worker's message and the re-sent one.
+func recoverAfterCrash(t *testing.T) (restarted *orchestrator.Orchestrator, store *persistence.Store, execID string, dead, resent *models.TaskMessage) {
+	t.Helper()
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Crash", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	dead = testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, dead.TaskExecID, "worker-dead", dead.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	restarted = orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+	return restarted, store, exec.ID, dead, testutil.Drain(t, redis, 1)[0]
+}
+
+// deadWorkerResult is the result the killed worker published just before
+// the crash, still waiting in the result queue.
+func deadWorkerResult(m *models.TaskMessage) *models.TaskResult {
+	r := testutil.Ok(m)
+	r.WorkerID = "worker-dead"
+	return r
+}
+
+func execStatus(t *testing.T, store *persistence.Store, execID string) models.WorkflowStatus {
+	t.Helper()
+	got, err := store.GetWorkflowExecution(context.Background(), execID)
+	if err != nil {
+		t.Fatalf("GetWorkflowExecution: %v", err)
+	}
+	return got.Status
+}
+
+// A result from before the restart must not close the attempt that a new
+// worker is running since: dependents would start on the new run's
+// half-written artifacts, and a failure would start a retry beside it.
+func TestPreCrashResultDoesNotCloseRerunningAttempt(t *testing.T) {
+	orch, store, execID, dead, resent := recoverAfterCrash(t)
+	ctx := context.Background()
+	if err := orch.MarkTaskRunning(ctx, resent.TaskExecID, "testutil", resent.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning after recovery: %v", err)
+	}
+
+	if err := orch.ProcessResult(ctx, deadWorkerResult(dead)); err != nil {
+		t.Fatalf("pre-crash result: ProcessResult = %v, want nil", err)
+	}
+	if row := testutil.TaskRow(t, store, execID, "a"); row.Status != models.TaskStatusRunning {
+		t.Fatalf("task after pre-crash result = %s, want running", row.Status)
+	}
+
+	if err := orch.ProcessResult(ctx, testutil.Ok(resent)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, execID) == models.WorkflowStatusCompleted })
+}
+
+// A result from before the restart that arrives while the re-sent attempt is
+// still queued completes the task, and the re-sent message is then dropped.
+func TestPreCrashResultCompletesQueuedAttempt(t *testing.T) {
+	orch, store, execID, dead, resent := recoverAfterCrash(t)
+	ctx := context.Background()
+
+	if err := orch.ProcessResult(ctx, deadWorkerResult(dead)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, execID) == models.WorkflowStatusCompleted })
+	if err := orch.MarkTaskRunning(ctx, resent.TaskExecID, "testutil", resent.RetryCount); !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("pickup of the re-sent message = %v, want ErrConflict", err)
+	}
 }
