@@ -11,6 +11,11 @@ networks:
     ipam:
       config:
         - subnet: ${FLUXOR_INTERNAL_SUBNET:-172.29.250.0/24}
+  # docker-api: backend <-> docker-proxy only. Internal: no route off the host,
+  # and no other service can reach the proxy.
+  docker-api:
+    driver: bridge
+    internal: true
 
 volumes:
   postgres_data:
@@ -82,7 +87,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    networks: [fluxor-internal]
+    networks: [fluxor-internal, docker-api]
     ports:
       - "127.0.0.1:8080:8080"
     environment:
@@ -99,9 +104,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env}
       MINIO_BUCKET:     fluxor-artifacts
       MINIO_USE_SSL:    "false"
-      # Docker-out-of-Docker: mount the host socket so the backend can
-      # spawn isolated task containers on the host Docker daemon.
-      DOCKER_HOST:      unix:///var/run/docker.sock
+      # Task containers run on the host daemon, reached only through the
+      # filtering proxy: the raw socket is root on the host.
+      DOCKER_HOST:      tcp://docker-proxy:2375
       FLUXOR_WORKSPACE_ROOT:   /workspaces
       FLUXOR_WORKSPACE_VOLUME: ${FLUXOR_WORKSPACE_VOLUME:-fluxor-task-workspaces}
       FLUXOR_EGRESS_ALLOW:     ${FLUXOR_EGRESS_ALLOW:-}
@@ -117,12 +122,9 @@ services:
       FLUXOR_RATE_LIMIT_PER_MIN: ${FLUXOR_RATE_LIMIT_PER_MIN:-200}
       FLUXOR_LOGIN_RATE_LIMIT_PER_MIN: ${FLUXOR_LOGIN_RATE_LIMIT_PER_MIN:-10}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
       - task_workspaces:/workspaces
-    # The socket's owning group differs by host: 0 on Docker Desktop, usually
-    # the `docker` group on Linux (`stat -c %g /var/run/docker.sock`).
-    group_add: ["${DOCKER_SOCKET_GID:-0}"]
     depends_on:
+      docker-proxy: {condition: service_healthy}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
       minio: {condition: service_healthy}
@@ -134,6 +136,36 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # Allows only the Docker API calls ContainerExecutor makes (see README, Security).
+  # It narrows the API, it does not make it safe: POST /containers/create can
+  # still bind-mount any host path, so a compromised backend still owns the host.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    restart: unless-stopped
+    networks: [docker-api]
+    environment:
+      # On by default in the image; the executor never calls them.
+      EVENTS: "0"
+      VERSION: "0"
+      # /_ping: API version negotiation for the volume-subpath gate.
+      PING: "1"
+      # create, start, wait, logs, kill, and DELETE for remove.
+      CONTAINERS: "1"
+      # inspect, and POST /images/create for pull.
+      IMAGES: "1"
+      # Every non-GET method; the path rules above still apply.
+      POST: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # The socket's owning group differs by host: 0 on Docker Desktop, usually
+    # the `docker` group on Linux (`stat -c %g /var/run/docker.sock`).
+    group_add: ["${DOCKER_SOCKET_GID:-0}"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2375/_ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   frontend:
     build: {context: ./frontend}

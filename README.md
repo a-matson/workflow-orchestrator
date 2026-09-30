@@ -26,7 +26,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 ## Security status
 
 - The API and WebSocket require an API key (see [Authentication](#authentication)); the UI has no login yet, so it cannot reach the API.
-- The backend mounts the Docker socket, which is host-root equivalent.
+- The backend reaches Docker only through a filtering proxy (see [Docker socket access](#docker-socket-access)). Container creation is still allowed, so a compromised backend can still take the host.
 - `docker-compose.yml` currently publishes every port on all interfaces (0.0.0.0).
 - Bind every port to 127.0.0.1 and never expose the stack to a network.
 
@@ -60,6 +60,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 │  │  Worker Pool                                                     │  │
 │  │  BRPOP → mark running → resolve artifact inputs from MinIO       │  │
 │  │    → spawn isolated Docker container (cap-drop ALL, no-net)      │  │
+│  │      via docker-proxy → host Docker socket                       │  │
 │  │    → execute task command inside /workspace                      │  │
 │  │    → collect stdcopy logs → upload artifact outputs to MinIO     │  │
 │  │    → publish result → orchestrator advances DAG                  │  │
@@ -101,7 +102,29 @@ Task B depends on Task A; artifacts_in: [{path: "output.json"}]
 
 ### Docker socket access
 
-The backend container reaches the host Docker daemon through the mounted socket, and compose adds the container user to the socket's group via `DOCKER_SOCKET_GID` (default `0`, which matches Docker Desktop). On Linux the socket usually belongs to the `docker` group, so export its GID before starting: `export DOCKER_SOCKET_GID=$(stat -c %g /var/run/docker.sock)`.
+The backend does not mount the Docker socket. It sets `DOCKER_HOST=tcp://docker-proxy:2375` and reaches the host daemon through `docker-proxy` ([tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy), HAProxy, pinned by digest), which alone mounts the socket. The proxy sits on the `docker-api` network, shared only with the backend, marked `internal`, and publishes no ports.
+
+The proxy answers 403 to every endpoint outside the calls `ContainerExecutor` makes:
+
+| Endpoint | Executor call | Proxy flag |
+|----------|---------------|------------|
+| `HEAD`/`GET /_ping` | `Ping` (API version negotiation for the volume-subpath gate) | `PING=1` |
+| `GET /images/{name}/json` | `ImageInspect` | `IMAGES=1` |
+| `POST /images/create` | `ImagePull` | `IMAGES=1`, `POST=1` |
+| `POST /containers/create` | `ContainerCreate` | `CONTAINERS=1`, `POST=1` |
+| `POST /containers/{id}/start` | `ContainerStart` | `CONTAINERS=1`, `POST=1` |
+| `POST /containers/{id}/wait` | `ContainerWait` | `CONTAINERS=1`, `POST=1` |
+| `GET /containers/{id}/logs` | `ContainerLogs` | `CONTAINERS=1` |
+| `POST /containers/{id}/kill` | `ContainerKill` | `CONTAINERS=1`, `POST=1` |
+| `DELETE /containers/{id}` | `ContainerRemove` | `CONTAINERS=1`, `POST=1` |
+
+Everything else is off, including `EVENTS` and `VERSION`, which the image enables by default. The flags are coarse: `CONTAINERS=1` opens every `/containers` path (archive, attach, exec creation; running an exec needs `/exec`, which stays off) and `POST=1` opens every non-GET method on the allowed paths.
+
+**Limit:** the proxy narrows the API, it does not make container creation safe. `POST /containers/create` can still request a privileged container or bind-mount any host path, so a compromised backend remains host-root equivalent. Validating the create body is not done yet.
+
+HAProxy closes a response idle for 10 minutes, which cuts `/wait` on a long task; the executor waits again (`waitExit`).
+
+Compose adds the proxy to the socket's group via `DOCKER_SOCKET_GID` (default `0`, which matches Docker Desktop). On Linux the socket usually belongs to the `docker` group, so export its GID before starting: `export DOCKER_SOCKET_GID=$(stat -c %g /var/run/docker.sock)`.
 
 ### Configuring a task for isolation
 
@@ -150,7 +173,7 @@ npm run format
 | `MINIO_ACCESS_KEY` | _(none)_ | MinIO access key (`MINIO_ROOT_USER` in `.env` with compose) |
 | `MINIO_SECRET_KEY` | _(none)_ | MinIO secret key (`MINIO_ROOT_PASSWORD` in `.env` with compose) |
 | `MINIO_BUCKET` | `fluxor-artifacts` | Artifact bucket name |
-| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon socket |
+| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon address (compose sets `tcp://docker-proxy:2375`) |
 | `WORKER_COUNT` | `3` | Number of worker goroutines |
 | `WORKER_CONCURRENCY` | `5` | Tasks per worker |
 | `HTTP_ADDR` | `:8080` | HTTP listen address |
