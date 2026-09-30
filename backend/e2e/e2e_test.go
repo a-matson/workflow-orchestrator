@@ -438,3 +438,17 @@ func TestE2E_TaskRunsAsNonRoot(t *testing.T) {
 		t.Errorf("task ran as %s, want the backend's 10001:10001", got)
 	}
 }
+
+// Tasks that need the network use the http_request and notification types,
+// which go through the egress guard; a shared bridge would let user code reach
+// sibling task containers instead.
+// Only eth* counts: the kernel gives every namespace unattached fallback tunnel
+// devices (tunl0, gre0, ...) that carry no traffic.
+func TestE2E_TaskHasNoNetwork(t *testing.T) {
+	got := strings.Fields(runScriptArtifact(t, "e2e-no-network", "tail -n +3 /proc/net/dev | cut -d: -f1 > /workspace/out.txt"))
+	for _, iface := range got {
+		if strings.HasPrefix(iface, "eth") {
+			t.Errorf("task has network interface %s (all: %v), want only loopback", iface, got)
+		}
+	}
+}
