@@ -66,10 +66,16 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 	if err != nil {
 		return fmt.Errorf("marshaling tags: %w", err)
 	}
+	var retryJSON []byte // nil stores SQL NULL, not a JSON null
+	if def.GlobalRetry != nil {
+		if retryJSON, err = json.Marshal(def.GlobalRetry); err != nil {
+			return fmt.Errorf("marshaling global retry: %w", err)
+		}
+	}
 
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO workflow_definitions (id, name, description, version, tasks, max_parallel, tags, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO workflow_definitions (id, name, description, version, tasks, max_parallel, tags, global_retry, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			description = EXCLUDED.description,
@@ -77,22 +83,23 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 			tasks = EXCLUDED.tasks,
 			max_parallel = EXCLUDED.max_parallel,
 			tags = EXCLUDED.tags,
+			global_retry = EXCLUDED.global_retry,
 			updated_at = EXCLUDED.updated_at
-	`, def.ID, def.Name, def.Description, def.Version, tasksJSON, def.MaxParallel, tagsJSON, def.CreatedAt, def.UpdatedAt)
+	`, def.ID, def.Name, def.Description, def.Version, tasksJSON, def.MaxParallel, tagsJSON, retryJSON, def.CreatedAt, def.UpdatedAt)
 
 	return err
 }
 
 func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.WorkflowDefinition, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, name, description, version, tasks, max_parallel, tags, created_at, updated_at
+		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry, created_at, updated_at
 		FROM workflow_definitions WHERE id = $1
 	`, id)
 
 	def := &models.WorkflowDefinition{}
 	var tasksJSON, tagsJSON []byte
 	err := row.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt)
+		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.CreatedAt, &def.UpdatedAt)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -113,7 +120,7 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 
 func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) ([]*models.WorkflowDefinition, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, description, version, tasks, max_parallel, tags, created_at, updated_at
+		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry, created_at, updated_at
 		FROM workflow_definitions ORDER BY created_at DESC, id
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -127,7 +134,7 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 		def := &models.WorkflowDefinition{}
 		var tasksJSON, tagsJSON []byte
 		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.CreatedAt, &def.UpdatedAt); err != nil {
+			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(tasksJSON, &def.Tasks)

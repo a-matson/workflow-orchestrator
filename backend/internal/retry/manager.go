@@ -17,6 +17,20 @@ var DefaultPolicy = models.RetryPolicy{
 	Jitter:          true,
 }
 
+// EffectivePolicy is the policy a task's failures get: its own, else the
+// workflow's global one, else DefaultPolicy. Everything that counts retries
+// must use it, so the task row's max_retries matches what actually happens.
+func EffectivePolicy(task, global *models.RetryPolicy) *models.RetryPolicy {
+	switch {
+	case task != nil:
+		return task
+	case global != nil:
+		return global
+	default:
+		return &DefaultPolicy
+	}
+}
+
 // Manager handles retry scheduling with exponential backoff
 type Manager struct{}
 
@@ -38,11 +52,13 @@ func (m *Manager) NextRetryDelay(retryCount int, policy *models.RetryPolicy) tim
 		policy = &DefaultPolicy
 	}
 
-	// delay = initialDelay * multiplier^retryCount
-	delay := float64(policy.InitialDelay) * math.Pow(policy.BackoffMultiple, float64(retryCount))
+	// An unset multiplier (0 from JSON) would make every retry after the
+	// first immediate; below 1 the delay would shrink. Both mean constant.
+	multiple := max(policy.BackoffMultiple, 1)
+	delay := float64(policy.InitialDelay) * math.Pow(multiple, float64(retryCount))
 
-	// Cap at max delay
-	if delay > float64(policy.MaxDelay) {
+	// An unset max_delay means no cap, not a cap of 0.
+	if policy.MaxDelay > 0 && delay > float64(policy.MaxDelay) {
 		delay = float64(policy.MaxDelay)
 	}
 
