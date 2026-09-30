@@ -50,15 +50,15 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 │                 │                            │                         │
 │  ┌──────────────▼─────┐    ┌────────────────▼────────────────────┐     │
 │  │  PostgreSQL 16      │    │  Redis 7 Broker                    │     │
-│  │  definitions        │    │  task queue   (LIST BLPOP)         │     │
-│  │  executions/tasks   │    │  idempotency  (SET EX)             │     │
+│  │  definitions        │    │  task queue   (LIST BRPOP)         │     │
+│  │  executions/tasks   │    │  results      (LIST)               │     │
 │  │  artifacts (JSONB)  │    │  dead_letter  (LIST)               │     │
-│  └─────────────────────┘    │  locks        (SET NX EX)          │     │
+│  └─────────────────────┘    │                                    │     │
 │                              └──────────────┬────────────────────┘     │
 │                                             │                          │
 │  ┌──────────────────────────────────────────▼───────────────────────┐  │
 │  │  Worker Pool                                                     │  │
-│  │  BLPOP → acquire lock → resolve artifact inputs from MinIO       │  │
+│  │  BRPOP → mark running → resolve artifact inputs from MinIO       │  │
 │  │    → spawn isolated Docker container (cap-drop ALL, no-net)      │  │
 │  │    → execute task command inside /workspace                      │  │
 │  │    → collect stdcopy logs → upload artifact outputs to MinIO     │  │
@@ -267,8 +267,8 @@ make migrate
 
 | Concern | Mechanism |
 |---|---|
-| At-least-once delivery | Redis LIST + BLPOP; re-queued on worker restart |
-| Exactly-once processing | Redis `SET NX EX` idempotency key per `(exec,task,retry)` |
+| At-least-once delivery | Redis LIST + BRPOP; a restart re-queues every unfinished attempt, which then runs again from the start |
+| At-most-once execution per attempt | A worker runs a message only if it moves the task row from `queued` to `running` at the message's `retry_count`; a duplicate, or a pickup that cannot be recorded, is dropped |
 | Exponential backoff | `delay = initial × multiplier^n`, capped at `max_delay` |
 | Jitter | ±25% randomisation — prevents thundering herd |
 | Retry scheduling | A retry waits in its task row (`retrying`, `next_retry_at`); a 5s poller dispatches it once due |
