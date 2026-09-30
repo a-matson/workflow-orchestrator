@@ -19,4 +19,9 @@ test('leaving the builder with unsaved work asks first and cancelling keeps the 
 	await expect.poll(() => prompts.length, { message: 'no leave confirmation was shown' }).toBe(1)
 	await expect(page).toHaveURL(/\/builder$/)
 	await expect(nodes).toHaveCount(before + 1)
+
+	await page.getByTestId('new-workflow').click()
+
+	await expect.poll(() => prompts.length, { message: 'New discarded work without asking' }).toBe(2)
+	await expect(nodes).toHaveCount(before + 1)
 })
