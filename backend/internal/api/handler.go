@@ -304,9 +304,9 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// readyTimeout bounds each dependency probe so a hung one cannot stall the
-// orchestrator's readiness poll.
-const readyTimeout = 2 * time.Second
+// readyBudget is shared by all probes and stays under the compose healthcheck's
+// 5s timeout, so a hung dependency reports 503 instead of timing the check out.
+const readyBudget = 3 * time.Second
 
 // Ready reports whether dependencies answer, unlike Health, which only says the
 // process is up. Probe errors are logged, never returned: they can carry
@@ -327,13 +327,12 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 		}{"minio", h.storage.Ping})
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), readyBudget)
+	defer cancel()
 	checks := make(map[string]string, len(probes))
 	ready := true
 	for _, p := range probes {
-		ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
-		err := p.fn(ctx)
-		cancel()
-		if err != nil {
+		if err := p.fn(ctx); err != nil {
 			ready = false
 			checks[p.name] = "unavailable"
 			logFrom(r).Warn().Err(err).Str("dependency", p.name).Msg("readiness check failed")
