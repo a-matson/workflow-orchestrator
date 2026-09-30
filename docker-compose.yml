@@ -16,6 +16,10 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  # Task containers mount subpaths of this volume by name through the host
+  # daemon, so its name must not carry the compose project prefix.
+  task_workspaces:
+    name: ${FLUXOR_WORKSPACE_VOLUME:-fluxor-task-workspaces}
 
 services:
   postgres:
@@ -98,8 +102,11 @@ services:
       # Docker-out-of-Docker: mount the host socket so the backend can
       # spawn isolated task containers on the host Docker daemon.
       DOCKER_HOST:      unix:///var/run/docker.sock
+      FLUXOR_WORKSPACE_ROOT:   /workspaces
+      FLUXOR_WORKSPACE_VOLUME: ${FLUXOR_WORKSPACE_VOLUME:-fluxor-task-workspaces}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
+      - task_workspaces:/workspaces
     # The socket's owning group differs by host: 0 on Docker Desktop, usually
     # the `docker` group on Linux (`stat -c %g /var/run/docker.sock`).
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
