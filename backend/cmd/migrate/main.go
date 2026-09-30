@@ -20,7 +20,8 @@ func main() {
 func run() error {
 	dsn := os.Getenv("POSTGRES_URL")
 	if dsn == "" {
-		dsn = "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable"
+		// No password, as in cmd/server: pgx then reads PGPASSWORD or ~/.pgpass.
+		dsn = "postgres://workflow@localhost:5432/workflow?sslmode=disable"
 	}
 	ctx := context.Background()
 	store, err := persistence.NewStore(ctx, dsn)

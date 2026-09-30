@@ -215,7 +215,7 @@ func removeWorkspace(dir string) error {
 	// The walk goes through an os.Root so a symlink the task left cannot point
 	// the chmod outside the workspace. dir itself is ours, not the task's, but
 	// the task may have locked it, and the root cannot open it until unlocked.
-	walkErr := os.Chmod(dir, 0o700)
+	walkErr := os.Chmod(dir, 0o700) // #nosec G302 -- a directory needs its execute bit to be entered; owner only
 	if root, err := os.OpenRoot(dir); err != nil {
 		walkErr = errors.Join(walkErr, err)
 	} else {

@@ -742,7 +742,7 @@ func runSendmail(ctx context.Context, args []string, stdin []byte) error {
 	// Not user code: the argv is fixed except for validated addresses placed
 	// after "--", and the body only reaches stdin, so this stays outside the
 	// container-only rule.
-	cmd := exec.CommandContext(cmdCtx, bin, args...)
+	cmd := exec.CommandContext(cmdCtx, bin, args...) // #nosec G204 -- see above: fixed binary, validated argv
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
