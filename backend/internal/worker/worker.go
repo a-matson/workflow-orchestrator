@@ -26,6 +26,10 @@ import (
 
 var dbCache sync.Map // map[string]*sql.DB
 
+// maxNotifyResponse bounds a notification endpoint's reply, which is only used
+// in an error message; a hostile webhook could otherwise stream until timeout.
+const maxNotifyResponse = 64 << 10
+
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
@@ -576,7 +580,7 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 			log.Warn().Err(closeErr).Msg("failed to close response body")
 		}
 	}()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxNotifyResponse))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("slack: %d %s", resp.StatusCode, string(raw))
 	}
@@ -624,7 +628,7 @@ func (w *Worker) notifyPagerDuty(ctx context.Context, routingKey, message string
 			log.Warn().Err(closeErr).Msg("failed to close response body")
 		}
 	}()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxNotifyResponse))
 	if resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("pagerduty: %d %s", resp.StatusCode, string(raw))
 	}
@@ -652,7 +656,7 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 			log.Warn().Err(closeErr).Msg("failed to close response body")
 		}
 	}()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxNotifyResponse))
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("webhook: %d %s", resp.StatusCode, truncate(string(raw), 200))
 	}
