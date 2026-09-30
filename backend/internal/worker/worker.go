@@ -791,7 +791,14 @@ func redactURL(raw string) string {
 func describeChannel(notifyType, channel string) string {
 	switch notifyType {
 	case "email":
-		return channel
+		// Logged before notifyEmail validates it, so control characters are
+		// stripped here rather than trusted to be absent.
+		return strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return -1
+			}
+			return r
+		}, channel)
 	case "pagerduty":
 		return "PagerDuty"
 	}
