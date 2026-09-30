@@ -135,7 +135,11 @@ func get(t *testing.T, allow, target string) error {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := g.HTTPClient(5 * time.Second).Get(target)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := g.HTTPClient(5 * time.Second).Do(req)
 	if err != nil {
 		return err
 	}
@@ -176,7 +180,7 @@ func TestHTTPClient_IgnoresProxyEnvironment(t *testing.T) {
 	t.Setenv("HTTP_PROXY", proxy.URL)
 	t.Setenv("http_proxy", proxy.URL)
 	target := "http://10.255.255.1:81/"
-	req, err := http.NewRequest(http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
