@@ -107,8 +107,10 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
       minio: {condition: service_healthy}
+    # Readiness, not liveness: the frontend waits on this, so it starts only once
+    # Postgres, Redis and MinIO answer. Restart policy is unaffected by health.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
