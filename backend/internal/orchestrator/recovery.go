@@ -89,7 +89,7 @@ func (o *Orchestrator) loadExecution(ctx context.Context, id string) (*Execution
 	if err != nil {
 		return nil, err
 	}
-	def, err := o.store.GetWorkflowDefinition(ctx, exec.WorkflowID)
+	def, err := o.store.GetExecutionDefinition(ctx, id)
 	if err != nil {
 		return nil, err
 	}

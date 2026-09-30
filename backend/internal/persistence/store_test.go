@@ -199,3 +199,19 @@ func TestStore_CreateAndListTaskExecutions(t *testing.T) {
 		t.Errorf("expected 2 tasks, got %d", len(tasks))
 	}
 }
+
+// An execution created before definition snapshots existed has none, so it
+// resumes with the stored definition.
+func TestGetExecutionDefinition_FallsBackWithoutSnapshot(t *testing.T) {
+	store := setupStore(t)
+	def := makeWorkflowDef("legacy")
+	exec := createExecution(t, store, def, models.WorkflowStatusRunning)
+
+	got, err := store.GetExecutionDefinition(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatalf("GetExecutionDefinition: %v", err)
+	}
+	if got.ID != def.ID || len(got.Tasks) != len(def.Tasks) {
+		t.Errorf("definition = %s with %d tasks, want %s with %d", got.ID, len(got.Tasks), def.ID, len(def.Tasks))
+	}
+}
