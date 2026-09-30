@@ -14,7 +14,6 @@ import (
 const (
 	TaskQueueKey   = "workflow:tasks:queue"
 	ResultQueueKey = "workflow:results:queue"
-	RetryZSetKey   = "workflow:tasks:retry"
 	DeadLetterKey  = "workflow:tasks:dead_letter"
 	TaskLockKey    = "workflow:task:lock:%s"
 	IdempotencyKey = "workflow:idempotency:%s"
@@ -116,49 +115,6 @@ func (r *RedisClient) DequeueResult(ctx context.Context, timeout time.Duration) 
 	return &taskResult, nil
 }
 
-// ==================== Retry ZSet ====================
-
-// ScheduleRetry adds a task to the retry sorted set with score = Unix timestamp of next retry
-func (r *RedisClient) ScheduleRetry(ctx context.Context, msg *models.TaskMessage, retryAt time.Time) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	return r.client.ZAdd(ctx, RetryZSetKey, &redis.Z{
-		Score:  float64(retryAt.Unix()),
-		Member: string(data),
-	}).Err()
-}
-
-// PopDueRetries retrieves all retry tasks whose time has come
-func (r *RedisClient) PopDueRetries(ctx context.Context) ([]*models.TaskMessage, error) {
-	now := float64(time.Now().Unix())
-
-	// Atomic: ZRANGEBYSCORE + ZREM
-	members, err := r.client.ZRangeByScore(ctx, RetryZSetKey, &redis.ZRangeBy{
-		Min: "0",
-		Max: fmt.Sprintf("%f", now),
-	}).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	var msgs []*models.TaskMessage
-	for _, member := range members {
-		// Remove from retry set atomically
-		r.client.ZRem(ctx, RetryZSetKey, member)
-
-		var msg models.TaskMessage
-		if err := json.Unmarshal([]byte(member), &msg); err != nil {
-			continue
-		}
-		msgs = append(msgs, &msg)
-	}
-
-	return msgs, nil
-}
-
 // ==================== Dead Letter ====================
 
 func (r *RedisClient) SendToDeadLetter(ctx context.Context, msg *models.TaskMessage, reason string) error {
@@ -206,9 +162,4 @@ func (r *RedisClient) CheckIdempotency(ctx context.Context, key string) (bool, e
 // QueueDepth returns the number of tasks currently in the task queue
 func (r *RedisClient) QueueDepth(ctx context.Context) (int64, error) {
 	return r.client.LLen(ctx, TaskQueueKey).Result()
-}
-
-// RetryQueueDepth returns the number of tasks awaiting retry
-func (r *RedisClient) RetryQueueDepth(ctx context.Context) (int64, error) {
-	return r.client.ZCard(ctx, RetryZSetKey).Result()
 }

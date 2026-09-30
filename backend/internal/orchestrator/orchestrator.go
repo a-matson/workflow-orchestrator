@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -41,8 +42,8 @@ type Orchestrator struct {
 }
 
 // ExecutionContext holds runtime state for one active workflow execution.
-// mu guards the Completed/Running/Queued/Failed maps, TaskMap, the task rows
-// in Execution.Tasks, and done. dispatchReadyTasks and MarkTaskRunning hold it
+// mu guards the Completed/Failed maps, TaskMap, the task rows in
+// Execution.Tasks, and done. dispatchReadyTasks and MarkTaskRunning hold it
 // across store calls so their writes to a task row land in order.
 // Never call any method that re-acquires this mutex while holding it.
 type ExecutionContext struct {
@@ -51,8 +52,6 @@ type ExecutionContext struct {
 	Graph      *dag.Graph
 	TaskMap    map[string]*models.TaskExecution // taskDefID -> TaskExecution
 	Completed  map[string]bool
-	Running    map[string]bool
-	Queued     map[string]bool
 	Failed     map[string]bool
 	// done is set once completeWorkflow has claimed the execution; a late
 	// result must not change the rows its final event reported.
@@ -147,8 +146,6 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 		Graph:      graph,
 		TaskMap:    taskMap,
 		Completed:  make(map[string]bool),
-		Running:    make(map[string]bool),
-		Queued:     make(map[string]bool),
 		Failed:     make(map[string]bool),
 	}
 
@@ -180,26 +177,23 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 
 	// Dispatch first wave of tasks (those with no dependencies)
 	dispatchCtx := context.WithoutCancel(ctx)
-	goSafe("dispatch", exec.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
+	runSafe("dispatch", exec.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 
 	return snap, nil
 }
 
-// ── dispatchReadyTasks ─────────────────────────────────────────────────────
-// Acquires the execution context lock, finds all tasks whose dependencies are
-// satisfied, and enqueues them into Redis. Called after start and after each
-// successful task completion.
-
+// dispatchReadyTasks queues and enqueues every ready task of execCtx. Each
+// row is moved to queued before its message exists, so a worker can never
+// hold a message for a row the store does not yet show as queued (REL-6).
+// It holds execCtx.mu throughout so two dispatches cannot queue one task.
 func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *ExecutionContext) {
 	execCtx.mu.Lock()
 	defer execCtx.mu.Unlock()
+	if execCtx.done {
+		return
+	}
 
-	readyTaskIDs := execCtx.Graph.GetReadyTasks(execCtx.Completed, execCtx.Running, execCtx.Queued)
-
-	for _, taskDefID := range readyTaskIDs {
-		taskExec := execCtx.TaskMap[taskDefID]
-		taskDef := execCtx.Graph.Nodes[taskDefID].Task
-
+	for _, taskDefID := range execCtx.readyTasks(time.Now()) {
 		// Acquire concurrency slot
 		sem := o.getSemaphore(execCtx.Execution.ID)
 		if sem == nil {
@@ -215,54 +209,104 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 				Msg("concurrency limit reached, task deferred")
 			continue
 		}
-
-		execCtx.Queued[taskDefID] = true
-
-		// Resolve artifact inputs: for each ArtifactsIn spec, find the
-		// ResolvedArtifact produced by the dependency task that matches the path.
-		resolvedIn := o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn)
-
-		msg := &models.TaskMessage{
-			TaskExecID:       taskExec.ID,
-			WorkflowExecID:   execCtx.Execution.ID,
-			WorkflowID:       execCtx.Execution.WorkflowID,
-			TaskDefinitionID: taskDefID,
-			TaskName:         taskDef.Name,
-			TaskType:         taskDef.Type,
-			Config:           taskDef.Config,
-			RetryCount:       taskExec.RetryCount,
-			MaxRetries:       taskExec.MaxRetries,
-			Timeout:          taskDef.Timeout,
-			EnqueuedAt:       time.Now(),
-			IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
-			Container:        taskDef.Container,
-			ArtifactsIn:      resolvedIn,
-			ArtifactsOut:     taskDef.ArtifactsOut,
+		if !o.dispatchTask(ctx, execCtx, taskDefID) {
+			<-sem
 		}
+	}
+}
 
-		if err := o.redis.EnqueueTask(ctx, msg); err != nil {
-			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to enqueue task")
-			<-sem // Release semaphore on failure
-			execCtx.Queued[taskDefID] = false
-			continue
+// dispatchTask queues and enqueues one ready task, reporting whether its
+// message was enqueued. Callers hold execCtx.mu.
+func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionContext, taskDefID string) bool {
+	taskDef := execCtx.Graph.Nodes[taskDefID].Task
+	cached := execCtx.TaskMap[taskDefID]
+	queuedAt := time.Now()
+	taskExec, err := o.store.TransitionTask(ctx, cached.ID, cached.RetryCount,
+		models.TaskStatusQueued, persistence.TaskPatch{QueuedAt: &queuedAt})
+	if err != nil {
+		log.Error().Err(err).Str("task_exec_id", cached.ID).Msg("failed to queue task")
+		return false
+	}
+	execCtx.cacheTask(taskExec)
+
+	msg := &models.TaskMessage{
+		TaskExecID:       taskExec.ID,
+		WorkflowExecID:   execCtx.Execution.ID,
+		WorkflowID:       execCtx.Execution.WorkflowID,
+		TaskDefinitionID: taskDefID,
+		TaskName:         taskDef.Name,
+		TaskType:         taskDef.Type,
+		Config:           taskDef.Config,
+		RetryCount:       taskExec.RetryCount,
+		MaxRetries:       taskExec.MaxRetries,
+		Timeout:          taskDef.Timeout,
+		EnqueuedAt:       queuedAt,
+		IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
+		Container:        taskDef.Container,
+		ArtifactsIn:      o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn),
+		ArtifactsOut:     taskDef.ArtifactsOut,
+	}
+	if err := o.redis.EnqueueTask(ctx, msg); err != nil {
+		log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to enqueue task")
+		// Back to pending, retries included: queued -> retrying is not a
+		// transition, and a pending row whose dependencies completed is
+		// ready again at the next dispatch with its retry_count kept.
+		back, err := o.store.TransitionTask(ctx, taskExec.ID, taskExec.RetryCount, models.TaskStatusPending, persistence.TaskPatch{})
+		if err != nil {
+			// Shortcut: the row stays queued with no message, and nothing
+			// re-drives it until the timeout reaper (plan row R17) exists.
+			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("task left queued without a message")
+			return false
 		}
+		execCtx.cacheTask(back)
+		return false
+	}
 
-		// Update task state to queued
-		now := time.Now()
-		taskExec.Status = models.TaskStatusQueued
-		taskExec.QueuedAt = &now
-		taskExec.UpdatedAt = now
+	o.metrics.mu.Lock()
+	o.metrics.TasksDispatched++
+	o.metrics.mu.Unlock()
 
-		if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
-			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to persist task queued state")
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskQueued, Payload: taskExec})
+	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskDef.Name).Msg("task dispatched")
+	return true
+}
+
+// readyTasks lists the tasks dispatch may queue at now: pending tasks whose
+// dependencies have all completed, and retrying tasks whose retry is due.
+// A retrying task is ready on its own clock, never because a sibling
+// finished (REL-5). Callers hold c.mu.
+func (c *ExecutionContext) readyTasks(now time.Time) []string {
+	var ready []string
+	for id, node := range c.Graph.Nodes {
+		switch task := c.TaskMap[id]; task.Status {
+		case models.TaskStatusRetrying:
+			if task.NextRetryAt == nil || !task.NextRetryAt.After(now) {
+				ready = append(ready, id)
+			}
+		case models.TaskStatusPending:
+			if !slices.ContainsFunc(node.Dependencies, func(dep *dag.Node) bool { return !c.Completed[dep.Task.ID] }) {
+				ready = append(ready, id)
+			}
+		default:
+			// Queued and running tasks already hold a dispatch; the rest are final.
 		}
+	}
+	return ready
+}
 
-		o.metrics.mu.Lock()
-		o.metrics.TasksDispatched++
-		o.metrics.mu.Unlock()
-
-		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskQueued, Payload: taskExec})
-		log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskDef.Name).Msg("task dispatched")
+// DispatchDue runs dispatch for every active execution. Retries become due
+// with time rather than on a result, so the retry poller drives them through
+// here; the same pass re-drives a task rolled back to pending after a failed
+// enqueue.
+func (o *Orchestrator) DispatchDue(ctx context.Context) {
+	o.activeMu.RLock()
+	execs := make([]*ExecutionContext, 0, len(o.active))
+	for _, ec := range o.active {
+		execs = append(execs, ec)
+	}
+	o.activeMu.RUnlock()
+	for _, ec := range execs {
+		runSafe("dispatch", ec.Execution.ID, func() { o.dispatchReadyTasks(ctx, ec) })
 	}
 }
 
@@ -318,8 +362,6 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 
 	if ok {
 		execCtx.cacheTask(taskExec)
-		execCtx.Running[taskExec.TaskDefinitionID] = true
-		delete(execCtx.Queued, taskExec.TaskDefinitionID)
 	}
 
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskStarted, Payload: taskExec})
@@ -376,8 +418,6 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	execCtx.mu.Lock()
 	execCtx.cacheTask(taskExec)
 	execCtx.Completed[taskDefID] = true
-	delete(execCtx.Running, taskDefID)
-	delete(execCtx.Queued, taskDefID)
 	totalTasks := len(execCtx.Graph.Nodes)
 	completedCount := len(execCtx.Completed)
 	execCtx.mu.Unlock()
@@ -397,7 +437,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 
 	// Dispatch next wave of now-unblocked tasks
 	dispatchCtx := context.WithoutCancel(ctx)
-	goSafe("dispatch", execCtx.Execution.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
+	runSafe("dispatch", execCtx.Execution.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 	return nil
 }
 
@@ -444,48 +484,17 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 			Time("next_retry_at", nextRetryAt).
 			Msg("task scheduled for retry")
 
-		// Schedule retry in Redis
-		taskDef := execCtx.Graph.Nodes[taskDefID].Task
-		// Re-resolve artifact inputs for the retry: the dependency outputs are
-		// still in the TaskMap from the original run.
+		// The cached row is what makes the retry due: dispatch reads its
+		// next_retry_at, and the retry poller calls dispatch.
 		execCtx.mu.Lock()
 		execCtx.cacheTask(taskExec)
-		retryArtifactsIn := o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn)
 		execCtx.mu.Unlock()
-
-		msg := &models.TaskMessage{
-			TaskExecID:       taskExec.ID,
-			WorkflowExecID:   execCtx.Execution.ID,
-			WorkflowID:       execCtx.Execution.WorkflowID,
-			TaskDefinitionID: taskDefID,
-			TaskName:         taskExec.TaskName,
-			TaskType:         taskExec.TaskType,
-			Config:           taskDef.Config,
-			RetryCount:       taskExec.RetryCount,
-			MaxRetries:       taskExec.MaxRetries,
-			Timeout:          taskDef.Timeout,
-			IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
-			Container:        taskDef.Container,
-			ArtifactsIn:      retryArtifactsIn,
-			ArtifactsOut:     taskDef.ArtifactsOut,
-		}
-
-		if taskExec.NextRetryAt != nil {
-			if err := o.redis.ScheduleRetry(ctx, msg, *taskExec.NextRetryAt); err != nil {
-				log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to schedule task retry")
-			}
-		}
 
 		o.metrics.mu.Lock()
 		o.metrics.TasksRetried++
 		o.metrics.mu.Unlock()
 
 		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskRetrying, Payload: taskExec})
-
-		execCtx.mu.Lock()
-		delete(execCtx.Queued, taskDefID)
-		delete(execCtx.Running, taskDefID)
-		execCtx.mu.Unlock()
 
 	} else {
 		// Exhausted retries → dead letter
@@ -505,8 +514,6 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		execCtx.mu.Lock()
 		execCtx.cacheTask(taskExec)
 		execCtx.Failed[taskDefID] = true
-		delete(execCtx.Queued, taskDefID)
-		delete(execCtx.Running, taskDefID)
 		execCtx.mu.Unlock()
 
 		o.metrics.mu.Lock()
@@ -736,6 +743,7 @@ func (o *Orchestrator) resolveArtifactsIn(
 }
 
 func (o *Orchestrator) GetMetrics() map[string]int64 {
+	retrying := o.retryingTasks()
 	o.metrics.mu.Lock()
 	defer o.metrics.mu.Unlock()
 
@@ -749,7 +757,26 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 		"tasks_retried":       o.metrics.TasksRetried,
 		"tasks_dead_lettered": o.metrics.TasksDeadLettered,
 		"active_workflows":    int64(len(o.active)),
+		// Kept under its old name for the UI; retries now wait in the task
+		// rows, not in a Redis set.
+		"retry_queue_depth": retrying,
 	}
+}
+
+func (o *Orchestrator) retryingTasks() int64 {
+	o.activeMu.RLock()
+	defer o.activeMu.RUnlock()
+	var n int64
+	for _, ec := range o.active {
+		ec.mu.Lock()
+		for _, t := range ec.TaskMap {
+			if t.Status == models.TaskStatusRetrying {
+				n++
+			}
+		}
+		ec.mu.Unlock()
+	}
+	return n
 }
 
 // goSafe runs fn on a new goroutine via runSafe. Every per-execution

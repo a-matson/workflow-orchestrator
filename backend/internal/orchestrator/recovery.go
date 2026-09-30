@@ -57,8 +57,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 	// Rebuild task map
 	taskMap := make(map[string]*models.TaskExecution)
 	completed := make(map[string]bool)
-	running := make(map[string]bool)
-	queued := make(map[string]bool)
 	failed := make(map[string]bool)
 
 	for _, task := range fullExec.Tasks {
@@ -87,7 +85,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 				// Worker is still alive: leave in running state, it will publish a result.
 				log.Info().Str("task_id", task.TaskDefinitionID).Str("worker_id", task.WorkerID).
 					Msg("worker still alive — leaving task in running state")
-				running[task.TaskDefinitionID] = true
 			} else {
 				// Worker is dead: reset to queued so the dispatcher re-sends it.
 				log.Warn().Str("task_id", task.TaskDefinitionID).Str("worker_id", task.WorkerID).
@@ -97,17 +94,13 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 				task.StartedAt = nil
 				task.UpdatedAt = time.Now()
 				o.store.UpdateTaskExecution(ctx, task) // nolint:errcheck // best-effort on recovery
-				queued[task.TaskDefinitionID] = true
 			}
-
-		case models.TaskStatusQueued, models.TaskStatusRetrying:
-			queued[task.TaskDefinitionID] = true
 
 		case models.TaskStatusFailed, models.TaskStatusDeadLetter:
 			failed[task.TaskDefinitionID] = true
 
-		case models.TaskStatusPending, models.TaskStatusSkipped:
-			// Do nothing, handled by regular DAG progression
+		case models.TaskStatusPending, models.TaskStatusQueued, models.TaskStatusRetrying, models.TaskStatusSkipped:
+			// Dispatch reads these statuses from the rows in taskMap.
 		}
 	}
 
@@ -127,8 +120,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		Graph:      graph,
 		TaskMap:    taskMap,
 		Completed:  completed,
-		Running:    running,
-		Queued:     queued,
 		Failed:     failed,
 	}
 
@@ -140,8 +131,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		Str("exec_id", exec.ID).
 		Str("workflow", def.Name).
 		Int("completed", len(completed)).
-		Int("queued", len(queued)).
-		Int("running", len(running)).
 		Msg("execution recovered — resuming dispatch")
 
 	dispatchCtx := context.WithoutCancel(ctx)

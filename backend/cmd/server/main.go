@@ -131,7 +131,7 @@ func main() {
 
 	// Background services
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
-	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
+	retryPoller := scheduler.NewRetryPoller(orch)
 	egressGuard, err := egress.New(os.Getenv("FLUXOR_EGRESS_ALLOW"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("FLUXOR_EGRESS_ALLOW is invalid")

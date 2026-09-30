@@ -288,10 +288,8 @@ func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := h.orchestrator.GetMetrics()
 
 	queueDepth, _ := h.redis.QueueDepth(r.Context())
-	retryDepth, _ := h.redis.RetryQueueDepth(r.Context())
 
 	metrics["queue_depth"] = queueDepth
-	metrics["retry_queue_depth"] = retryDepth
 	metrics["ws_clients"] = int64(h.hub.ConnectedClients())
 
 	writeJSON(w, http.StatusOK, metrics)
