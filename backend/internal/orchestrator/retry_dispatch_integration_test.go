@@ -158,3 +158,29 @@ func TestDispatchPushesNothingWhenQueueWriteFails(t *testing.T) {
 		t.Fatalf("%d messages queued for b after its queued write failed, want 0", n)
 	}
 }
+
+// A failed push moves the row back to pending, where the next dispatch picks
+// it up, instead of leaving it queued with no message.
+func TestFailedEnqueueRollsBackToPending(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testutil.Env(t)
+	// Nothing listens on port 1, so every Redis call fails.
+	dead := persistence.NewRedisClient("127.0.0.1:1", "", 0)
+	t.Cleanup(func() {
+		if err := dead.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	})
+	orch := orchestrator.NewOrchestrator(store, dead, &testutil.Recorder{})
+	def := &models.WorkflowDefinition{ID: uuid.NewString(), Name: "dead-redis", MaxParallel: 10,
+		Tasks: []models.TaskDefinition{{ID: "a", Name: "A", Type: "generic"}}}
+	testutil.SaveDef(t, store, def)
+	exec, err := orch.StartWorkflow(ctx, def, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if row := testutil.TaskRow(t, store, exec.ID, "a"); row.Status != models.TaskStatusPending || row.RetryCount != 0 {
+		t.Fatalf("task a = %s/retry %d after a failed enqueue, want pending/0", row.Status, row.RetryCount)
+	}
+}
