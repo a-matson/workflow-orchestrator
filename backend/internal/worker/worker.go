@@ -155,7 +155,7 @@ func (w *Worker) run(ctx context.Context) {
 							TaskExecID:     taskMsg.TaskExecID,
 							WorkflowExecID: taskMsg.WorkflowExecID,
 							WorkerID:       w.id,
-							RetryCount:     taskMsg.RetryCount,
+							RetryCount:     &taskMsg.RetryCount,
 							Success:        false,
 							Error:          errMsg,
 							StartedAt:      time.Now(), // Fallback approximation
@@ -277,7 +277,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		TaskExecID:     msg.TaskExecID,
 		WorkflowExecID: msg.WorkflowExecID,
 		WorkerID:       w.id,
-		RetryCount:     msg.RetryCount,
+		RetryCount:     &msg.RetryCount,
 		StartedAt:      startedAt,
 		CompletedAt:    completedAt,
 		ArtifactsOut:   artifactsOut,
