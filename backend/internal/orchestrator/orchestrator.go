@@ -41,7 +41,9 @@ type Orchestrator struct {
 }
 
 // ExecutionContext holds runtime state for one active workflow execution.
-// The mutex protects Completed/Running/Queued/Failed maps only.
+// mu guards the Completed/Running/Queued/Failed maps, TaskMap, the task rows
+// in Execution.Tasks, and done. dispatchReadyTasks and MarkTaskRunning hold it
+// across store calls so their writes to a task row land in order.
 // Never call any method that re-acquires this mutex while holding it.
 type ExecutionContext struct {
 	Execution  *models.WorkflowExecution
