@@ -266,7 +266,7 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 	o.metrics.TasksDispatched++
 	o.metrics.mu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskQueued, Payload: taskExec})
+	o.broadcaster.Broadcast(taskEvent(models.WSEventTaskQueued, taskExec))
 	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskDef.Name).Msg("task dispatched")
 	return true
 }
@@ -347,7 +347,7 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 		execCtx.mu.Unlock()
 	}
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskStarted, Payload: taskExec})
+	o.broadcaster.Broadcast(taskEvent(models.WSEventTaskStarted, taskExec))
 	return nil
 }
 
@@ -410,7 +410,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	o.metrics.TasksCompleted++
 	o.metrics.mu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskCompleted, Payload: taskExec})
+	o.broadcaster.Broadcast(taskEvent(models.WSEventTaskCompleted, taskExec))
 	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskExec.TaskName).Msg("task completed")
 
 	// Check completion and dispatch next wave without holding any lock
@@ -477,7 +477,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		o.metrics.TasksRetried++
 		o.metrics.mu.Unlock()
 
-		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskRetrying, Payload: taskExec})
+		o.broadcaster.Broadcast(taskEvent(models.WSEventTaskRetrying, taskExec))
 
 	} else {
 		// Exhausted retries → dead letter
@@ -504,7 +504,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		o.metrics.TasksDeadLettered++
 		o.metrics.mu.Unlock()
 
-		o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskFailed, Payload: taskExec})
+		o.broadcaster.Broadcast(taskEvent(models.WSEventTaskFailed, taskExec))
 
 		// Fail the entire workflow
 		return o.completeWorkflow(ctx, execCtx, true)
@@ -591,6 +591,14 @@ func (c *ExecutionContext) snapshot() *models.WorkflowExecution {
 		snap.Tasks[i] = &row
 	}
 	return &snap
+}
+
+// taskEvent wraps a copy of task, as snapshot does for executions: the row
+// stays in the cache, where the next transition may replace or recovery may
+// rewrite it while the hub is still marshalling the event.
+func taskEvent(typ string, task *models.TaskExecution) models.WebSocketEvent {
+	row := *task
+	return models.WebSocketEvent{Type: typ, Payload: &row}
 }
 
 // transitionResult applies a result's transition to task result.TaskExecID.
