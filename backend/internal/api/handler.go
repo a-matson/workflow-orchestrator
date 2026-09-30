@@ -143,9 +143,11 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
 		logFrom(r).Error().Err(err).Msg("failed to save workflow definition")
+		h.audit(r, "workflow.create", "workflow", def.ID, auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to save workflow", err)
 		return
 	}
+	h.audit(r, "workflow.create", "workflow", def.ID, auditSuccess)
 
 	writeJSON(w, http.StatusCreated, def)
 }
@@ -184,9 +186,11 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	def.UpdatedAt = now
 	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
 		logFrom(r).Error().Err(err).Str("id", id).Msg("failed to update workflow definition")
+		h.audit(r, "workflow.update", "workflow", id, auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to update workflow", err)
 		return
 	}
+	h.audit(r, "workflow.update", "workflow", id, auditSuccess)
 	writeJSON(w, http.StatusOK, def)
 }
 
@@ -224,9 +228,11 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	exec, err := h.orchestrator.StartWorkflow(r.Context(), def, payload)
 	if err != nil {
+		h.audit(r, "workflow.trigger", "workflow", id, auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to start workflow", err)
 		return
 	}
+	h.audit(r, "workflow.trigger", "workflow", id, auditSuccess)
 
 	logFrom(r).Info().
 		Str("workflow_exec_id", exec.ID).
@@ -280,10 +286,13 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusConflict, "execution is not cancellable", err)
 		return
 	}
+	// A 409 changed nothing, so like the other refusals it is not audited.
 	if err != nil {
+		h.audit(r, "execution.cancel", "execution", id, auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to cancel execution", err)
 		return
 	}
+	h.audit(r, "execution.cancel", "execution", id, auditSuccess)
 	writeJSON(w, http.StatusOK, exec)
 }
 
@@ -303,9 +312,11 @@ func (h *Handler) RetryExecution(w http.ResponseWriter, r *http.Request) {
 
 	newExec, err := h.orchestrator.StartWorkflow(r.Context(), def, exec.TriggerPayload)
 	if err != nil {
+		h.audit(r, "execution.retry", "execution", id, auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to retry: "+err.Error(), err)
 		return
 	}
+	h.audit(r, "execution.retry", "execution", id, auditSuccess)
 
 	writeJSON(w, http.StatusAccepted, newExec)
 }

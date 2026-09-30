@@ -81,7 +81,7 @@ func TestRequireRoles(t *testing.T) {
 			})
 			auth := func(*http.Request) (*Principal, error) { return tc.principal, tc.authErr }
 			rr := httptest.NewRecorder()
-			requireRoles(mux, auth)(next).ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
+			requireRoles(mux, auth, nil)(next).ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
 
 			if rr.Code != tc.want {
 				t.Fatalf("status %d, want %d: %s", rr.Code, tc.want, rr.Body)
@@ -103,9 +103,35 @@ func TestRequireRoles_UnlistedRouteNeedsAdmin(t *testing.T) {
 	for role, want := range map[Role]int{RoleOperator: http.StatusForbidden, RoleAdmin: http.StatusTeapot} {
 		auth := func(*http.Request) (*Principal, error) { return &Principal{Role: role}, nil }
 		rr := httptest.NewRecorder()
-		requireRoles(mux, auth)(next).ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unlisted", nil))
+		requireRoles(mux, auth, nil)(next).ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unlisted", nil))
 		if rr.Code != want {
 			t.Errorf("%s on unlisted route: status %d, want %d", role, rr.Code, want)
+		}
+	}
+}
+
+// Denied attempts are audited on mutating routes only, so probing GETs
+// cannot flood the log.
+func TestRequireRoles_AuditsDeniedMutationsOnly(t *testing.T) {
+	mux := (&Handler{}).Routes()
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for _, tc := range []struct {
+		method, path, want string
+		principal          *Principal
+		authErr            error
+	}{
+		{http.MethodPost, "/api/workflows/x/trigger", "workflow.trigger", &Principal{Role: RoleViewer}, nil},
+		{http.MethodPost, "/api/workflows/x/trigger", "workflow.trigger", nil, errUnauthenticated},
+		{http.MethodGet, "/api/workflows", "", nil, errUnauthenticated},
+		{http.MethodGet, "/api/audit", "", &Principal{Role: RoleViewer}, nil},
+		{http.MethodPost, "/api/workflows/x/trigger", "", &Principal{Role: RoleOperator}, nil},
+	} {
+		var got string
+		auth := func(*http.Request) (*Principal, error) { return tc.principal, tc.authErr }
+		hook := func(_ *http.Request, _ *Principal, action string) { got = action }
+		requireRoles(mux, auth, hook)(next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
+		if got != tc.want {
+			t.Errorf("%s %s: audited %q, want %q", tc.method, tc.path, got, tc.want)
 		}
 	}
 }

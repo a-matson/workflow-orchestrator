@@ -209,6 +209,7 @@ GET    /ws                             WebSocket (real-time events)
 GET    /api/keys                       List API keys (admin)
 POST   /api/keys                       Create an API key: {"name","role"} (admin)
 DELETE /api/keys/{id}                  Revoke an API key (admin)
+GET    /api/audit?limit&offset         Audit trail, newest first (admin)
 ```
 
 ---
@@ -258,6 +259,20 @@ encoded (`head -c 32 /dev/urandom | base64`). Without it the backend picks a ran
 logs a warning, so every restart logs everyone out. The cookie is marked `Secure` when the request
 arrives over TLS; behind a TLS-terminating proxy, set `FLUXOR_COOKIE_SECURE=true` (any value
 Go's `strconv.ParseBool` accepts; anything else stops startup).
+
+### Audit log
+
+Every mutation records who did what in the `audit_log` table: workflow create/update, execution
+trigger/cancel/retry, API key create/revoke, and browser login/logout. Each row holds the acting
+key's id and name, the action (`workflow.trigger`, `key.revoke`, ...), the target type and id, the
+`X-Request-ID` of the request, and an outcome of `success`, `denied` or `error`. No request
+payloads are stored, since they may carry secrets. Requests refused with 401/403 on a mutating
+route are recorded as `denied` (with target `route` and the request path); refused GETs are not.
+
+`GET /api/audit?limit=50&offset=0` (admin only, limit capped at 200) returns
+`{"entries": [...], "count": n}`. A failed audit write is logged at error level and does not fail
+the request, so the log line is the fallback record. The table has no retention and grows until
+F10's retention work lands.
 
 ---
 

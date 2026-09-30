@@ -35,9 +35,11 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	plaintext, key, err := h.store.CreateAPIKey(r.Context(), req.Name, req.Role)
 	if err != nil {
+		h.audit(r, "key.create", "api_key", "", auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to create API key", err)
 		return
 	}
+	h.audit(r, "key.create", "api_key", key.ID, auditSuccess)
 	logFrom(r).Info().Str("new_key_id", key.ID).Str("new_key_role", key.Role).Msg("API key created")
 	writeJSON(w, http.StatusCreated, struct {
 		*persistence.APIKey
@@ -54,9 +56,11 @@ func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		h.audit(r, "key.revoke", "api_key", r.PathValue("id"), auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to revoke API key", err)
 		return
 	}
+	h.audit(r, "key.revoke", "api_key", r.PathValue("id"), auditSuccess)
 	logFrom(r).Info().Str("revoked_key_id", r.PathValue("id")).Msg("API key revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
