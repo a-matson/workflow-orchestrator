@@ -135,6 +135,9 @@ func (g *Guard) control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// CheckHostPort stub.
+func (g *Guard) CheckHostPort(ctx context.Context, host string, port uint16) error { return nil }
+
 // DialContext dials addr unless the guard denies the resolved IP. A host:port
 // on the allowlist is dialled without the IP check: the operator trusts that
 // name, whatever it resolves to.

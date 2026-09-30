@@ -47,6 +47,7 @@ type Worker struct {
 	executor    *ContainerExecutor // nil if Docker unavailable
 	concurrency int
 	semaphore   chan struct{}
+	guard       *egress.Guard
 	httpClient  *http.Client // guarded: every task-initiated request goes through the egress guard
 }
 
@@ -93,6 +94,7 @@ func NewPool(
 			executor:    executor,
 			concurrency: concurrencyPerWorker,
 			semaphore:   make(chan struct{}, concurrencyPerWorker),
+			guard:       guard,
 			httpClient:  httpClient,
 		}
 	}
