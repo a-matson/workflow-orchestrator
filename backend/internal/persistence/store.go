@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -140,15 +141,47 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 // ==================== Workflow Executions ====================
 
 func (s *Store) CreateWorkflowExecution(ctx context.Context, exec *models.WorkflowExecution) error {
-	payloadJSON, _ := json.Marshal(exec.TriggerPayload)
-	metaJSON, _ := json.Marshal(exec.Metadata)
+	return insertExecution(ctx, s.pool, exec)
+}
 
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO workflow_executions 
-		(id, workflow_id, workflow_name, status, trigger_payload, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+// CreateExecutionWithTasks inserts exec and its tasks atomically: either all
+// rows exist afterwards or none do.
+func (s *Store) CreateExecutionWithTasks(ctx context.Context, exec *models.WorkflowExecution, tasks []*models.TaskExecution) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := insertExecution(ctx, tx, exec); err != nil {
+			return fmt.Errorf("inserting execution: %w", err)
+		}
+		for _, task := range tasks {
+			if err := insertTask(ctx, tx, task); err != nil {
+				return fmt.Errorf("inserting task %s: %w", task.TaskDefinitionID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// execer is satisfied by *pgxpool.Pool and pgx.Tx, so inserts run the same
+// SQL inside or outside a transaction.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func insertExecution(ctx context.Context, db execer, exec *models.WorkflowExecution) error {
+	payloadJSON, err := json.Marshal(exec.TriggerPayload)
+	if err != nil {
+		return fmt.Errorf("marshaling trigger payload: %w", err)
+	}
+	metaJSON, err := json.Marshal(exec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO workflow_executions
+		(id, workflow_id, workflow_name, status, trigger_payload, metadata, started_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, exec.ID, exec.WorkflowID, exec.WorkflowName, exec.Status,
-		payloadJSON, metaJSON, exec.CreatedAt, exec.UpdatedAt)
+		payloadJSON, metaJSON, exec.StartedAt, exec.CreatedAt, exec.UpdatedAt)
 
 	return err
 }
@@ -255,11 +288,18 @@ func (s *Store) attachTasks(ctx context.Context, execs []*models.WorkflowExecuti
 // ==================== Task Executions ====================
 
 func (s *Store) CreateTaskExecution(ctx context.Context, task *models.TaskExecution) error {
-	metaJSON, _ := json.Marshal(task.Metadata)
+	return insertTask(ctx, s.pool, task)
+}
 
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO task_executions 
-		(id, workflow_exec_id, task_definition_id, task_name, task_type, status, 
+func insertTask(ctx context.Context, db execer, task *models.TaskExecution) error {
+	metaJSON, err := json.Marshal(task.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO task_executions
+		(id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		 retry_count, max_retries, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, task.ID, task.WorkflowExecID, task.TaskDefinitionID, task.TaskName, task.TaskType,
