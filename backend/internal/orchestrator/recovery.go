@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/rs/zerolog/log"
 
@@ -74,7 +73,12 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 			// CAS drops.
 			reset, err := o.store.TransitionTask(ctx, task.ID, -1, models.TaskStatusPending, persistence.TaskPatch{})
 			if err != nil {
-				return fmt.Errorf("requeueing task %s: %w", task.ID, err)
+				// Skipping the execution would strand every other task in it.
+				// The row keeps its slot and waits for the next restart, as a
+				// stuck pickup does, until the timeout reaper (plan row R17).
+				log.Error().Err(err).Str("exec_id", exec.ID).Str("task_id", task.TaskDefinitionID).
+					Msg("could not requeue task left open by the previous process")
+				break
 			}
 			log.Warn().Str("exec_id", exec.ID).Str("task_id", task.TaskDefinitionID).
 				Str("was", string(task.Status)).Msg("requeueing task left open by the previous process")
