@@ -183,24 +183,16 @@
 						</div>
 						<p class="deps-hint">Connect nodes on the canvas to add dependencies</p>
 
-						<!-- ── Container Isolation ────────────────────────────────── -->
-						<div class="section-label">
-							Container Isolation
-							<label class="toggle-label">
-								<input
-									type="checkbox"
-									:checked="!!selectedNode.data.taskDef.container"
-									@change="toggleContainer"
-								/>
-								Enabled
-							</label>
-						</div>
-						<template v-if="selectedNode.data.taskDef.container">
+						<!-- Code tasks always run in a container; there is no unisolated mode to toggle. -->
+						<template v-if="runsUserCode(selectedNode.data.taskDef.type)">
+							<div class="section-label">Container</div>
 							<div class="field">
 								<label>Docker Image</label>
 								<input
 									class="cf-input cf-code"
-									:value="selectedNode.data.taskDef.container.image ?? 'alpine:3.22'"
+									data-testid="container-image"
+									aria-label="Docker image"
+									:value="selectedNode.data.taskDef.container?.image ?? 'alpine:3.22'"
 									placeholder="python:3.12-slim"
 									@input="patchContainer('image', ($event.target as HTMLInputElement).value)"
 								/>
@@ -213,7 +205,9 @@
 										min="64"
 										max="16384"
 										class="cf-input"
-										:value="selectedNode.data.taskDef.container.memory_mb ?? 256"
+										data-testid="container-memory"
+										aria-label="Memory (MB)"
+										:value="selectedNode.data.taskDef.container?.memory_mb ?? 256"
 										@change="
 											patchContainer('memory_mb', +($event.target as HTMLInputElement).value)
 										"
@@ -226,7 +220,9 @@
 										min="50"
 										max="8000"
 										class="cf-input"
-										:value="selectedNode.data.taskDef.container.cpu_millis ?? 500"
+										data-testid="container-cpu"
+										aria-label="CPU (milli)"
+										:value="selectedNode.data.taskDef.container?.cpu_millis ?? 500"
 										@change="
 											patchContainer('cpu_millis', +($event.target as HTMLInputElement).value)
 										"
@@ -312,7 +308,7 @@
 	import '@vue-flow/controls/dist/style.css'
 	import { v4 as uuidv4 } from 'uuid'
 	import { useWorkflowStore } from '../../stores/workflow'
-	import { TASK_TYPES } from '../../types'
+	import { TASK_TYPES, runsUserCode } from '../../types'
 	import type {
 		DAGNode,
 		DAGEdge,
@@ -433,7 +429,7 @@
 			case 'database_query':
 				return { query: '', connection_string: '' }
 			case 'data_transform':
-				return { script: '', input_format: 'json', output_format: 'json' }
+				return { script: '' }
 			case 'ml_inference':
 				return { model_name: '', input_path: '', output_path: '' }
 			case 'notification':
@@ -528,22 +524,10 @@
 	}
 
 	// ── Container helpers ──────────────────────────────────────────
-	function toggleContainer() {
-		if (!selectedNode.value) return
-		if (selectedNode.value.data.taskDef.container) {
-			selectedNode.value.data.taskDef.container = undefined
-		} else {
-			selectedNode.value.data.taskDef.container = {
-				image: 'alpine:3.22',
-				memory_mb: 256,
-				cpu_millis: 500,
-			}
-		}
-	}
-
 	function patchContainer(key: keyof ContainerSpec, value: unknown) {
-		if (!selectedNode.value?.data.taskDef.container) return
+		if (!selectedNode.value) return
 		selectedNode.value.data.taskDef.container = {
+			image: 'alpine:3.22',
 			...selectedNode.value.data.taskDef.container,
 			[key]: value,
 		}
@@ -1051,20 +1035,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-	}
-	.toggle-label {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		font-size: 10px;
-		font-weight: 500;
-		text-transform: none;
-		letter-spacing: 0;
-		color: var(--text2);
-		cursor: pointer;
-	}
-	.toggle-label input {
-		cursor: pointer;
 	}
 	.field-row {
 		display: flex;

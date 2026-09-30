@@ -184,6 +184,10 @@ export const STATUS_BG: Record<TaskStatus | WorkflowStatus, string> = {
 	paused: '#FEF3C7',
 }
 
+// Mirrors runsUserCode in backend/internal/worker/worker.go: unknown types run as code too.
+export const runsUserCode = (type: string) =>
+	!['http_request', 'database_query', 'notification'].includes(type)
+
 export const TASK_TYPES = [
 	{ value: 'http_request', label: 'HTTP Request' },
 	{ value: 'data_transform', label: 'Data Transform' },
