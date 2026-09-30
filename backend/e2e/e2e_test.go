@@ -30,6 +30,8 @@ var (
 	baseURL     = env("FLUXOR_BASE_URL", "http://localhost:8080")
 	frontendURL = env("FLUXOR_FRONTEND_URL", "http://localhost:3000")
 	client      = &http.Client{Timeout: 10 * time.Second}
+	// `make e2e` mints this key and installs it as the stack's bootstrap admin key.
+	apiKey = os.Getenv("FLUXOR_API_KEY")
 )
 
 // send issues the request, sending body as JSON because the API rejects
@@ -50,6 +52,9 @@ func send(t *testing.T, method, url string, body any) (int, []byte) {
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -76,6 +81,23 @@ func do(t *testing.T, method, url string, body any, wantStatus int, out any) {
 		if err := json.Unmarshal(raw, out); err != nil {
 			t.Fatalf("%s %s: decode: %v: %s", method, url, err, raw)
 		}
+	}
+}
+
+func TestE2E_RequiresAuth(t *testing.T) {
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/workflows", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /api/workflows without a key: status %d, want 401", resp.StatusCode)
 	}
 }
 

@@ -3,11 +3,14 @@
 #
 # Usage:
 #   chmod +x examples/smoke-test.sh
-#   BASE_URL=http://localhost:8080 ./examples/smoke-test.sh
+#   FLUXOR_API_KEY=flx_... BASE_URL=http://localhost:8080 ./examples/smoke-test.sh
+#
+# FLUXOR_API_KEY needs the operator role (see README "Authentication").
 
 set -euo pipefail
 
 BASE="${BASE_URL:-http://localhost:8080}"
+AUTH="Authorization: Bearer ${FLUXOR_API_KEY:?set FLUXOR_API_KEY to an operator or admin key}"
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -31,7 +34,7 @@ HEALTH=$(curl -sf "$BASE/api/health" | python3 -c "import sys,json; d=json.load(
 # ── Create workflow ────────────────────────────────────────────
 # The ETL tasks need external services, so this only checks the definition is accepted.
 info "Creating ETL workflow..."
-WF=$(curl -sf -X POST "$BASE/api/workflows" \
+WF=$(curl -sf -H "$AUTH" -X POST "$BASE/api/workflows" \
   -H "Content-Type: application/json" \
   -d @"$(dirname "$0")/etl-pipeline.json")
 
@@ -41,20 +44,20 @@ ok "Created workflow: '$WF_NAME' ($WF_ID)"
 
 # ── Get workflow ───────────────────────────────────────────────
 info "Fetching workflow by ID..."
-GOT=$(curl -sf "$BASE/api/workflows/$WF_ID")
+GOT=$(curl -sf -H "$AUTH" "$BASE/api/workflows/$WF_ID")
 GOT_ID=$(echo "$GOT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 [ "$GOT_ID" = "$WF_ID" ] && ok "GET /api/workflows/$WF_ID → match" || fail "Workflow ID mismatch"
 
 # ── List workflows ─────────────────────────────────────────────
 info "Listing workflows..."
-LIST=$(curl -sf "$BASE/api/workflows")
+LIST=$(curl -sf -H "$AUTH" "$BASE/api/workflows")
 COUNT=$(echo "$LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['count'])")
 [ "$COUNT" -ge 1 ] && ok "List workflows: $COUNT total" || fail "Expected at least 1 workflow"
 
 # ── Create no-op workflow ──────────────────────────────────────
 # A generic task without a command is a no-op, so this one can run to completion.
 info "Creating no-op workflow..."
-NOOP=$(curl -sf -X POST "$BASE/api/workflows" \
+NOOP=$(curl -sf -H "$AUTH" -X POST "$BASE/api/workflows" \
   -H "Content-Type: application/json" \
   -d '{"name":"smoke-noop","tasks":[{"id":"noop","name":"No-op","type":"generic","dependencies":[]}]}')
 NOOP_ID=$(echo "$NOOP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
@@ -62,7 +65,7 @@ ok "Created workflow: 'smoke-noop' ($NOOP_ID)"
 
 # ── Trigger execution ──────────────────────────────────────────
 info "Triggering workflow execution..."
-EXEC=$(curl -sf -X POST "$BASE/api/workflows/$NOOP_ID/trigger" \
+EXEC=$(curl -sf -H "$AUTH" -X POST "$BASE/api/workflows/$NOOP_ID/trigger" \
   -H "Content-Type: application/json" \
   -d '{"triggered_by": "smoke-test", "env": "test"}')
 
@@ -81,7 +84,7 @@ while true; do
     fail "Execution timed out after ${TIMEOUT}s"
   fi
 
-  STATUS=$(curl -sf "$BASE/api/executions/$EXEC_ID" | \
+  STATUS=$(curl -sf -H "$AUTH" "$BASE/api/executions/$EXEC_ID" | \
     python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
 
   case "$STATUS" in
@@ -104,25 +107,25 @@ done
 
 # ── List tasks ─────────────────────────────────────────────────
 info "Listing tasks for execution..."
-TASKS=$(curl -sf "$BASE/api/executions/$EXEC_ID/tasks")
+TASKS=$(curl -sf -H "$AUTH" "$BASE/api/executions/$EXEC_ID/tasks")
 TASK_COUNT=$(echo "$TASKS" | python3 -c "import sys,json; print(json.load(sys.stdin)['count'])")
 ok "Execution has $TASK_COUNT tasks"
 
 # ── Metrics ────────────────────────────────────────────────────
 info "Checking metrics..."
-METRICS=$(curl -sf "$BASE/api/metrics")
+METRICS=$(curl -sf -H "$AUTH" "$BASE/api/metrics")
 STARTED=$(echo "$METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['workflows_started'])")
 ok "Metrics: workflows_started=$STARTED"
 
 # ── List executions ────────────────────────────────────────────
 info "Listing executions..."
-EXECS=$(curl -sf "$BASE/api/executions?limit=10")
+EXECS=$(curl -sf -H "$AUTH" "$BASE/api/executions?limit=10")
 EXEC_COUNT=$(echo "$EXECS" | python3 -c "import sys,json; print(json.load(sys.stdin)['count'])")
 ok "List executions: $EXEC_COUNT total"
 
 # ── Retry execution ────────────────────────────────────────────
 info "Retrying execution (replay test)..."
-RETRY=$(curl -sf -X POST "$BASE/api/executions/$EXEC_ID/retry" \
+RETRY=$(curl -sf -H "$AUTH" -X POST "$BASE/api/executions/$EXEC_ID/retry" \
   -H "Content-Type: application/json" -d '{}')
 RETRY_ID=$(echo "$RETRY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 [ "$RETRY_ID" != "$EXEC_ID" ] && ok "Retry created new execution: $RETRY_ID" || fail "Retry should create a new execution ID"
@@ -131,7 +134,7 @@ RETRY_ID=$(echo "$RETRY" | python3 -c "import sys,json; print(json.load(sys.stdi
 info "Testing WebSocket connectivity..."
 if command -v wscat &>/dev/null; then
   WS_RESULT=$(echo '{"type":"subscribe","payload":"'$EXEC_ID'"}' | \
-    timeout 3 wscat -c "ws://${BASE#http://}/ws" 2>&1 | head -1 || true)
+    timeout 3 wscat -H "$AUTH" -c "ws://${BASE#http://}/ws" 2>&1 | head -1 || true)
   ok "WebSocket connected (wscat)"
 else
   ok "WebSocket test skipped (wscat not installed — run: npm install -g wscat)"

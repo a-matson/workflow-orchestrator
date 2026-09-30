@@ -106,8 +106,12 @@ test-integration:
 # e2e gets its own to keep `down -v` off the dev stack's volume.
 E2E_COMPOSE = FLUXOR_WORKSPACE_VOLUME=fluxor-e2e-task-workspaces \
 	docker compose --env-file .env.example -p fluxor-e2e
+# Each run mints its own admin key, so no credential is committed or reused.
 e2e:
 	@status=0; \
+	FLUXOR_BOOTSTRAP_ADMIN_KEY="flx_$$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"; \
+	FLUXOR_API_KEY="$$FLUXOR_BOOTSTRAP_ADMIN_KEY"; \
+	export FLUXOR_BOOTSTRAP_ADMIN_KEY FLUXOR_API_KEY; \
 	trap '$(E2E_COMPOSE) down -v' INT TERM; \
 	$(E2E_COMPOSE) up -d --build --wait && \
 	  (cd backend && go test -tags e2e -count=1 -v ./e2e/) && \
@@ -143,6 +147,7 @@ load-test:
 	@echo "Triggering 20 workflow executions in parallel..."
 	@for i in $$(seq 1 20); do \
 	  curl -sX POST http://localhost:8080/api/workflows/$(WF_ID)/trigger \
+	    -H "Authorization: Bearer $$FLUXOR_API_KEY" \
 	    -H 'Content-Type: application/json' \
 	    -d '{"test_run": '$$i'}' & \
 	done; wait

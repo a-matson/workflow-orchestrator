@@ -105,6 +105,8 @@ services:
       FLUXOR_WORKSPACE_ROOT:   /workspaces
       FLUXOR_WORKSPACE_VOLUME: ${FLUXOR_WORKSPACE_VOLUME:-fluxor-task-workspaces}
       FLUXOR_EGRESS_ALLOW:     ${FLUXOR_EGRESS_ALLOW:-}
+      # Optional admin API key (flx_ + 43 base64url chars) installed at startup.
+      FLUXOR_BOOTSTRAP_ADMIN_KEY: ${FLUXOR_BOOTSTRAP_ADMIN_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
       - task_workspaces:/workspaces

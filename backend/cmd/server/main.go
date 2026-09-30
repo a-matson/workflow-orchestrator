@@ -31,6 +31,10 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "apikey" {
+		os.Exit(runAPIKey(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	// ── Logging ──────────────────────────────────────────────────
 	logLevel := zerolog.InfoLevel
 	if getEnv("LOG_LEVEL", "info") == "debug" {
@@ -51,7 +55,7 @@ func main() {
 	defer cancel()
 
 	// Configuration
-	postgresURL := getEnv("POSTGRES_URL", "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable")
+	postgresURL := getEnv("POSTGRES_URL", defaultPostgresURL)
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	httpAddr := getEnv("HTTP_ADDR", ":8080")
@@ -115,6 +119,9 @@ func main() {
 	if err := persistence.Migrate(ctx, store.Pool(), migrations.FS); err != nil {
 		log.Fatal().Err(err).Msg("database migration failed")
 	}
+	if err := bootstrapAPIKeys(ctx, store); err != nil {
+		log.Fatal().Err(err).Msg("API key bootstrap failed")
+	}
 
 	// Core services
 	allowedOrigins := strings.Split(getEnv("FLUXOR_ALLOWED_ORIGINS", ""), ",")
@@ -150,22 +157,10 @@ func main() {
 
 	// HTTP server
 	handler := api.NewHandler(store, redisClient, orch, hub, minioClient)
-	rawMux := handler.Routes()
-
-	// Compose middleware chain
-	rateLimiter := api.NewRateLimiter(200, time.Minute)
-	finalHandler := api.ChainMiddleware(
-		rawMux,
-		api.RequestIDMiddleware,
-		api.RecoveryMiddleware,
-		api.LoggingMiddleware,
-		api.OriginPolicy(allowedOrigins),
-		rateLimiter.Middleware,
-	)
 
 	httpSrv := &http.Server{
 		Addr:         httpAddr,
-		Handler:      finalHandler,
+		Handler:      handler.Server(allowedOrigins),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
