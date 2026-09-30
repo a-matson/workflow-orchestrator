@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
@@ -441,6 +442,39 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 	}, nil
 }
 
+// checkDBDestinations refuses a DSN unless every host it can connect to,
+// fallbacks included, passes the egress guard.
+func (w *Worker) checkDBDestinations(ctx context.Context, connStr string) error {
+	if w.guard == nil {
+		return fmt.Errorf("database_query: no egress guard configured")
+	}
+	// pgconn's parse error redacts the password, but the detail is dropped anyway.
+	cfg, err := pgconn.ParseConfig(connStr)
+	if err != nil {
+		return fmt.Errorf("database_query: invalid connection_string")
+	}
+	targets := []struct {
+		host string
+		port uint16
+	}{{cfg.Host, cfg.Port}}
+	for _, fb := range cfg.Fallbacks {
+		targets = append(targets, struct {
+			host string
+			port uint16
+		}{fb.Host, fb.Port})
+	}
+	for _, t := range targets {
+		// Egress covers TCP only; a socket path would reach local services unchecked.
+		if strings.HasPrefix(t.host, "/") || strings.HasPrefix(t.host, "@") {
+			return fmt.Errorf("database_query: %w: unix socket hosts are not allowed", egress.ErrEgressDenied)
+		}
+		if err := w.guard.CheckHostPort(ctx, t.host, t.port); err != nil {
+			return fmt.Errorf("database_query: %w", err)
+		}
+	}
+	return nil
+}
+
 // ─── Database Query ───────────────────────────────────────────────────────────
 // Config: connection_string (string), query (string), max_rows (number)
 
@@ -461,10 +495,13 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 		maxRows = int(mr)
 	}
 
-	// Not guarded yet, and harmless today because no SQL driver is registered,
-	// so sql.Open fails. S4 (database_query allowlist) adds the driver and
-	// routes its connections through egress.Guard.DialContext; until then this
-	// path must not gain a driver.
+	// The DSN carries the password, so no error below may include it.
+	if err := w.checkDBDestinations(ctx, connStr); err != nil {
+		return nil, err
+	}
+	// R10 registers the SQL driver. It must dial through Guard.DialContext (as
+	// pgx's DialFunc), not rely on the check above alone: DNS can rebind
+	// between the check and the connection.
 	driver := "postgres"
 	if strings.HasPrefix(connStr, "mysql://") {
 		driver = "mysql"
