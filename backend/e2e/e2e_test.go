@@ -9,9 +9,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 func env(key, def string) string {
@@ -144,8 +148,8 @@ func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
 		}},
 	}, http.StatusCreated, &wf)
 
-	var exec struct{ ID string }
-	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{}, http.StatusAccepted, &exec)
+	var run struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{}, http.StatusAccepted, &run)
 
 	type execution struct {
 		Status string
@@ -153,7 +157,10 @@ func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
 		Tasks  []struct {
 			Status       string
 			Error        string
-			ArtifactsOut []struct{ Path string } `json:"artifacts_out"`
+			ArtifactsOut []struct {
+				Path     string
+				MinioKey string `json:"minio_key"`
+			} `json:"artifacts_out"`
 		}
 	}
 	var got execution
@@ -161,20 +168,56 @@ func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
 	deadline := time.Now().Add(120 * time.Second)
 	for {
 		got = execution{}
-		do(t, http.MethodGet, baseURL+"/api/executions/"+exec.ID, nil, http.StatusOK, &got)
+		do(t, http.MethodGet, baseURL+"/api/executions/"+run.ID, nil, http.StatusOK, &got)
 		if got.Status == "completed" || got.Status == "failed" || got.Status == "cancelled" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("execution %s still %q after 120s", exec.ID, got.Status)
+			t.Fatalf("execution %s still %q after 120s", run.ID, got.Status)
 		}
 		time.Sleep(time.Second)
 	}
 	if got.Status != "completed" || len(got.Tasks) != 1 {
-		t.Fatalf("execution %s ended %q (%s), tasks = %+v", exec.ID, got.Status, got.Error, got.Tasks)
+		t.Fatalf("execution %s ended %q (%s), tasks = %+v", run.ID, got.Status, got.Error, got.Tasks)
 	}
 	arts := got.Tasks[0].ArtifactsOut
 	if len(arts) != 1 || arts[0].Path != "out.txt" {
 		t.Fatalf("artifacts_out = %+v, want out.txt", arts)
 	}
+	if content := minioObject(t, arts[0].MinioKey); content != "hello\n" {
+		t.Errorf("artifact content = %q, want %q", content, "hello\n")
+	}
+
+	// The worker removes the workspace before it reports the result.
+	vol := env("FLUXOR_WORKSPACE_VOLUME", "fluxor-e2e-task-workspaces")
+	out, err := exec.CommandContext(t.Context(), "docker", "run", "--rm", "-v", vol+":/w:ro", "alpine:3.22", "ls", "-A", "/w").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list volume %s: %v: %s", vol, err, out)
+	}
+	if len(out) != 0 {
+		t.Errorf("workspace volume %s not empty after the task:\n%s", vol, out)
+	}
+}
+
+// minioObject reads an object with the credentials `make e2e` gives the stack.
+func minioObject(t *testing.T, key string) string {
+	t.Helper()
+	mc, err := minio.New(env("MINIO_ENDPOINT", "localhost:9000"), &minio.Options{
+		Creds: credentials.NewStaticV4(env("MINIO_ROOT_USER", "fluxor"), env("MINIO_ROOT_PASSWORD", "change-me-minio"), ""),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := mc.GetObject(t.Context(), "fluxor-artifacts", key, minio.GetObjectOptions{})
+	if err != nil {
+		t.Fatalf("get %s: %v", key, err)
+	}
+	b, err := io.ReadAll(obj)
+	if err != nil {
+		t.Fatalf("read %s: %v", key, err)
+	}
+	if err := obj.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
