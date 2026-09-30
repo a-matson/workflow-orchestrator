@@ -53,6 +53,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	// System
 	mux.HandleFunc("GET /api/metrics", h.GetMetrics)
 	mux.HandleFunc("GET /api/health", h.Health)
+	mux.HandleFunc("GET /api/ready", h.Ready)
 
 	// Artifacts
 	mux.HandleFunc("GET /api/tasks/{id}/artifacts", h.ListTaskArtifacts)
@@ -300,6 +301,11 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		"status":    "ok",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// Ready is a stub until dependency checks land.
+func (h *Handler) Ready(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "checks": map[string]string{}})
 }
 
 // ==================== Helpers ====================
