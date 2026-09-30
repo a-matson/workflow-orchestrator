@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -758,10 +759,15 @@ func TestFailedWorkflow_CancelsOpenSiblings(t *testing.T) {
 	if err := orch.MarkTaskRunning(ctx, byDef["sibling"].TaskExecID, "testutil", 0); err != nil {
 		t.Fatalf("MarkTaskRunning sibling: %v", err)
 	}
+	stopped := &recordingCanceller{}
+	orch.SetTaskCanceller(stopped)
 	runTask(t, orch, byDef["doomed"], testutil.Fail(byDef["doomed"], "fatal"))
 
 	if got := testutil.TaskRow(t, store, exec.ID, "sibling").Status; got != models.TaskStatusCancelled {
 		t.Errorf("sibling status = %s, want %s", got, models.TaskStatusCancelled)
+	}
+	if got := stopped.ids(); !slices.Contains(got, byDef["sibling"].TaskExecID) {
+		t.Errorf("stopped runs = %v, want the sibling's %s", got, byDef["sibling"].TaskExecID)
 	}
 	stored, err := store.GetWorkflowExecution(ctx, exec.ID)
 	if err != nil {
@@ -805,5 +811,54 @@ func TestCancelExecution_AllOrNothing(t *testing.T) {
 	}
 	if stored.Status != models.WorkflowStatusRunning {
 		t.Errorf("execution status = %s, want %s", stored.Status, models.WorkflowStatusRunning)
+	}
+}
+
+type recordingCanceller struct {
+	mu      sync.Mutex
+	stopped []string
+}
+
+func (c *recordingCanceller) Cancel(taskExecID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stopped = append(c.stopped, taskExecID)
+}
+
+func (c *recordingCanceller) ids() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.stopped)
+}
+
+// A cancel must stop the running task's container, and the failure its
+// killed run may still report must not reopen the cancelled row.
+func TestCancelExecution_StopsRunningTask(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	stopped := &recordingCanceller{}
+	orch.SetTaskCanceller(stopped)
+
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Cancel Running", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	msg := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+
+	if _, err := orch.CancelExecution(ctx, exec.ID); err != nil {
+		t.Fatalf("CancelExecution: %v", err)
+	}
+	if got := stopped.ids(); !slices.Equal(got, []string{msg.TaskExecID}) {
+		t.Errorf("stopped runs = %v, want [%s]", got, msg.TaskExecID)
+	}
+
+	if err := orch.ProcessResult(ctx, testutil.Fail(msg, "context canceled")); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusCancelled {
+		t.Errorf("task status after its late failure = %s, want %s", got, models.TaskStatusCancelled)
 	}
 }

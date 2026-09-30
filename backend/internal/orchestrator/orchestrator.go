@@ -29,6 +29,7 @@ type Orchestrator struct {
 	redis       *persistence.RedisClient
 	retryMgr    *retry.Manager
 	broadcaster EventBroadcaster
+	canceller   TaskCanceller
 
 	// In-memory state for active executions (keyed by workflow exec ID)
 	activeMu sync.RWMutex
@@ -60,6 +61,31 @@ type ExecutionContext struct {
 // EventBroadcaster sends real-time updates to connected WebSocket clients
 type EventBroadcaster interface {
 	Broadcast(event models.WebSocketEvent)
+}
+
+// TaskCanceller stops a task's run in this process, killing its container.
+// Cancelling a task with no run here is a no-op. worker.Pool implements it;
+// an interface keeps the worker package from being imported here.
+type TaskCanceller interface {
+	Cancel(taskExecID string)
+}
+
+// SetTaskCanceller makes execution cancels and failures stop the runs of
+// the tasks they close. Call it before any execution can finish.
+func (o *Orchestrator) SetTaskCanceller(c TaskCanceller) {
+	o.canceller = c
+}
+
+// stopRuns stops the runs of tasks, which FinishExecution just closed.
+// Every row is passed: the returned rows are already cancelled, so which
+// were running is not known, and the rest have no run to stop.
+func (o *Orchestrator) stopRuns(tasks []*models.TaskExecution) {
+	if o.canceller == nil {
+		return
+	}
+	for _, t := range tasks {
+		o.canceller.Cancel(t.ID)
+	}
 }
 
 // Metrics tracks orchestrator performance
@@ -545,6 +571,7 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	if err != nil {
 		return fmt.Errorf("persisting workflow completion: %w", err)
 	}
+	o.stopRuns(closed)
 
 	final := o.finish(execCtx, row, closed)
 	o.metrics.mu.Lock()
@@ -563,13 +590,13 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 // CancelExecution moves execution id to cancelled and cancels its open tasks,
 // so no further task of it is dispatched and late results are dropped. It
 // returns persistence.ErrConflict when the execution is missing or already
-// final. Containers of running tasks keep running until they finish on their
-// own (plan row R31 stops them).
+// final. Running tasks are stopped through the TaskCanceller.
 func (o *Orchestrator) CancelExecution(ctx context.Context, id string) (*models.WorkflowExecution, error) {
 	row, closed, err := o.store.FinishExecution(ctx, id, models.WorkflowStatusCancelled, "")
 	if err != nil {
 		return nil, err
 	}
+	o.stopRuns(closed)
 
 	o.activeMu.RLock()
 	execCtx, ok := o.active[id]
