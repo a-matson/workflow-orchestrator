@@ -31,7 +31,6 @@ func TestRedis_EnqueueAndDequeue(t *testing.T) {
 		TaskName:         "Test Task",
 		TaskType:         "generic",
 		EnqueuedAt:       time.Now(),
-		IdempotencyKey:   uuid.NewString(),
 	}
 
 	if err := client.EnqueueTask(ctx, msg); err != nil {
@@ -41,39 +40,6 @@ func TestRedis_EnqueueAndDequeue(t *testing.T) {
 	got := testutil.Drain(t, client, 1)[0]
 	if got.TaskExecID != msg.TaskExecID {
 		t.Errorf("task exec ID mismatch: %s != %s", got.TaskExecID, msg.TaskExecID)
-	}
-}
-
-func TestRedis_Idempotency(t *testing.T) {
-	client := setupRedis(t)
-	ctx := context.Background()
-
-	msg := &models.TaskMessage{
-		TaskExecID:     uuid.NewString(),
-		WorkflowExecID: uuid.NewString(),
-		EnqueuedAt:     time.Now(),
-		IdempotencyKey: uuid.NewString(),
-	}
-
-	if err := client.EnqueueTask(ctx, msg); err != nil {
-		t.Fatalf("first enqueue failed: %v", err)
-	}
-	if err := client.SetIdempotency(ctx, msg.IdempotencyKey, time.Minute); err != nil {
-		t.Fatalf("set idempotency failed: %v", err)
-	}
-	if err := client.EnqueueTask(ctx, msg); err != nil {
-		t.Fatalf("second enqueue failed: %v", err)
-	}
-
-	exists, err := client.CheckIdempotency(ctx, msg.IdempotencyKey)
-	if err != nil {
-		t.Fatalf("check idempotency failed: %v", err)
-	}
-	if !exists {
-		t.Error("expected idempotency key to exist")
-	}
-	if n := testutil.Queued(t, client, msg.WorkflowExecID); n != 1 {
-		t.Errorf("expected second enqueue to be a no-op, queue holds %d messages", n)
 	}
 }
 
@@ -106,38 +72,6 @@ func TestRedis_PublishAndConsumeResult(t *testing.T) {
 	}
 	if !got.Success {
 		t.Error("expected Success=true")
-	}
-}
-
-func TestRedis_DistributedLock(t *testing.T) {
-	client := setupRedis(t)
-	ctx := context.Background()
-
-	lockID := uuid.NewString()
-
-	ok, err := client.AcquireTaskLock(ctx, lockID, 5*time.Second)
-	if err != nil || !ok {
-		t.Fatalf("first lock failed: err=%v ok=%v", err, ok)
-	}
-
-	ok2, err := client.AcquireTaskLock(ctx, lockID, 5*time.Second)
-	if err != nil {
-		t.Fatalf("second lock returned error: %v", err)
-	}
-	if ok2 {
-		t.Error("second lock should not have succeeded")
-	}
-
-	if err := client.ReleaseTaskLock(ctx, lockID); err != nil {
-		t.Fatalf("release failed: %v", err)
-	}
-
-	ok3, err := client.AcquireTaskLock(ctx, lockID, 5*time.Second)
-	if err != nil || !ok3 {
-		t.Fatalf("third lock after release failed: err=%v ok=%v", err, ok3)
-	}
-	if err := client.ReleaseTaskLock(ctx, lockID); err != nil {
-		t.Fatalf("final release failed: %v", err)
 	}
 }
 

@@ -172,7 +172,6 @@ type TaskMessage struct {
 	MaxRetries       int                `json:"max_retries"`
 	Timeout          time.Duration      `json:"timeout"`
 	EnqueuedAt       time.Time          `json:"enqueued_at"`
-	IdempotencyKey   string             `json:"idempotency_key"`
 	Container        *ContainerSpec     `json:"container,omitempty"`
 	ArtifactsIn      []ResolvedArtifact `json:"artifacts_in,omitempty"`
 	ArtifactsOut     []ArtifactRef      `json:"artifacts_out,omitempty"`

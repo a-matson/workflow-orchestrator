@@ -15,8 +15,6 @@ const (
 	TaskQueueKey   = "workflow:tasks:queue"
 	ResultQueueKey = "workflow:results:queue"
 	DeadLetterKey  = "workflow:tasks:dead_letter"
-	TaskLockKey    = "workflow:task:lock:%s"
-	IdempotencyKey = "workflow:idempotency:%s"
 )
 
 // RedisClient wraps go-redis for workflow broker operations
@@ -48,17 +46,10 @@ func (r *RedisClient) Close() error {
 
 // ==================== Task Queue ====================
 
-// EnqueueTask pushes a task message to the Redis list (durable queue)
+// EnqueueTask pushes a task message to the Redis list. It never skips a
+// push: duplicates are dropped at pickup, where the worker's queued -> running
+// transition matches only one message per attempt.
 func (r *RedisClient) EnqueueTask(ctx context.Context, msg *models.TaskMessage) error {
-	// Check idempotency: don't re-enqueue if already processed
-	idem, err := r.CheckIdempotency(ctx, msg.IdempotencyKey)
-	if err != nil {
-		return fmt.Errorf("idempotency check: %w", err)
-	}
-	if idem {
-		return nil // Already processed or in-flight
-	}
-
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshaling task message: %w", err)
@@ -125,36 +116,6 @@ func (r *RedisClient) SendToDeadLetter(ctx context.Context, msg *models.TaskMess
 	}
 	data, _ := json.Marshal(payload)
 	return r.client.LPush(ctx, DeadLetterKey, data).Err()
-}
-
-// ==================== Distributed Locking ====================
-
-// AcquireTaskLock uses SET NX EX for distributed task exclusion (idempotency)
-func (r *RedisClient) AcquireTaskLock(ctx context.Context, taskExecID string, ttl time.Duration) (bool, error) {
-	key := fmt.Sprintf(TaskLockKey, taskExecID)
-	result, err := r.client.SetNX(ctx, key, "locked", ttl).Result()
-	return result, err
-}
-
-func (r *RedisClient) ReleaseTaskLock(ctx context.Context, taskExecID string) error {
-	key := fmt.Sprintf(TaskLockKey, taskExecID)
-	return r.client.Del(ctx, key).Err()
-}
-
-// ==================== Idempotency ====================
-
-func (r *RedisClient) SetIdempotency(ctx context.Context, key string, ttl time.Duration) error {
-	idemKey := fmt.Sprintf(IdempotencyKey, key)
-	return r.client.Set(ctx, idemKey, "1", ttl).Err()
-}
-
-func (r *RedisClient) CheckIdempotency(ctx context.Context, key string) (bool, error) {
-	idemKey := fmt.Sprintf(IdempotencyKey, key)
-	result, err := r.client.Exists(ctx, idemKey).Result()
-	if err != nil {
-		return false, err
-	}
-	return result > 0, nil
 }
 
 // ==================== Metrics ====================

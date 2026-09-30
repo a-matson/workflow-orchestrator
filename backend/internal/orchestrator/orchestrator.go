@@ -253,7 +253,6 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		MaxRetries:       taskExec.MaxRetries,
 		Timeout:          taskDef.Timeout,
 		EnqueuedAt:       queuedAt,
-		IdempotencyKey:   fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
 		Container:        taskDef.Container,
 		ArtifactsIn:      o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn),
 		ArtifactsOut:     taskDef.ArtifactsOut,
@@ -409,11 +408,6 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	// Duration has no column; it only rides on the broadcast payload.
 	dur := now.Sub(result.StartedAt)
 	taskExec.Duration = &dur
-
-	// Mark idempotency so re-delivered messages are no-ops
-	_ = o.redis.SetIdempotency(ctx,
-		fmt.Sprintf("%s:%s:%d", execCtx.Execution.ID, taskExec.ID, taskExec.RetryCount),
-		24*time.Hour)
 
 	// Update in-memory state — acquire lock, update maps, release, then act
 	execCtx.mu.Lock()
