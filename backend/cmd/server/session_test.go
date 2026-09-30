@@ -21,3 +21,18 @@ func TestParseSessionSecret(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionConfig_CookieSecure(t *testing.T) {
+	t.Setenv("FLUXOR_SESSION_SECRET", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	for v, want := range map[string]bool{"": false, "true": true, "1": true, "false": false} {
+		t.Setenv("FLUXOR_COOKIE_SECURE", v)
+		cfg, err := sessionConfig()
+		if err != nil || cfg.Secure != want {
+			t.Errorf("FLUXOR_COOKIE_SECURE=%q: Secure = %v, %v; want %v", v, cfg.Secure, err, want)
+		}
+	}
+	t.Setenv("FLUXOR_COOKIE_SECURE", "ture")
+	if _, err := sessionConfig(); err == nil {
+		t.Error(`FLUXOR_COOKIE_SECURE="ture": no error`)
+	}
+}

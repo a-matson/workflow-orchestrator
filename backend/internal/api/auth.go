@@ -75,6 +75,8 @@ type Principal struct {
 	KeyID string
 	Name  string
 	Role  Role
+	// Expires is when a session-cookie principal lapses; zero for a Bearer key.
+	Expires time.Time
 }
 
 type principalKey struct{}
@@ -107,6 +109,7 @@ func NewAuthenticator(store *persistence.Store) *Authenticator {
 // credential, and any other error when the credential could not be checked.
 func (a *Authenticator) Authenticate(r *http.Request) (*Principal, error) {
 	var key *persistence.APIKey
+	var expires time.Time
 	var err error
 	if header := r.Header.Get("Authorization"); header != "" {
 		scheme, token, ok := strings.Cut(header, " ")
@@ -119,13 +122,14 @@ func (a *Authenticator) Authenticate(r *http.Request) (*Principal, error) {
 		if cerr != nil {
 			return nil, errUnauthenticated
 		}
-		keyID, verr := verifySession(a.sessionSecret, c.Value, time.Now())
+		keyID, exp, verr := verifySession(a.sessionSecret, c.Value, time.Now())
 		if verr != nil {
 			return nil, errUnauthenticated
 		}
 		// Looked up on every request, uncached, so revoking the key ends
 		// its browser sessions at once.
 		key, err = a.store.GetActiveAPIKey(r.Context(), keyID)
+		expires = exp
 	}
 	if errors.Is(err, persistence.ErrNotFound) {
 		return nil, errUnauthenticated
@@ -133,12 +137,16 @@ func (a *Authenticator) Authenticate(r *http.Request) (*Principal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("checking API key: %w", err)
 	}
-	return &Principal{KeyID: key.ID, Name: key.Name, Role: Role(key.Role)}, nil
+	return &Principal{KeyID: key.ID, Name: key.Name, Role: Role(key.Role), Expires: expires}, nil
 }
 
 // StillValid reports whether p's credential is still usable; long-lived
 // connections call it to notice revocation after they were authenticated.
 func (a *Authenticator) StillValid(ctx context.Context, p *Principal) (bool, error) {
+	// A /ws opened with a cookie must not outlive the cookie itself.
+	if !p.Expires.IsZero() && !time.Now().Before(p.Expires) {
+		return false, nil
+	}
 	return a.store.APIKeyActive(ctx, p.KeyID)
 }
 
