@@ -22,7 +22,8 @@ export const api = {
 
 export function wsUrl(path = '/ws'): string {
 	const base = BASE_URL
-		? BASE_URL.replace(/^https?/, 'ws')
+		? // Leave the trailing "s" in place so https becomes wss instead of downgrading to ws.
+			BASE_URL.replace(/^http/, 'ws')
 		: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
 	return `${base}${path}`
 }
