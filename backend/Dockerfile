@@ -24,6 +24,9 @@ RUN apk --no-cache add ca-certificates tzdata wget
 WORKDIR /app
 COPY --from=builder /workflow-server .
 RUN adduser -D -u 10001 appuser
+# A fresh named volume copies this directory's ownership, so task workspaces
+# mounted here are writable by appuser.
+RUN mkdir /workspaces && chown appuser:appuser /workspaces
 USER appuser
 EXPOSE 8080 9091
 CMD ["./workflow-server"]

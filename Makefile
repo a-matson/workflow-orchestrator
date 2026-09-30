@@ -102,8 +102,10 @@ test-integration:
 # A separate compose project with the committed example env, so the run never
 # touches the developer's stack or volumes (exported shell variables still
 # override the env file). Logs are dumped on failure because CI tears the stack
-# down before anyone can inspect it.
-E2E_COMPOSE = docker compose --env-file .env.example -p fluxor-e2e
+# down before anyone can inspect it. The workspace volume has a fixed name, so
+# e2e gets its own to keep `down -v` off the dev stack's volume.
+E2E_COMPOSE = FLUXOR_WORKSPACE_VOLUME=fluxor-e2e-task-workspaces \
+	docker compose --env-file .env.example -p fluxor-e2e
 e2e:
 	@status=0; \
 	trap '$(E2E_COMPOSE) down -v' INT TERM; \

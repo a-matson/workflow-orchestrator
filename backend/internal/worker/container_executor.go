@@ -13,7 +13,7 @@ package worker
 //
 // Artifact flow:
 //   Before start: artifacts_in keys are downloaded from MinIO and written
-//                 to a temp directory that is bind-mounted into /workspace.
+//                 to a per-task directory mounted at /workspace.
 //   After exit:   artifacts_out paths are read from /workspace and uploaded
 //                 to MinIO. Keys are: artifacts/{execID}/{taskDefID}/{path}
 
@@ -56,14 +56,29 @@ const (
 	WorkspaceDir = "/workspace"
 )
 
+// Workspace says where per-task workspace directories are created and how the
+// Docker daemon reaches them.
+//
+// When the backend itself runs in a container and drives the host daemon through
+// the socket, its paths do not exist on the host, so a bind mount cannot work.
+// Volume then names a Docker volume mounted at Root in this process, and each
+// task container mounts only its own subdirectory of it. With Volume empty, the
+// directory is bind-mounted, which only works when this process and the daemon
+// share a filesystem.
+type Workspace struct {
+	Root   string // parent directory; empty means os.TempDir()
+	Volume string
+}
+
 // ContainerExecutor wraps the Docker client and MinIO client.
 type ContainerExecutor struct {
-	docker  *dockerclient.Client
-	storage *storage.Client
+	docker    *dockerclient.Client
+	storage   *storage.Client
+	workspace Workspace
 }
 
 // NewContainerExecutor connects to the local Docker Engine socket.
-func NewContainerExecutor(storageClient *storage.Client) (*ContainerExecutor, error) {
+func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*ContainerExecutor, error) {
 	dc, err := dockerclient.NewClientWithOpts(
 		dockerclient.FromEnv,
 		dockerclient.WithAPIVersionNegotiation(),
@@ -72,7 +87,7 @@ func NewContainerExecutor(storageClient *storage.Client) (*ContainerExecutor, er
 		return nil, fmt.Errorf("docker: connect: %w", err)
 	}
 
-	ce := &ContainerExecutor{docker: dc, storage: storageClient}
+	ce := &ContainerExecutor{docker: dc, storage: storageClient, workspace: ws}
 	if err := ce.ensureNetwork(context.Background()); err != nil {
 		return nil, err
 	}
@@ -124,12 +139,12 @@ func (ce *ContainerExecutor) Run(
 	}
 
 	// ── 2. Prepare workspace: download artifact inputs ────────────────────────
-	workspaceDir, err := os.MkdirTemp("", "fluxor-ws-*")
+	workspaceDir, err := os.MkdirTemp(ce.workspace.Root, "ws-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("container: create workspace: %w", err)
 	}
 	// Mode 0700: only the worker process can read/write this directory.
-	// The container sees it via bind-mount; no other host process can access it.
+	// The task container runs as this process's uid so it can still write here.
 	if err := os.Chmod(workspaceDir, 0o700); err != nil {
 		defer func() { _ = os.RemoveAll(workspaceDir) }()
 		return "", nil, fmt.Errorf("container: chmod workspace: %w", err)
@@ -155,6 +170,9 @@ func (ce *ContainerExecutor) Run(
 		Cmd:        cmd,
 		Env:        envVars,
 		WorkingDir: spec.WorkDir,
+		// With every capability dropped, even root cannot write the 0700
+		// workspace unless it owns it.
+		User: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		// Security: prevent writing to root FS; only /workspace and /tmp are writable
 		Labels: map[string]string{
 			"fluxor.task_exec_id":     msg.TaskExecID,
@@ -182,14 +200,7 @@ func (ce *ContainerExecutor) Run(
 			"/tmp": "rw,noexec,nosuid,size=64m",
 		},
 
-		// Bind-mount the workspace directory for artifact exchange
-		Mounts: []mount.Mount{
-			{
-				Type:   mount.TypeBind,
-				Source: workspaceDir,
-				Target: WorkspaceDir,
-			},
-		},
+		Mounts: []mount.Mount{ce.workspaceMount(workspaceDir)},
 
 		// Explicit restart policy: never restart task containers
 		RestartPolicy: container.RestartPolicy{Name: "no"},
@@ -269,6 +280,22 @@ func (ce *ContainerExecutor) Run(
 		"artifacts_out": len(artifacts),
 	})
 	return stdout, artifacts, nil
+}
+
+// workspaceMount exposes dir, and nothing else of the workspace root, at /workspace.
+func (ce *ContainerExecutor) workspaceMount(dir string) mount.Mount {
+	if ce.workspace.Volume == "" {
+		return mount.Mount{Type: mount.TypeBind, Source: dir, Target: WorkspaceDir}
+	}
+	return mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: ce.workspace.Volume,
+		Target: WorkspaceDir,
+		// NoCopy: otherwise the daemon copies the image's /workspace (root-owned,
+		// 0755, created for WorkingDir) onto the empty subpath and takes away
+		// our ownership of it.
+		VolumeOptions: &mount.VolumeOptions{Subpath: filepath.Base(dir), NoCopy: true},
+	}
 }
 
 // ── Image pull ────────────────────────────────────────────────────────────────

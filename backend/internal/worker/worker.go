@@ -57,11 +57,12 @@ func NewPool(
 	workerCount, concurrencyPerWorker int,
 	notifier TaskNotifier,
 	storageClient *storage.Client,
+	ws Workspace,
 ) *Pool {
 	var executor *ContainerExecutor
 	if storageClient != nil {
 		var err error
-		executor, err = NewContainerExecutor(storageClient)
+		executor, err = NewContainerExecutor(storageClient, ws)
 		if err != nil {
 			log.Warn().Err(err).Msg("Docker unavailable — container isolation disabled; tasks run in-process")
 		}
