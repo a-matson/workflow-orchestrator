@@ -25,8 +25,8 @@ func (h *Handler) Server(allowedOrigins []string) http.Handler {
 		RecoveryMiddleware,
 		LoggingMiddleware,
 		OriginPolicy(allowedOrigins),
-		NewRateLimiter(200, time.Minute).WithTrustedProxies(h.trusted).Middleware,
-		LoginLimit(NewRateLimiter(10, time.Minute).WithTrustedProxies(h.trusted)),
+		NewRateLimiter(h.generalLimit, time.Minute).WithTrustedProxies(h.trusted).Middleware,
+		LoginLimit(NewRateLimiter(h.loginLimit, time.Minute).WithTrustedProxies(h.trusted)),
 		(&Authenticator{store: h.store, sessionSecret: h.session.Secret}).Middleware(mux),
 	)
 }

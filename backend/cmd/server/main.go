@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -129,6 +130,14 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("invalid FLUXOR_TRUSTED_PROXIES")
 	}
+	generalLimit, err := rateLimitFromEnv("FLUXOR_RATE_LIMIT_PER_MIN", 200)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid rate limit")
+	}
+	loginLimit, err := rateLimitFromEnv("FLUXOR_LOGIN_RATE_LIMIT_PER_MIN", 10)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid rate limit")
+	}
 	hub := api.NewHub(
 		api.WithAllowedOrigins(allowedOrigins),
 		// Bounds how long a revoked key keeps an open /ws stream (README "Authentication").
@@ -168,7 +177,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("session configuration failed")
 	}
-	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session).WithTrustedProxies(trustedProxies)
+	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session).WithTrustedProxies(trustedProxies).WithRateLimits(generalLimit, loginLimit)
 
 	httpSrv := &http.Server{
 		Addr:         httpAddr,
@@ -218,4 +227,18 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// rateLimitFromEnv rejects zero, negative and non-numeric values: a limit that
+// silently falls back to the default would hide a typo in a security setting.
+func rateLimitFromEnv(key string, def int) (int, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s=%q: want a positive integer", key, v)
+	}
+	return n, nil
 }
