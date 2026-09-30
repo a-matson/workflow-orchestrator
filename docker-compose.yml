@@ -61,7 +61,7 @@ services:
   minio:
     # MinIO stopped publishing images to Docker Hub and quay.io; Chainguard builds the same
     # server from source. Its free tier only serves :latest, so the digest pins it.
-    image: cgr.dev/chainguard/minio:latest@sha256:71674988a1c7ddd5724928633199152b11e4ddefd6c6ce2d60772ff4a8f22ca9
+    image: cgr.dev/chainguard/minio:latest@sha256:4692462f35d97d7e82c30371d82f057703c5d9489bcae726010594c812f2d285
     # Root, as with the previous image: existing minio_data volumes are root-owned and the
     # image's default uid 65532 cannot open them. Non-root needs a one-time chown migration.
     user: "0:0"
