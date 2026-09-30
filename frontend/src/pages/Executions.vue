@@ -227,11 +227,14 @@
 	import { useWebSocketStore } from '../stores/websocket'
 	import { STATUS_COLORS } from '../types'
 	import type { WorkflowExecution, TaskExecution } from '../types'
+	import { useNow } from '../composables/useNow'
 
 	const store = useWorkflowStore()
 	const wsStore = useWebSocketStore()
 	const route = useRoute()
 	const router = useRouter()
+	// Read inside the formatters so open runs re-render every second without a WS event.
+	const now = useNow()
 	const showToast = inject<(msg: string, type?: 'success' | 'error' | 'info') => void>('showToast')
 
 	const statusFilter = ref('')
@@ -309,19 +312,14 @@
 
 	function elapsedStr(startAt?: string, endAt?: string) {
 		if (!startAt) return '—'
-		const ms = (endAt ? new Date(endAt) : new Date()).getTime() - new Date(startAt).getTime()
-		if (ms < 1000) return `${ms}ms`
+		const ms = (endAt ? new Date(endAt).getTime() : now.value) - new Date(startAt).getTime()
+		if (ms < 1000) return `${Math.max(0, ms)}ms`
 		if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
 		return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`
 	}
 
 	function taskDuration(task: TaskExecution) {
-		if (!task.started_at) return '—'
-		const ms =
-			(task.completed_at ? new Date(task.completed_at) : new Date()).getTime() -
-			new Date(task.started_at).getTime()
-		if (ms < 1000) return `${ms}ms`
-		return `${(ms / 1000).toFixed(1)}s`
+		return elapsedStr(task.started_at, task.completed_at)
 	}
 
 	function taskStats(exec: WorkflowExecution) {

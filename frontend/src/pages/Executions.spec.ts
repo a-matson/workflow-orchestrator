@@ -24,11 +24,15 @@ function runningExec() {
 	}
 }
 
+// Unmounted in afterEach so the shared clock's subscriber count returns to zero between tests.
+const mounted: { unmount: () => void }[] = []
+
 async function mountRunning() {
 	vi.mocked(api.get).mockImplementation(async (path: string) =>
 		path.startsWith('/api/executions?') ? { executions: [runningExec()] } : runningExec(),
 	)
 	const w = mount(Executions)
+	mounted.push(w)
 	await flushPromises()
 	return w
 }
@@ -39,7 +43,10 @@ describe('Executions elapsed timers', () => {
 		vi.useFakeTimers()
 		vi.setSystemTime(T0)
 	})
-	afterEach(() => vi.useRealTimers())
+	afterEach(() => {
+		mounted.splice(0).forEach((w) => w.unmount())
+		vi.useRealTimers()
+	})
 
 	it('ticks the run elapsed time without any new event, in minutes and seconds', async () => {
 		const w = await mountRunning()
