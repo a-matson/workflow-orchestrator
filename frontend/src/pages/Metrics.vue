@@ -2,8 +2,13 @@
 	<div class="metrics-page">
 		<!-- KPI row -->
 		<div class="kpi-row">
-			<div v-for="kpi in kpiCards" :key="kpi.label" class="kpi-card">
-				<div class="kpi-val" :style="{ color: kpi.color }">
+			<div
+				v-for="kpi in kpiCards"
+				:key="kpi.label"
+				class="kpi-card"
+				:data-testid="`kpi-${kpi.label}`"
+			>
+				<div class="kpi-val" data-testid="kpi-value" :style="{ color: kpi.color }">
 					{{ kpi.value }}
 				</div>
 				<div class="kpi-label">
