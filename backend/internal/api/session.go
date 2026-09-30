@@ -131,9 +131,8 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		APIKey string `json:"api_key"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLoginBody)).Decode(&req); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			writeError(w, r, http.StatusRequestEntityTooLarge, "request body too large", nil)
+		if isTooBig(err) {
+			writeError(w, r, http.StatusRequestEntityTooLarge, errBodyTooLarge, nil)
 			return
 		}
 		writeError(w, r, http.StatusBadRequest, "invalid request body", nil)

@@ -138,6 +138,10 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("invalid rate limit")
 	}
+	maxBody, err := maxBodyFromEnv("FLUXOR_MAX_BODY_BYTES", api.DefaultMaxBody)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid request body limit")
+	}
 	hub := api.NewHub(
 		api.WithAllowedOrigins(allowedOrigins),
 		// Bounds how long a revoked key keeps an open /ws stream (README "Authentication").
@@ -179,7 +183,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("session configuration failed")
 	}
-	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session).WithTrustedProxies(trustedProxies).WithRateLimits(generalLimit, loginLimit)
+	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session).WithTrustedProxies(trustedProxies).WithRateLimits(generalLimit, loginLimit).WithMaxBody(maxBody)
 
 	httpSrv := &http.Server{
 		Addr:         httpAddr,
@@ -239,6 +243,18 @@ func rateLimitFromEnv(key string, def int) (int, error) {
 		return def, nil
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s=%q: want a positive integer", key, v)
+	}
+	return n, nil
+}
+
+func maxBodyFromEnv(key string, def int64) (int64, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n < 1 {
 		return 0, fmt.Errorf("%s=%q: want a positive integer", key, v)
 	}
