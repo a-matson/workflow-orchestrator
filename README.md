@@ -170,7 +170,12 @@ On an IPv6-only host behind NAT64, a network-specific NAT64 prefix (RFC 6052) or
 
 ## REST API
 
-Example: `curl -X POST http://localhost:8080/api/workflows -H "Authorization: Bearer $FLUXOR_API_KEY" -H 'Content-Type: application/json' -d @examples/etl-pipeline.json`
+Example (the header comes from stdin, so the key stays out of `ps`):
+
+```bash
+printf 'Authorization: Bearer %s\n' "$FLUXOR_API_KEY" |
+  curl -X POST http://localhost:8080/api/workflows -H @- -H 'Content-Type: application/json' -d @examples/etl-pipeline.json
+```
 
 ```
 POST   /api/workflows                  Create workflow definition
