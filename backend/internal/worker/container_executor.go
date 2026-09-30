@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -587,8 +588,17 @@ func buildCommand(msg *models.TaskMessage) []string {
 		// generic / data_transform / ml_inference
 		command, _ := cfg["command"].(string)
 		if command == "" {
+			script, _ := cfg["script"].(string)
+			if script != "" {
+				return []string{"sh", "-c", script}
+			}
+			if model, _ := cfg["model_name"].(string); model != "" && msg.TaskType == "ml_inference" {
+				return mlInferenceCommand(model, cfg)
+			}
 			return nil
 		}
+		// An explicit command wins over script: it is the older, more specific
+		// key, and args only make sense alongside it.
 		args := []string{command}
 		switch a := cfg["args"].(type) {
 		case []any:
@@ -632,3 +642,20 @@ func buildEnv(msg *models.TaskMessage, spec models.ContainerSpec) []string {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+// mlInferenceCommand mirrors the flags the in-process execMLInference passes
+// (worker.go) so both modes run the same model invocation.
+func mlInferenceCommand(model string, cfg map[string]any) []string {
+	batchSize := 32
+	if bs, ok := cfg["batch_size"].(float64); ok && bs > 0 {
+		batchSize = int(bs)
+	}
+	args := []string{model, "--batch-size", strconv.Itoa(batchSize)}
+	if in, _ := cfg["input_path"].(string); in != "" {
+		args = append(args, "--input", in)
+	}
+	if out, _ := cfg["output_path"].(string); out != "" {
+		args = append(args, "--output", out)
+	}
+	return args
+}
