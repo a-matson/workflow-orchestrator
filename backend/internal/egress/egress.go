@@ -20,6 +20,7 @@ import (
 // ErrEgressDenied is wrapped by every error for a connection the guard refuses.
 var ErrEgressDenied = errors.New("egress denied")
 
+// maxRedirects is the number of redirects followed; the request after the last one is refused.
 const maxRedirects = 5
 
 // Prefixes that net/netip has no predicate for. The IPv6 ranges that embed an
@@ -157,7 +158,7 @@ func (g *Guard) HTTPClient(timeout time.Duration) *http.Client {
 			IdleConnTimeout:     60 * time.Second,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+			if len(via) > maxRedirects {
 				return fmt.Errorf("stopped after %d redirects", maxRedirects)
 			}
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
