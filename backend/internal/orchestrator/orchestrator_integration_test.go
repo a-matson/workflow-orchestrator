@@ -660,6 +660,38 @@ func TestRecovery_Beyond200(t *testing.T) {
 	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
 }
 
+// REL-16: recovery must resume an execution with the definition it started
+// with, not the stored one edited since.
+func TestRecovery_UsesSnapshot(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	def := &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Snapshot", MaxParallel: 1,
+		Tasks: independentTasks("a", "b"),
+	}
+	exec := startWorkflow(t, orch, store, def)
+	testutil.Drain(t, redis, 1)
+	edited := *def
+	edited.Tasks = independentTasks("a")
+	testutil.SaveDef(t, store, &edited)
+
+	restarted := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+	first := testutil.Drain(t, redis, 1)[0]
+	runTask(t, restarted, first, testutil.Ok(first))
+	second := testutil.Drain(t, redis, 1)[0]
+	runTask(t, restarted, second, testutil.Ok(second))
+
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+	for _, id := range []string{"a", "b"} {
+		if got := testutil.TaskRow(t, store, exec.ID, id).Status; got != models.TaskStatusCompleted {
+			t.Errorf("task %s = %s, want completed", id, got)
+		}
+	}
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.
