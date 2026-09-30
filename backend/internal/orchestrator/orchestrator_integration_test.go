@@ -897,4 +897,7 @@ func TestCancelExecution_StopsRunningTask(t *testing.T) {
 	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusCancelled {
 		t.Errorf("task status after its late failure = %s, want %s", got, models.TaskStatusCancelled)
 	}
+	if n := orch.GetMetrics()["active_workflows"]; n != 0 {
+		t.Errorf("active workflows after a late result for a cancelled execution = %d, want 0", n)
+	}
 }
