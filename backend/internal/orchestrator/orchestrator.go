@@ -317,6 +317,7 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 	}
 
 	if ok {
+		execCtx.cacheTask(taskExec)
 		execCtx.Running[taskExec.TaskDefinitionID] = true
 		delete(execCtx.Queued, taskExec.TaskDefinitionID)
 	}
