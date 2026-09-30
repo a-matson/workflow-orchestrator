@@ -224,7 +224,7 @@ GET    /api/executions/{execID}/tasks  List tasks for execution
 GET    /api/tasks/{id}                 Get task execution
 GET    /api/tasks/{id}/logs            Get task logs
 GET    /api/tasks/{id}/artifacts       Get task artifact metadata
-GET    /api/artifacts/url?key=…        Pre-signed MinIO download URL
+GET    /api/tasks/{id}/artifacts/{path} Download one artifact the task produced
 GET    /api/metrics                    Platform metrics
 GET    /api/health                     Liveness (process up, no dependency checks)
 GET    /api/ready                      Readiness (Postgres, Redis, MinIO; 503 if any is down)
