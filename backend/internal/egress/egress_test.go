@@ -1,8 +1,16 @@
 package egress
 
 import (
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestGuard_DeniesInternalAddresses(t *testing.T) {
@@ -87,5 +95,119 @@ func TestNew_RejectsMalformedEntries(t *testing.T) {
 		if _, err := New(spec); err == nil {
 			t.Errorf("New(%q) = nil error, want error", spec)
 		}
+	}
+}
+
+func TestControl_ChecksTheDialledAddress(t *testing.T) {
+	g, err := New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for addr, wantDenied := range map[string]bool{
+		"[::1]:80":          true,
+		"127.0.0.1:443":     true,
+		"[fe80::1%eth0]:80": true,
+		"93.184.216.34:443": false,
+		"localhost:80":      true, // unparseable as ip:port fails closed
+		"garbage":           true,
+	} {
+		err := g.control("tcp", addr, nil)
+		if denied := errors.Is(err, ErrEgressDenied); denied != wantDenied {
+			t.Errorf("control(%q) = %v, want denied=%v", addr, err, wantDenied)
+		}
+	}
+}
+
+func counting(t *testing.T, h http.HandlerFunc) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		h(rw, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+func get(t *testing.T, allow, target string) error {
+	t.Helper()
+	g, err := New(allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := g.HTTPClient(5 * time.Second).Get(target)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
+func hostPort(srv *httptest.Server) string { return strings.TrimPrefix(srv.URL, "http://") }
+
+func TestHTTPClient_RejectsRedirectToNonHTTPScheme(t *testing.T) {
+	srv, _ := counting(t, func(rw http.ResponseWriter, r *http.Request) {
+		http.Redirect(rw, r, "ftp://files.example.com/x", http.StatusFound)
+	})
+
+	if err := get(t, hostPort(srv), srv.URL); !errors.Is(err, ErrEgressDenied) {
+		t.Errorf("err = %v, want ErrEgressDenied", err)
+	}
+}
+
+func TestHTTPClient_FollowsAtMostFiveRedirects(t *testing.T) {
+	srv, hits := counting(t, func(rw http.ResponseWriter, r *http.Request) {
+		http.Redirect(rw, r, "/again", http.StatusFound)
+	})
+
+	err := get(t, hostPort(srv), srv.URL)
+
+	if err == nil || !strings.Contains(err.Error(), "stopped after 5 redirects") {
+		t.Errorf("err = %v, want stopped after 5 redirects", err)
+	}
+	if n := hits.Load(); n != 6 {
+		t.Errorf("server saw %d requests, want 6 (the original and 5 redirects)", n)
+	}
+}
+
+// The target is private but not loopback: net/http never proxies loopback, so
+// a loopback target could not show whether the proxy was bypassed.
+func TestHTTPClient_IgnoresProxyEnvironment(t *testing.T) {
+	proxy, proxyHits := counting(t, func(http.ResponseWriter, *http.Request) {})
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("http_proxy", proxy.URL)
+	target := "http://10.255.255.1:81/"
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ProxyFromEnvironment caches the environment on first use; if it ran
+	// before Setenv, this test would pass without proving anything.
+	if u, err := http.ProxyFromEnvironment(req); err != nil || u == nil || u.String() != proxy.URL {
+		t.Fatalf("ProxyFromEnvironment = %v, %v; want %s, so the test can detect a proxied request", u, err, proxy.URL)
+	}
+
+	err = get(t, hostPort(proxy), target)
+
+	if !errors.Is(err, ErrEgressDenied) {
+		t.Errorf("err = %v, want ErrEgressDenied", err)
+	}
+	if n := proxyHits.Load(); n != 0 {
+		t.Errorf("proxy saw %d requests, want 0", n)
+	}
+}
+
+func TestHTTPClient_AllowlistedHostPortIsExact(t *testing.T) {
+	srv, hits := counting(t, func(http.ResponseWriter, *http.Request) {})
+	other, otherHits := counting(t, func(http.ResponseWriter, *http.Request) {})
+	port := func(s *httptest.Server) string { return strconv.Itoa(s.Listener.Addr().(*net.TCPAddr).Port) }
+
+	if err := get(t, "localhost:"+port(srv), "http://localhost:"+port(srv)+"/"); err != nil {
+		t.Errorf("allowlisted name: err = %v, want nil", err)
+	}
+	if err := get(t, "localhost:"+port(srv), "http://localhost:"+port(other)+"/"); !errors.Is(err, ErrEgressDenied) {
+		t.Errorf("same name, other port: err = %v, want ErrEgressDenied", err)
+	}
+	if hits.Load() != 1 || otherHits.Load() != 0 {
+		t.Errorf("hits = %d, %d; want 1, 0", hits.Load(), otherHits.Load())
 	}
 }

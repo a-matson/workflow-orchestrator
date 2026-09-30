@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -67,5 +68,24 @@ func TestExecHTTP_BlocksRedirectToPrivate(t *testing.T) {
 	}
 	if n := internalHits.Load(); n != 0 {
 		t.Errorf("redirect target saw %d requests, want 0", n)
+	}
+}
+
+// The guard must check the resolved IP, not the URL host: a name that
+// resolves to loopback is as internal as 127.0.0.1.
+func TestExecHTTP_BlocksHostnameResolvingToLoopback(t *testing.T) {
+	srv, hits := countingServer(t, func(http.ResponseWriter, *http.Request) {})
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = runHTTPTask(t, "", "http://localhost:"+u.Port()+"/")
+
+	if !errors.Is(err, egress.ErrEgressDenied) {
+		t.Errorf("err = %v, want ErrEgressDenied", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("loopback server saw %d requests, want 0", n)
 	}
 }
