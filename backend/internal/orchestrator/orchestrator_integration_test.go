@@ -771,3 +771,39 @@ func TestFailedWorkflow_CancelsOpenSiblings(t *testing.T) {
 		t.Errorf("execution status = %s, want %s", stored.Status, models.WorkflowStatusFailed)
 	}
 }
+
+// A cancel whose task close fails must not commit the execution's terminal
+// status alone: recovery never revisits a terminal execution, so its queued
+// rows would still be picked up and run.
+func TestCancelExecution_AllOrNothing(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Atomic Cancel", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	msg := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	// A trigger is the cheapest way to fail one store write on a real database.
+	if _, err := store.Pool().Exec(ctx, `
+		CREATE FUNCTION fail_write() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'injected store error'; END $$;
+		CREATE TRIGGER fail_cancel BEFORE UPDATE ON task_executions FOR EACH ROW
+		WHEN (NEW.status = 'cancelled') EXECUTE FUNCTION fail_write();`); err != nil {
+		t.Fatalf("install failing trigger: %v", err)
+	}
+
+	if _, err := orch.CancelExecution(ctx, exec.ID); err == nil {
+		t.Error("CancelExecution succeeded although its task close failed")
+	}
+	stored, err := store.GetWorkflowExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if stored.Status != models.WorkflowStatusRunning {
+		t.Errorf("execution status = %s, want %s", stored.Status, models.WorkflowStatusRunning)
+	}
+}
