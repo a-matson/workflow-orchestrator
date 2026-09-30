@@ -379,7 +379,8 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	}
 
 	// Dispatch next wave of now-unblocked tasks
-	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
+	dispatchCtx := context.WithoutCancel(ctx)
+	goSafe("dispatch", execCtx.Execution.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 	return nil
 }
 
@@ -605,7 +606,10 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 	}
 }
 
-// goSafe runs fn on a new goroutine via runSafe.
+// goSafe runs fn on a new goroutine via runSafe. Every per-execution
+// goroutine goes through it so one bad execution cannot crash-loop the
+// process. A recovered panic leaves that execution stalled until the timeout
+// reaper (plan row R17) exists; nothing re-drives it before then.
 func goSafe(name, execID string, fn func()) {
 	go runSafe(name, execID, fn)
 }

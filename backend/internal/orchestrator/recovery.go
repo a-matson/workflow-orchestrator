@@ -144,6 +144,7 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		Int("running", len(running)).
 		Msg("execution recovered — resuming dispatch")
 
-	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
+	dispatchCtx := context.WithoutCancel(ctx)
+	goSafe("dispatch", execCtx.Execution.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 	return nil
 }
