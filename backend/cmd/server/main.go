@@ -125,6 +125,10 @@ func main() {
 
 	// Core services
 	allowedOrigins := strings.Split(getEnv("FLUXOR_ALLOWED_ORIGINS", ""), ",")
+	trustedProxies, err := api.ParseTrustedProxies(os.Getenv("FLUXOR_TRUSTED_PROXIES"))
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid FLUXOR_TRUSTED_PROXIES")
+	}
 	hub := api.NewHub(
 		api.WithAllowedOrigins(allowedOrigins),
 		// Bounds how long a revoked key keeps an open /ws stream (README "Authentication").
@@ -164,7 +168,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("session configuration failed")
 	}
-	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session)
+	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session).WithTrustedProxies(trustedProxies)
 
 	httpSrv := &http.Server{
 		Addr:         httpAddr,

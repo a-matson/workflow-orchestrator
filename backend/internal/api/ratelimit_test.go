@@ -119,3 +119,13 @@ func TestLoginLimit_StricterBucketOnlyForLogin(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTrustedProxies(t *testing.T) {
+	got, err := ParseTrustedProxies(" 172.18.0.0/16, ,fd00::/8")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if _, err := ParseTrustedProxies("not-a-cidr"); err == nil {
+		t.Fatal("want an error for a malformed CIDR")
+	}
+}

@@ -157,6 +157,7 @@ npm run format
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `FLUXOR_EGRESS_ALLOW` | _(empty)_ | Comma-separated CIDRs (`10.20.0.0/16`) and exact `host:port` entries (`geo-service.internal:80`) that `http_request`, notification and `database_query` tasks may reach despite the egress guard |
 | `FLUXOR_MAX_ARTIFACT_BYTES` | `104857600` (100 MiB) | Largest artifact a container task may download into or upload from its workspace; an invalid value keeps the container executor from starting |
+| `FLUXOR_TRUSTED_PROXIES` | _(empty)_ | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` the rate limiter believes (the right-most address outside this set is the client). From any other peer the header is ignored and the limiter keys on the peer IP. Compose sets it to the `fluxor-internal` subnet (`172.29.250.0/24`) because the bundled nginx proxies `/api` and `/ws`; with an empty value behind a proxy, all clients share the proxy's bucket. Limits: 200 requests/min per client IP, and 10/min for `POST /api/session`; a `429` carries `Retry-After` |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 | `FLUXOR_SESSION_SECRET` | _(random per start)_ | Base64 HMAC key (≥ 32 bytes) for browser session cookies (see [Browser login](#browser-login)) |
 | `FLUXOR_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` even over plain HTTP, for a TLS-terminating proxy |

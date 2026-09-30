@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -25,6 +26,7 @@ type Handler struct {
 	hub          *Hub
 	storage      *storage.Client
 	session      SessionConfig
+	trusted      []netip.Prefix
 }
 
 // NewHandler returns a Handler whose session secret is random, so sessions
@@ -37,6 +39,13 @@ func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *
 // WithSession replaces the session cookie configuration.
 func (h *Handler) WithSession(cfg SessionConfig) *Handler {
 	h.session = cfg
+	return h
+}
+
+// WithTrustedProxies sets the reverse proxies whose X-Forwarded-For the rate
+// limiter believes.
+func (h *Handler) WithTrustedProxies(p []netip.Prefix) *Handler {
+	h.trusted = p
 	return h
 }
 
