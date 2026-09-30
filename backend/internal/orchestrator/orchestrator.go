@@ -52,7 +52,10 @@ type ExecutionContext struct {
 	Running    map[string]bool
 	Queued     map[string]bool
 	Failed     map[string]bool
-	mu         sync.Mutex
+	// done is set once completeWorkflow has claimed the execution; a late
+	// result must not change the rows its final event reported.
+	done bool
+	mu   sync.Mutex
 }
 
 // EventBroadcaster sends real-time updates to connected WebSocket clients
@@ -147,6 +150,10 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 		Failed:     make(map[string]bool),
 	}
 
+	// Taken before the context is shared: dispatch starts writing the live
+	// rows as soon as it is registered.
+	snap := execCtx.snapshot()
+
 	// Register in active map
 	o.activeMu.Lock()
 	o.active[exec.ID] = execCtx
@@ -165,7 +172,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	o.metrics.WorkflowsStarted++
 	o.metrics.mu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowStarted, Payload: exec})
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowStarted, Payload: snap})
 
 	log.Info().Str("exec_id", exec.ID).Str("workflow", def.Name).Msg("workflow execution started")
 
@@ -173,7 +180,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	dispatchCtx := context.WithoutCancel(ctx)
 	goSafe("dispatch", exec.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 
-	return exec, nil
+	return snap, nil
 }
 
 // ── dispatchReadyTasks ─────────────────────────────────────────────────────
@@ -507,26 +514,34 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionContext, failed bool) error {
 	now := time.Now()
-	execCtx.Execution.CompletedAt = &now
-	execCtx.Execution.UpdatedAt = now
-
-	evtType := models.WSEventWorkflowCompleted
+	status, evtType := models.WorkflowStatusCompleted, models.WSEventWorkflowCompleted
 	if failed {
-		execCtx.Execution.Status = models.WorkflowStatusFailed
-		evtType = models.WSEventWorkflowFailed
-
-		o.metrics.mu.Lock()
-		o.metrics.WorkflowsFailed++
-		o.metrics.mu.Unlock()
-	} else {
-		execCtx.Execution.Status = models.WorkflowStatusCompleted
-
-		o.metrics.mu.Lock()
-		o.metrics.WorkflowsCompleted++
-		o.metrics.mu.Unlock()
+		status, evtType = models.WorkflowStatusFailed, models.WSEventWorkflowFailed
 	}
 
-	if err := o.store.UpdateWorkflowExecution(ctx, execCtx.Execution); err != nil {
+	execCtx.mu.Lock()
+	if execCtx.done {
+		// A result that raced the first completion; the execution already
+		// has its final status and event.
+		execCtx.mu.Unlock()
+		return nil
+	}
+	execCtx.done = true
+	execCtx.Execution.CompletedAt = &now
+	execCtx.Execution.UpdatedAt = now
+	execCtx.Execution.Status = status
+	final := execCtx.snapshot()
+	execCtx.mu.Unlock()
+
+	o.metrics.mu.Lock()
+	if failed {
+		o.metrics.WorkflowsFailed++
+	} else {
+		o.metrics.WorkflowsCompleted++
+	}
+	o.metrics.mu.Unlock()
+
+	if err := o.store.UpdateWorkflowExecution(ctx, final); err != nil {
 		return fmt.Errorf("persisting workflow completion: %w", err)
 	}
 
@@ -539,18 +554,21 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	delete(o.semaphores, execCtx.Execution.ID)
 	o.semMu.Unlock()
 
-	o.broadcaster.Broadcast(models.WebSocketEvent{Type: evtType, Payload: execCtx.Execution})
-	log.Info().Str("exec_id", execCtx.Execution.ID).Str("status", string(execCtx.Execution.Status)).Msg("workflow finished")
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: evtType, Payload: final})
+	log.Info().Str("exec_id", final.ID).Str("status", string(final.Status)).Msg("workflow finished")
 	return nil
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 // cacheTask replaces the cached row for task's definition, in TaskMap and in
-// Execution.Tasks (the workflow event payload). It swaps pointers rather than
-// copying fields because earlier broadcasts may still be reading the old row.
-// Callers hold c.mu.
+// Execution.Tasks. It swaps pointers rather than copying fields because
+// earlier task events may still be reading the old row. It is a no-op once
+// the execution is done. Callers hold c.mu.
 func (c *ExecutionContext) cacheTask(task *models.TaskExecution) {
+	if c.done {
+		return
+	}
 	c.TaskMap[task.TaskDefinitionID] = task
 	for i, t := range c.Execution.Tasks {
 		if t.TaskDefinitionID == task.TaskDefinitionID {
@@ -558,6 +576,20 @@ func (c *ExecutionContext) cacheTask(task *models.TaskExecution) {
 			return
 		}
 	}
+}
+
+// snapshot copies the execution, its task slice and each task row, for use
+// as an event payload. Consumers marshal payloads later on their own
+// goroutine (api.Hub.Run), while cacheTask, dispatch and completeWorkflow
+// keep writing the live copies. Callers hold c.mu or have not shared c yet.
+func (c *ExecutionContext) snapshot() *models.WorkflowExecution {
+	snap := *c.Execution
+	snap.Tasks = make([]*models.TaskExecution, len(c.Execution.Tasks))
+	for i, t := range c.Execution.Tasks {
+		row := *t
+		snap.Tasks[i] = &row
+	}
+	return &snap
 }
 
 // dropStaleResult turns an ErrConflict from a result's transition into a
