@@ -170,7 +170,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	return snap, nil
 }
 
-// dispatchReadyTasks queues and enqueues every ready task of execCtx. Each
+// dispatchReadyTasks queues and enqueues ready tasks of execCtx, up to MaxParallel open at once. Each
 // row is moved to queued before its message exists, so a worker can never
 // hold a message for a row the store does not yet show as queued (REL-6).
 // At most MaxParallel of the execution's tasks are queued or running at
