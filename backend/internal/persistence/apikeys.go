@@ -55,7 +55,7 @@ func hashAPIKey(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-const apiKeyColumns = `id, name, role, created_at, last_used_at, revoked_at`
+const keyColumns = `id, name, role, created_at, last_used_at, revoked_at`
 
 func scanAPIKey(row pgx.Row) (*APIKey, error) {
 	var k APIKey
@@ -73,7 +73,7 @@ func (s *Store) CreateAPIKey(ctx context.Context, name, role string) (string, *A
 	}
 	plaintext := apiKeyPrefix + base64.RawURLEncoding.EncodeToString(b)
 	k, err := scanAPIKey(s.pool.QueryRow(ctx,
-		`INSERT INTO api_keys (name, role, key_hash) VALUES ($1, $2, $3) RETURNING `+apiKeyColumns,
+		`INSERT INTO api_keys (name, role, key_hash) VALUES ($1, $2, $3) RETURNING `+keyColumns,
 		name, role, hashAPIKey(plaintext)))
 	if err != nil {
 		return "", nil, fmt.Errorf("inserting API key: %w", err)
@@ -103,7 +103,7 @@ func (s *Store) LookupAPIKey(ctx context.Context, plaintext string) (*APIKey, er
 		return nil, ErrNotFound
 	}
 	k, err := scanAPIKey(s.pool.QueryRow(ctx,
-		`SELECT `+apiKeyColumns+` FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
+		`SELECT `+keyColumns+` FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
 		hashAPIKey(plaintext)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -123,7 +123,7 @@ func (s *Store) GetActiveAPIKey(ctx context.Context, id string) (*APIKey, error)
 		return nil, ErrNotFound
 	}
 	k, err := scanAPIKey(s.pool.QueryRow(ctx,
-		`SELECT `+apiKeyColumns+` FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, uid))
+		`SELECT `+keyColumns+` FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, uid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -181,7 +181,7 @@ func (s *Store) RevokeAPIKey(ctx context.Context, id string) error {
 
 // ListAPIKeys returns every key, revoked ones included, oldest first.
 func (s *Store) ListAPIKeys(ctx context.Context) ([]*APIKey, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+apiKeyColumns+` FROM api_keys ORDER BY created_at, id`)
+	rows, err := s.pool.Query(ctx, `SELECT `+keyColumns+` FROM api_keys ORDER BY created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("listing API keys: %w", err)
 	}
