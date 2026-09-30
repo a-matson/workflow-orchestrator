@@ -58,10 +58,14 @@
 				<!-- Header -->
 				<div class="detail-header">
 					<div class="detail-header-left">
-						<span :class="['badge', selectedExec.status]">{{ selectedExec.status }}</span>
+						<span :class="['badge', selectedExec.status]" data-testid="exec-detail-status">{{
+							selectedExec.status
+						}}</span>
 						<div>
-							<div class="detail-wf-name">{{ selectedExec.workflow_name }}</div>
-							<div class="detail-exec-id">{{ selectedExec.id }}</div>
+							<div class="detail-wf-name" data-testid="exec-detail-name">
+								{{ selectedExec.workflow_name }}
+							</div>
+							<div class="detail-exec-id" data-testid="exec-detail-id">{{ selectedExec.id }}</div>
 						</div>
 					</div>
 					<div class="detail-header-right">
@@ -110,7 +114,7 @@
 				</div>
 
 				<!-- Task list -->
-				<div class="task-list">
+				<div class="task-list" data-testid="exec-detail-tasks">
 					<div
 						v-for="task in selectedExec.tasks"
 						:key="task.id"
@@ -213,6 +217,11 @@
 				</div>
 			</template>
 
+			<div v-else-if="notFound" class="empty-detail" data-testid="exec-not-found">
+				<div class="empty-icon">⬡</div>
+				<div class="empty-text">Run not found</div>
+			</div>
+
 			<div v-else class="empty-detail">
 				<div class="empty-icon">⬡</div>
 				<div class="empty-text">Select a run to see details</div>
@@ -228,6 +237,7 @@
 	import { useWebSocketStore } from '../stores/websocket'
 	import { STATUS_COLORS } from '../types'
 	import type { WorkflowExecution, TaskExecution } from '../types'
+	import { ApiError } from '../composables/useApi'
 	import { useNow } from '../composables/useNow'
 
 	const store = useWorkflowStore()
@@ -246,8 +256,13 @@
 		store.executions.filter((e) => !statusFilter.value || e.status === statusFilter.value),
 	)
 
+	const notFound = ref(false)
+
+	// A run outside the loaded page (deep link) lives only in store.selectedExecution.
 	const selectedExec = computed(
-		() => store.executions.find((e) => e.id === selectedId.value) ?? null,
+		() =>
+			store.executions.find((e) => e.id === selectedId.value) ??
+			(store.selectedExecution?.id === selectedId.value ? store.selectedExecution : null),
 	)
 
 	const expandedTask = computed(
@@ -259,14 +274,20 @@
 		// Support deep link: /executions/:execId
 		const routeExecId = route.params.execId as string | undefined
 		if (routeExecId) {
-			await store.fetchExecution(routeExecId)
 			selectedId.value = routeExecId
-			wsStore.subscribe(routeExecId)
+			try {
+				await store.fetchExecution(routeExecId)
+				wsStore.subscribe(routeExecId)
+			} catch (err) {
+				// Other failures keep the generic empty state; the store already records them.
+				if (err instanceof ApiError && err.status === 404) notFound.value = true
+			}
 		}
 	})
 
 	async function selectExec(id: string) {
 		selectedId.value = id
+		notFound.value = false
 		expandedTaskId.value = null
 		await store.fetchExecution(id)
 		wsStore.subscribe(id)
