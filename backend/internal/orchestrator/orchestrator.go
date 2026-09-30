@@ -292,7 +292,7 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		Config:           taskDef.Config,
 		RetryCount:       taskExec.RetryCount,
 		MaxRetries:       taskExec.MaxRetries,
-		Timeout:          taskDef.Timeout,
+		Timeout:          effectiveTimeout(taskDef.Timeout),
 		EnqueuedAt:       queuedAt,
 		Container:        taskDef.Container,
 		ArtifactsIn:      o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn),
@@ -311,8 +311,9 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		defer cancel()
 		back, err := o.store.TransitionTask(rbCtx, taskExec.ID, taskExec.RetryCount, models.TaskStatusPending, persistence.TaskPatch{})
 		if err != nil {
-			// Shortcut: the row stays queued with no message, and nothing
-			// re-drives it until the timeout reaper (plan row R17) exists.
+			// Shortcut: the row stays queued with no message until the next
+			// restart. The timeout reaper reads running rows only, as a long
+			// queue wait cannot be told from a lost message by age alone.
 			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("task left queued without a message")
 			return
 		}
@@ -357,8 +358,50 @@ func (c *ExecutionContext) readyTasks(now time.Time) []string {
 // with time rather than on a result, so the retry poller drives them through
 // here; the same pass re-drives a task rolled back to pending after a failed
 // enqueue.
-// ReapTimedOut is a stub for the red test.
-func (o *Orchestrator) ReapTimedOut(ctx context.Context, now time.Time) {}
+// DefaultTaskTimeout bounds a task that sets no timeout of its own. Without
+// one, a lost result would hold the task running until the next restart.
+const DefaultTaskTimeout = time.Hour
+
+// reapGrace is how long past its timeout a running task gets for the worker's
+// own failure result (container kill, publish) before the reaper fails it.
+const reapGrace = time.Minute
+
+func effectiveTimeout(d time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return DefaultTaskTimeout
+}
+
+// ReapTimedOut fails every running task whose deadline passed before now
+// with no result, through the same path as a worker's failure result, so the
+// retry policy applies. A late real result then finds the row moved on and
+// is dropped. The task's run, if one is still alive, is stopped first.
+func (o *Orchestrator) ReapTimedOut(ctx context.Context, now time.Time) {
+	tasks, err := o.store.ListTimedOutTasks(ctx, now)
+	if err != nil {
+		log.Error().Err(err).Msg("timeout reaper: could not list timed-out tasks")
+		return
+	}
+	for _, t := range tasks {
+		if o.canceller != nil {
+			o.canceller.Cancel(t.ID)
+		}
+		attempt := t.RetryCount
+		result := &models.TaskResult{
+			TaskExecID:     t.ID,
+			WorkflowExecID: t.WorkflowExecID,
+			WorkerID:       t.WorkerID,
+			RetryCount:     &attempt,
+			Error:          "task timed out: no result arrived before its deadline",
+			CompletedAt:    now,
+		}
+		log.Warn().Str("task_exec_id", t.ID).Str("exec_id", t.WorkflowExecID).Msg("timeout reaper: failing task with no result")
+		if err := o.ProcessResult(ctx, result); err != nil {
+			log.Error().Err(err).Str("task_exec_id", t.ID).Msg("timeout reaper: could not fail task")
+		}
+	}
+}
 
 func (o *Orchestrator) DispatchDue(ctx context.Context) {
 	o.activeMu.RLock()
@@ -389,12 +432,16 @@ func (o *Orchestrator) StreamLog(workflowExecID, taskExecID, taskName string, en
 // MarkTaskRunning records workerID's pickup of attempt of task taskExecID.
 // An error matching persistence.ErrConflict means the row is not queued at
 // that attempt (a duplicate, a stale attempt, or a rolled-back dispatch), and
-// the worker must drop the message instead of running it.
-func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID string, attempt int) error {
+// the worker must drop the message instead of running it. Without a result
+// within timeout (DefaultTaskTimeout when 0) plus reapGrace, ReapTimedOut
+// fails the attempt.
+func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID string, attempt int, timeout time.Duration) error {
 	now := time.Now()
+	timeoutAt := now.Add(effectiveTimeout(timeout) + reapGrace)
 	taskExec, err := o.store.TransitionTask(ctx, taskExecID, attempt, models.TaskStatusRunning, persistence.TaskPatch{
 		WorkerID:  workerID,
 		StartedAt: &now,
+		TimeoutAt: &timeoutAt,
 	})
 	if err != nil {
 		return err
@@ -914,8 +961,9 @@ func (o *Orchestrator) activeAndRetrying() (active, retrying int64) {
 
 // goSafe runs fn on a new goroutine via runSafe. Every per-execution
 // goroutine goes through it so one bad execution cannot crash-loop the
-// process. A recovered panic leaves that execution stalled until the timeout
-// reaper (plan row R17) exists; nothing re-drives it before then.
+// process. A recovered panic leaves that execution stalled until the next
+// restart: the timeout reaper only fails running rows, and a dispatch that
+// panicked left its rows pending.
 func goSafe(name, execID string, fn func()) {
 	go runSafe(name, execID, fn)
 }

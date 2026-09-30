@@ -17,8 +17,10 @@ import (
 
 type pickupNotifier struct{ err error }
 
-func (n pickupNotifier) MarkTaskRunning(context.Context, string, string, int) error { return n.err }
-func (pickupNotifier) StreamLog(string, string, string, models.LogEntry)            {}
+func (n pickupNotifier) MarkTaskRunning(context.Context, string, string, int, time.Duration) error {
+	return n.err
+}
+func (pickupNotifier) StreamLog(string, string, string, models.LogEntry) {}
 
 // A pickup that cannot be recorded never runs: after a conflict the message
 // is stale, and after any other error the row's state is unknown.

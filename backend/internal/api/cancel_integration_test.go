@@ -40,7 +40,7 @@ func cancelDuringRun(t *testing.T, tasks []models.TaskDefinition) (*persistence.
 		t.Fatalf("StartWorkflow: %v", err)
 	}
 	msgA := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount, msgA.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 

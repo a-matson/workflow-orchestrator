@@ -40,6 +40,7 @@ type TaskPatch struct {
 	WorkerID                         string
 	QueuedAt, StartedAt, CompletedAt *time.Time
 	NextRetryAt                      *time.Time
+	TimeoutAt                        *time.Time
 	RetryCount                       *int
 	Error                            *string
 	Output                           json.RawMessage
@@ -100,12 +101,13 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 			error         = COALESCE($10, error),
 			output        = COALESCE($11::jsonb, output),
 			logs          = (CASE WHEN jsonb_typeof(logs) = 'array' THEN logs ELSE '[]'::jsonb END) || $12::jsonb,
-			artifacts_out = COALESCE($13::jsonb, artifacts_out)
+			artifacts_out = COALESCE($13::jsonb, artifacts_out),
+			timeout_at    = COALESCE($16, timeout_at)
 		WHERE id = $1 AND status = ANY($14) AND ($3::int < 0 OR retry_count = $3::int)
 		  AND ($15::text = '' OR worker_id = $15::text)
 		RETURNING `+taskColumns,
 		id, string(to), attempt, workerID, p.QueuedAt, p.StartedAt, p.CompletedAt,
-		p.NextRetryAt, p.RetryCount, p.Error, output, logs, artifactsOut, fromText, p.ExpectWorkerID)
+		p.NextRetryAt, p.RetryCount, p.Error, output, logs, artifactsOut, fromText, p.ExpectWorkerID, p.TimeoutAt)
 
 	task, err := scanTaskExecution(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -115,6 +117,28 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 		return nil, fmt.Errorf("transitioning task %s to %s: %w", id, to, err)
 	}
 	return task, nil
+}
+
+// TimedOutTask identifies a running attempt whose timeout_at has passed.
+type TimedOutTask struct {
+	ID, WorkflowExecID, WorkerID string
+	RetryCount                   int
+}
+
+// ListTimedOutTasks returns the running tasks whose timeout_at is before now.
+func (s *Store) ListTimedOutTasks(ctx context.Context, now time.Time) ([]TimedOutTask, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workflow_exec_id, COALESCE(worker_id, ''), retry_count
+		FROM task_executions WHERE status = 'running' AND timeout_at < $1
+	`, now)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (TimedOutTask, error) {
+		var t TimedOutTask
+		err := row.Scan(&t.ID, &t.WorkflowExecID, &t.WorkerID, &t.RetryCount)
+		return t, err
+	})
 }
 
 // TransitionExecution moves execution id to `to` in one statement, only if the
