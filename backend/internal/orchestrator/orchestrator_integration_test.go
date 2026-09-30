@@ -616,8 +616,8 @@ func TestRecoveryRedeliversOpenTask(t *testing.T) {
 	}
 }
 
-// REL-9: a result for an execution this process has not loaded, as when it
-// arrives before recovery registers the execution, must be applied and
+// REL-9: a result for an execution this process has not loaded, as when
+// recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.
 func TestResultForUnloadedExecutionIsApplied(t *testing.T) {
 	orch, store, redis, rec := setupOrchestrator(t)

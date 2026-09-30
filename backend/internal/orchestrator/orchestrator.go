@@ -746,8 +746,9 @@ func dropStaleResult(result *models.TaskResult, to models.TaskStatus, err error)
 
 // activeExecution returns execution id's cached context. On a miss it loads
 // the execution from the store and registers it, because a result can reach
-// an execution recovery never loaded, and dropping it would leave its task
-// running forever (REL-9). It returns nil for a final execution: its rows
+// an execution recovery skipped (past its listing cap, or after a failed
+// recoverExecution), and dropping it would leave its task running forever
+// (REL-9). It returns nil for a final execution: its rows
 // are closed, and registering it would let dispatch run again.
 func (o *Orchestrator) activeExecution(ctx context.Context, id string) (*ExecutionContext, error) {
 	o.activeMu.RLock()
@@ -785,7 +786,7 @@ func (o *Orchestrator) activeExecution(ctx context.Context, id string) (*Executi
 		return nil, fmt.Errorf("re-reading loaded execution %s: %w", id, err)
 	}
 	if !isOpen(row.Status) {
-		o.finish(loaded, row, nil)
+		o.finish(loaded, row, row.Tasks)
 		return nil, nil
 	}
 	log.Info().Str("exec_id", id).Msg("execution loaded from the store for a result")
