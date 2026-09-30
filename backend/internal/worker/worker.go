@@ -45,7 +45,9 @@ type Worker struct {
 	semaphore   chan struct{}
 	guard       *egress.Guard
 	limits      Limits
-	httpClient  *http.Client // guarded: every task-initiated request goes through the egress guard
+	// sendmail is a seam for tests; nil runs the host binary.
+	sendmail   sendmailFunc
+	httpClient *http.Client // guarded: every task-initiated request goes through the egress guard
 }
 
 // Pool manages a set of concurrent workers.
@@ -651,6 +653,8 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 	addLog("info", "Slack delivered", nil)
 	return map[string]any{"delivered": true}, nil
 }
+
+type sendmailFunc func(ctx context.Context, args []string, stdin []byte) error
 
 func (w *Worker) notifyEmail(ctx context.Context, to, message string, addLog logFn) (map[string]any, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
