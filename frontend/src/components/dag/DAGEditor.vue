@@ -284,7 +284,14 @@
 	import { v4 as uuidv4 } from 'uuid'
 	import { useWorkflowStore } from '../../stores/workflow'
 	import { TASK_TYPES } from '../../types'
-	import type { DAGNode, DAGEdge, TaskDefinition, ContainerSpec, ArtifactRef } from '../../types'
+	import type {
+		DAGNode,
+		DAGEdge,
+		TaskDefinition,
+		ContainerSpec,
+		ArtifactRef,
+		WorkflowDefinition,
+	} from '../../types'
 	import TaskNode from './TaskNode.vue'
 	import TaskConfigFields from './TaskConfigFields.vue'
 
@@ -301,6 +308,8 @@
 	const selectedNode = ref<DAGNode | null>(null)
 	const saving = ref(false)
 	const savedWorkflowId = ref<string | null>(null)
+	// Fields the editor has no controls for; saving must send them back unchanged.
+	const loadedDef = ref<WorkflowDefinition | null>(null)
 	const banner = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 	const newArtifactOutPath = ref('')
 	const newArtifactInPath = ref('')
@@ -627,11 +636,12 @@
 		saving.value = true
 		try {
 			const def = {
-				name: workflowName.value,
 				description: '',
 				version: '1.0.0',
-				tasks: nodes.value.map((n) => n.data.taskDef),
 				max_parallel: 10,
+				...loadedDef.value,
+				name: workflowName.value,
+				tasks: nodes.value.map((n) => n.data.taskDef),
 			}
 			let result
 			if (savedWorkflowId.value) {
@@ -661,9 +671,11 @@
 
 	// ── Expose for parent (e.g. BuilderPage loading an existing wf) ─
 	defineExpose({
-		loadWorkflow(wfName: string, tasks: TaskDefinition[], wfId?: string) {
-			workflowName.value = wfName
-			if (wfId) savedWorkflowId.value = wfId
+		loadWorkflow(wf: WorkflowDefinition) {
+			const { name, tasks, id } = wf
+			loadedDef.value = wf
+			workflowName.value = name
+			savedWorkflowId.value = id
 			nodes.value = tasks?.map((t, i) => ({
 				id: t.id,
 				type: 'taskNode' as const,
@@ -710,6 +722,7 @@
 			]
 			edges.value = []
 			savedWorkflowId.value = null
+			loadedDef.value = null
 			selectedNode.value = null
 		},
 	})
