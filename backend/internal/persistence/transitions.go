@@ -70,6 +70,10 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 		}
 		logs = b
 	}
+	var output []byte
+	if len(p.Output) > 0 {
+		output = p.Output
+	}
 	var artifactsOut []byte
 	if p.ArtifactsOut != nil {
 		b, err := json.Marshal(p.ArtifactsOut)
@@ -80,7 +84,8 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 	}
 
 	// The logs CASE exists because UpdateTaskExecution writes the whole row
-	// and stores JSON null for a task without logs; null || array is null.
+	// and stores JSON null for a task without logs; JSON null || array is
+	// [null, ...] (and SQL NULL || array is NULL).
 	row := s.pool.QueryRow(ctx, `
 		UPDATE task_executions SET
 			status        = $2,
@@ -97,7 +102,7 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 		WHERE id = $1 AND status = ANY($14) AND ($3::int < 0 OR retry_count = $3::int)
 		RETURNING `+taskColumns,
 		id, string(to), attempt, workerID, p.QueuedAt, p.StartedAt, p.CompletedAt,
-		p.NextRetryAt, p.RetryCount, p.Error, []byte(p.Output), logs, artifactsOut, fromText)
+		p.NextRetryAt, p.RetryCount, p.Error, output, logs, artifactsOut, fromText)
 
 	task, err := scanTaskExecution(row)
 	if errors.Is(err, pgx.ErrNoRows) {

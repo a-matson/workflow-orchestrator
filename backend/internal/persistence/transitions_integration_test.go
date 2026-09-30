@@ -152,6 +152,20 @@ func TestTransitionTask_PatchesRemainingColumns(t *testing.T) {
 	}
 }
 
+// A non-nil but empty RawMessage is still "unchanged", not invalid jsonb.
+func TestTransitionTask_EmptyOutputKeepsOutput(t *testing.T) {
+	store := setupStore(t)
+	before := seedTask(t, store, models.TaskStatusRunning, 0)
+	got, err := store.TransitionTask(context.Background(), before.ID, 0, models.TaskStatusCompleted,
+		persistence.TaskPatch{Output: json.RawMessage{}})
+	if err != nil {
+		t.Fatalf("TransitionTask: %v", err)
+	}
+	if string(got.Output) != string(before.Output) {
+		t.Errorf("output = %s, want %s", got.Output, before.Output)
+	}
+}
+
 func TestTransitionTask_Conflict(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
