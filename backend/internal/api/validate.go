@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 
@@ -30,8 +31,10 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 		}
 		for _, refs := range [][]models.ArtifactRef{t.ArtifactsIn, t.ArtifactsOut} {
 			for _, a := range refs {
-				if !filepath.IsLocal(a.Path) {
-					return fmt.Errorf("task %q: artifact path %q must be a non-empty relative path inside the workspace", t.ID, a.Path)
+				// Canonical, because artifacts are matched by path string: a
+				// consumer's "./out.txt" would never find a producer's "out.txt".
+				if !filepath.IsLocal(a.Path) || path.Clean(a.Path) != a.Path {
+					return fmt.Errorf("task %q: artifact path %q must be a clean relative path inside the workspace, like results/data.csv", t.ID, a.Path)
 				}
 			}
 		}
