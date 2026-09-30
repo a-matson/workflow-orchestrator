@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // ErrMalformedAPIKey means a string cannot be an API key this server issued.
@@ -110,8 +112,9 @@ func (s *Store) LookupAPIKey(ctx context.Context, plaintext string) (*APIKey, er
 		return nil, fmt.Errorf("looking up API key: %w", err)
 	}
 	if k.LastUsedAt == nil || time.Since(*k.LastUsedAt) >= lastUsedGranularity {
+		// Usage telemetry must not turn a valid key into a failed request.
 		if _, err := s.pool.Exec(ctx, `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, k.ID); err != nil {
-			return nil, fmt.Errorf("recording API key use: %w", err)
+			log.Warn().Err(err).Str("api_key_id", k.ID).Msg("recording API key use failed")
 		}
 	}
 	return k, nil
@@ -119,9 +122,13 @@ func (s *Store) LookupAPIKey(ctx context.Context, plaintext string) (*APIKey, er
 
 // APIKeyActive reports whether the key with id exists and is not revoked.
 func (s *Store) APIKeyActive(ctx context.Context, id string) (bool, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return false, nil
+	}
 	var active bool
 	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM api_keys WHERE id::text = $1 AND revoked_at IS NULL)`, id,
+		`SELECT EXISTS (SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL)`, uid,
 	).Scan(&active); err != nil {
 		return false, fmt.Errorf("checking API key: %w", err)
 	}
@@ -131,8 +138,12 @@ func (s *Store) APIKeyActive(ctx context.Context, id string) (bool, error) {
 // RevokeAPIKey revokes the key with id, or returns ErrNotFound if there is no
 // such unrevoked key.
 func (s *Store) RevokeAPIKey(ctx context.Context, id string) error {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return ErrNotFound
+	}
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE api_keys SET revoked_at = NOW() WHERE id::text = $1 AND revoked_at IS NULL`, id)
+		`UPDATE api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, uid)
 	if err != nil {
 		return fmt.Errorf("revoking API key: %w", err)
 	}

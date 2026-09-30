@@ -157,8 +157,8 @@ npm run format
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `FLUXOR_EGRESS_ALLOW` | _(empty)_ | Comma-separated CIDRs (`10.20.0.0/16`) and exact `host:port` entries (`geo-service.internal:80`) that `http_request`, notification and `database_query` tasks may reach despite the egress guard |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
-| `FLUXOR_BOOTSTRAP_ADMIN_KEY` | _(empty)_ | Admin API key installed at startup, if set (see [Authentication](#authentication)) |
 | `LOG_FORMAT` | `json` | `json` (one object per line, with `request_id`) or `console` (pretty, local dev) |
+| `FLUXOR_BOOTSTRAP_ADMIN_KEY` | _(empty)_ | Admin API key installed at startup, if set (see [Authentication](#authentication)) |
 
 Deployments on a real hostname must list their public origin in `FLUXOR_ALLOWED_ORIGINS`; likewise, reaching the backend through a LAN IP or hostname requires listing that origin, or requests are rejected with 421.
 
@@ -228,6 +228,8 @@ docker compose exec backend ./workflow-server apikey revoke <id>
 Alternatively, set `FLUXOR_BOOTSTRAP_ADMIN_KEY` in `.env` to a key you generated
 (`echo "flx_$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"`); the backend
 installs it as an admin key at startup. Revoking it is permanent, even if it stays in `.env`.
+Changing the variable adds the new key but leaves the old one active, so after rotating it
+revoke the old `bootstrap-admin` key (`apikey list`, then `apikey revoke <id>`).
 
 ---
 
