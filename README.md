@@ -267,8 +267,8 @@ make migrate
 
 | Concern | Mechanism |
 |---|---|
-| At-least-once delivery | Redis LIST + BRPOP; a restart re-queues every unfinished attempt, which then runs again from the start |
-| At-most-once execution per attempt | A worker runs a message only if it moves the task row from `queued` to `running` at the message's `retry_count`; a duplicate, or a pickup that cannot be recorded, is dropped |
+| At-least-once delivery | Redis LIST + BRPOP; a restart re-queues every unfinished attempt, which then runs again from the start. Recovery scans only the 200 most recent executions, so an open execution older than that is not resumed (R5 lifts the limit) |
+| At-most-once execution per attempt, within one process lifetime | A worker runs a message only if it moves the task row from `queued` to `running` at the message's `retry_count`; a duplicate, or a pickup that cannot be recorded, is dropped. A result closes the attempt only if it comes from the worker that picked it up |
 | Exponential backoff | `delay = initial × multiplier^n`, capped at `max_delay` |
 | Jitter | ±25% randomisation — prevents thundering herd |
 | Retry scheduling | A retry waits in its task row (`retrying`, `next_retry_at`); a 5s poller dispatches it once due |
