@@ -847,7 +847,7 @@ func (o *Orchestrator) resolveArtifactsIn(
 }
 
 func (o *Orchestrator) GetMetrics() map[string]int64 {
-	retrying := o.retryingTasks()
+	active, retrying := o.activeAndRetrying()
 	o.metrics.mu.Lock()
 	defer o.metrics.mu.Unlock()
 
@@ -861,19 +861,20 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 		"tasks_failed":        o.metrics.TasksFailed,
 		"tasks_retried":       o.metrics.TasksRetried,
 		"tasks_dead_lettered": o.metrics.TasksDeadLettered,
-		"active_workflows":    int64(len(o.active)),
+		"active_workflows":    active,
 		// Kept under its old name for the UI; retries now wait in the task
 		// rows, not in a Redis set.
 		"retry_queue_depth": retrying,
 	}
 }
 
-// retryingTasks counts retrying rows across active executions. It waits on
+// activeAndRetrying counts active executions and their retrying rows, both
+// from one snapshot of o.active taken under activeMu. It waits on
 // each execution's lock, which dispatch holds across store and Redis calls,
 // so it must not hold activeMu meanwhile: a queued activeMu writer would
 // then block every reader behind one slow dispatch. It must also stay
 // outside metrics.mu, because dispatch takes metrics.mu under ec.mu.
-func (o *Orchestrator) retryingTasks() int64 {
+func (o *Orchestrator) activeAndRetrying() (active, retrying int64) {
 	o.activeMu.RLock()
 	execs := make([]*ExecutionContext, 0, len(o.active))
 	for _, ec := range o.active {
@@ -881,17 +882,16 @@ func (o *Orchestrator) retryingTasks() int64 {
 	}
 	o.activeMu.RUnlock()
 
-	var n int64
 	for _, ec := range execs {
 		ec.mu.Lock()
 		for _, t := range ec.TaskMap {
 			if t.Status == models.TaskStatusRetrying {
-				n++
+				retrying++
 			}
 		}
 		ec.mu.Unlock()
 	}
-	return n
+	return int64(len(execs)), retrying
 }
 
 // goSafe runs fn on a new goroutine via runSafe. Every per-execution
