@@ -8,7 +8,7 @@
 				v-model="key"
 				class="login-input"
 				type="password"
-				autocomplete="current-password"
+				autocomplete="off"
 				placeholder="flx_…"
 				required
 				data-testid="login-key"
@@ -38,10 +38,12 @@
 	const busy = ref(false)
 
 	// Only an in-app path is followed, so a crafted ?redirect= cannot send a
-	// freshly signed-in user to another site.
+	// freshly signed-in user to another site; /login itself would strand them here.
 	function target(): string {
 		const r = route.query.redirect
-		return typeof r === 'string' && r.startsWith('/') && !r.startsWith('//') ? r : '/'
+		const ok =
+			typeof r === 'string' && r.startsWith('/') && !r.startsWith('//') && !r.startsWith('/login')
+		return ok ? r : '/'
 	}
 
 	async function submit() {

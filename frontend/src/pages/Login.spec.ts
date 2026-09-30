@@ -18,6 +18,7 @@ function makeRouter() {
 		history: createMemoryHistory(),
 		routes: [
 			{ path: '/login', name: 'login', component: Login, meta: { public: true } },
+			{ path: '/', name: 'home', component: { template: '<div />' } },
 			{ path: '/executions', name: 'executions', component: { template: '<div />' } },
 		],
 	})
@@ -25,9 +26,9 @@ function makeRouter() {
 	return router
 }
 
-async function visitAndLogin(apiKey: string) {
+async function visitAndLogin(apiKey: string, from = '/executions') {
 	const router = makeRouter()
-	await router.push('/executions')
+	await router.push(from)
 	const wrapper = mount(Login, { global: { plugins: [router] } })
 	await wrapper.get('[data-testid="login-key"]').setValue(apiKey)
 	await wrapper.get('[data-testid="login-form"]').trigger('submit')
@@ -68,6 +69,24 @@ describe('login page', () => {
 		expect(JSON.parse(post?.[1]?.body as string)).toEqual({ api_key: 'flx_secret' })
 		expect(principal.value).toEqual({ name: 'me', role: 'admin' })
 		expect(router.currentRoute.value.fullPath).toBe('/executions')
+	})
+
+	it('ignores a redirect back to /login', async () => {
+		fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+			if (url.endsWith('/api/session') && init?.method === 'POST')
+				return json(200, { name: 'me', role: 'admin' })
+			return json(401, { error: 'authentication required' })
+		})
+		const { router } = await visitAndLogin(
+			'flx_secret',
+			'/login?redirect=%2Flogin%3Fredirect%3D%252Fx',
+		)
+		expect(router.currentRoute.value.fullPath).toBe('/')
+	})
+
+	it('keeps password managers away from the key', async () => {
+		const { wrapper } = await visitAndLogin('flx_secret')
+		expect(wrapper.get('[data-testid="login-key"]').attributes('autocomplete')).toBe('off')
 	})
 
 	it('shows the error on a rejected key and stays on /login', async () => {
