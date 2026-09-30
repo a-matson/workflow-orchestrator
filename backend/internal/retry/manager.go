@@ -1,12 +1,9 @@
 package retry
 
 import (
-	"context"
 	"math"
 	"math/rand"
 	"time"
-
-	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
@@ -60,25 +57,4 @@ func (m *Manager) NextRetryDelay(retryCount int, policy *models.RetryPolicy) tim
 	}
 
 	return time.Duration(delay)
-}
-
-// ScheduleRetry sets the task state for a retry attempt
-func (m *Manager) ScheduleRetry(ctx context.Context, task *models.TaskExecution, policy *models.RetryPolicy, errMsg string) {
-	task.RetryCount++
-	task.Error = errMsg
-	task.Status = models.TaskStatusRetrying
-
-	delay := m.NextRetryDelay(task.RetryCount-1, policy)
-	nextRetry := time.Now().Add(delay)
-	task.NextRetryAt = &nextRetry
-	task.UpdatedAt = time.Now()
-
-	log.Info().
-		Str("task_exec_id", task.ID).
-		Str("task_name", task.TaskName).
-		Int("retry_count", task.RetryCount).
-		Int("max_retries", task.MaxRetries).
-		Dur("delay", delay).
-		Time("next_retry_at", nextRetry).
-		Msg("task scheduled for retry")
 }

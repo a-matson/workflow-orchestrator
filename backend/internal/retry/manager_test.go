@@ -1,7 +1,6 @@
 package retry_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -81,34 +80,4 @@ func TestShouldRetry(t *testing.T) {
 	if mgr.ShouldRetry(task, policy) {
 		t.Error("should NOT retry at max retries")
 	}
-}
-
-func TestScheduleRetry_SetsNextRetryAt(t *testing.T) {
-	mgr := retry.NewManager()
-	policy := &models.RetryPolicy{
-		MaxRetries:      3,
-		InitialDelay:    500 * time.Millisecond,
-		MaxDelay:        10 * time.Second,
-		BackoffMultiple: 2.0,
-		Jitter:          false,
-	}
-
-	task := &models.TaskExecution{ID: "task-1", RetryCount: 0}
-	before := time.Now()
-	mgr.ScheduleRetry(context.TODO(), task, policy, "test error")
-	after := time.Now()
-
-	if task.NextRetryAt == nil {
-		t.Fatal("NextRetryAt should be set after ScheduleRetry")
-	}
-	if task.NextRetryAt.Before(before) {
-		t.Error("NextRetryAt should be in the future")
-	}
-	if task.Status != models.TaskStatusRetrying {
-		t.Errorf("expected status Retrying, got %s", task.Status)
-	}
-	if task.RetryCount != 1 {
-		t.Errorf("expected RetryCount 1, got %d", task.RetryCount)
-	}
-	_ = after
 }

@@ -423,17 +423,25 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 	}
 
 	if o.retryMgr.ShouldRetry(taskExec, policy) {
-		// ScheduleRetry only computes the next attempt on this read copy;
-		// the transition below is what persists it.
-		o.retryMgr.ScheduleRetry(ctx, taskExec, policy, result.Error)
-		patch.RetryCount = &taskExec.RetryCount
-		patch.NextRetryAt = taskExec.NextRetryAt
+		nextAttempt := taskExec.RetryCount + 1
+		delay := o.retryMgr.NextRetryDelay(taskExec.RetryCount, policy)
+		nextRetryAt := now.Add(delay)
+		patch.RetryCount = &nextAttempt
+		patch.NextRetryAt = &nextRetryAt
 
 		taskExec, err := o.transitionResult(ctx, result, models.TaskStatusRetrying, patch)
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusRetrying, err)
 		}
 		o.releaseSlot(execCtx.Execution.ID)
+		log.Info().
+			Str("task_exec_id", taskExec.ID).
+			Str("task_name", taskExec.TaskName).
+			Int("retry_count", taskExec.RetryCount).
+			Int("max_retries", taskExec.MaxRetries).
+			Dur("delay", delay).
+			Time("next_retry_at", nextRetryAt).
+			Msg("task scheduled for retry")
 
 		// Schedule retry in Redis
 		taskDef := execCtx.Graph.Nodes[taskDefID].Task
