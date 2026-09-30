@@ -403,3 +403,36 @@ func TestExecutionEventsAreSnapshots(t *testing.T) {
 	runTask(t, orch, store, msgB, testutil.Ok(msgB))
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(&hub.Recorder, models.WSEventWorkflowCompleted) })
 }
+
+// The worker runs a task even when its pickup write fails (worker.go logs
+// and carries on), so the result can find the row still queued.
+func TestResultForQueuedRowIsApplied(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Missed Pickup",
+		Tasks: []models.TaskDefinition{
+			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
+			{ID: "c", Name: "C", Type: "generic", Dependencies: []string{}},
+		},
+		MaxParallel: 1,
+	})
+
+	first := testutil.Drain(t, redis, 1)[0]
+	testutil.Eventually(t, eventWait, func() bool {
+		return testutil.TaskRow(t, store, exec.ID, first.TaskDefinitionID).Status == models.TaskStatusQueued
+	})
+	if err := orch.ProcessResult(context.Background(), testutil.Ok(first)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+
+	if got := testutil.TaskRow(t, store, exec.ID, first.TaskDefinitionID).Status; got != models.TaskStatusCompleted {
+		t.Errorf("task %s status = %s, want %s", first.TaskDefinitionID, got, models.TaskStatusCompleted)
+	}
+	// With one slot, the other task is dispatched only if the result released it.
+	second := testutil.Drain(t, redis, 1)[0]
+	if second.TaskDefinitionID == first.TaskDefinitionID {
+		t.Errorf("dispatched %s again, want the other task", second.TaskDefinitionID)
+	}
+}
