@@ -104,7 +104,9 @@ test-integration:
 # override the env file). Logs are dumped on failure because CI tears the stack
 # down before anyone can inspect it. The workspace volume has a fixed name, so
 # e2e gets its own to keep `down -v` off the dev stack's volume.
+# Its own subnet lets it run beside the dev stack (Docker rejects overlapping networks).
 E2E_COMPOSE = FLUXOR_WORKSPACE_VOLUME=fluxor-e2e-task-workspaces \
+	FLUXOR_INTERNAL_SUBNET=172.29.251.0/24 FLUXOR_TRUSTED_PROXIES=172.29.251.0/24 \
 	docker compose --env-file .env.example -p fluxor-e2e
 # Runs $(1) against a fresh e2e stack. Each run mints its own admin key, so no
 # credential is committed or reused.
