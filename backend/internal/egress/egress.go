@@ -64,14 +64,18 @@ func New(allow string) (*Guard, error) {
 			if err != nil {
 				return nil, fmt.Errorf("egress allowlist entry %q: %w", entry, err)
 			}
-			g.allowPrefixes = append(g.allowPrefixes, unmapPrefix(p.Masked()))
+			// Masking silently would turn a typo like 10.0.0.1/8 into a whole /8.
+			if p != p.Masked() {
+				return nil, fmt.Errorf("egress allowlist entry %q: host bits set, did you mean %s?", entry, p.Masked())
+			}
+			g.allowPrefixes = append(g.allowPrefixes, unmapPrefix(p))
 			continue
 		}
 		host, port, err := net.SplitHostPort(entry)
 		if err != nil {
 			return nil, fmt.Errorf("egress allowlist entry %q: want a CIDR or host:port: %w", entry, err)
 		}
-		if _, err := strconv.ParseUint(port, 10, 16); err != nil || host == "" {
+		if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 || host == "" {
 			return nil, fmt.Errorf("egress allowlist entry %q: want a CIDR or host:port", entry)
 		}
 		g.allowHostPorts[normaliseHostPort(host, port)] = true
