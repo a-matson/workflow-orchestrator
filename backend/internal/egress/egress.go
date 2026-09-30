@@ -22,10 +22,23 @@ var ErrEgressDenied = errors.New("egress denied")
 
 const maxRedirects = 5
 
-// Prefixes that net/netip has no predicate for.
+// Prefixes that net/netip has no predicate for. The IPv6 ranges that embed an
+// IPv4 address are denied whole rather than decoded: nothing this deployment
+// calls needs them, and a gateway could translate them to an internal IPv4.
 var denyPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),     // "this network"; Linux dials 0.x as the local host
-	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT, often the cloud provider's internal range
+	netip.MustParsePrefix("0.0.0.0/8"),          // "this network"; Linux dials 0.x as the local host
+	netip.MustParsePrefix("100.64.0.0/10"),      // CGNAT, often the cloud provider's internal range
+	netip.MustParsePrefix("192.0.0.0/24"),       // IETF protocol assignments, incl. DS-Lite and 192.0.0.170
+	netip.MustParsePrefix("198.18.0.0/15"),      // benchmarking
+	netip.MustParsePrefix("240.0.0.0/4"),        // reserved
+	netip.MustParsePrefix("255.255.255.255/32"), // broadcast, which IsMulticast misses
+	netip.MustParsePrefix("::/96"),              // IPv4-compatible
+	netip.MustParsePrefix("::ffff:0:0:0/96"),    // IPv4-translated (RFC 6145), which Unmap misses
+	netip.MustParsePrefix("64:ff9b::/96"),       // NAT64 well-known prefix
+	netip.MustParsePrefix("64:ff9b:1::/48"),     // NAT64 local-use
+	netip.MustParsePrefix("2001::/32"),          // Teredo
+	netip.MustParsePrefix("2002::/16"),          // 6to4
+	netip.MustParsePrefix("fec0::/10"),          // deprecated site-local, which IsPrivate misses
 }
 
 // Guard decides which addresses outbound task traffic may connect to.
@@ -83,7 +96,10 @@ func normaliseHostPort(host, port string) string {
 
 func (g *Guard) allowed(ip netip.Addr) bool {
 	// Unmapping first makes every IPv4 rule cover its ::ffff: form too.
-	ip = ip.Unmap()
+	// Prefix.Contains never matches a zoned address, so a zone in the URL
+	// ("[64:ff9b::a00:1%25eth0]") would slip past every IPv6 prefix; Linux
+	// ignores the zone for non-link-local destinations.
+	ip = ip.Unmap().WithZone("")
 	for _, p := range g.allowPrefixes {
 		if p.Contains(ip) {
 			return true
