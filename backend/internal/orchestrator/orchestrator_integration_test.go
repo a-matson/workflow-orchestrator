@@ -236,7 +236,7 @@ func TestStartWorkflow_NoPartialRows(t *testing.T) {
 func runTask(t *testing.T, orch *orchestrator.Orchestrator, msg *models.TaskMessage, res *models.TaskResult) {
 	t.Helper()
 	ctx := context.Background()
-	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount, msg.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	if err := orch.ProcessResult(ctx, res); err != nil {
@@ -354,7 +354,7 @@ func TestResultWithoutAttemptIsApplied(t *testing.T) {
 	// Stands in for the retry poller's tick.
 	orch.DispatchDue(ctx)
 	msg = testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount, msg.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	if row := testutil.TaskRow(t, store, exec.ID, "t"); row.Status != models.TaskStatusRunning || row.RetryCount != 1 {
@@ -478,13 +478,13 @@ func TestStaleAttemptIsDropped(t *testing.T) {
 	attempt1 := testutil.Drain(t, redis, 1)[0]
 	// A redelivered attempt-0 message arrives while attempt 1 is queued. Only
 	// the attempt guard rejects it: the status alone would match.
-	if err := orch.MarkTaskRunning(ctx, attempt0.TaskExecID, "testutil", attempt0.RetryCount); !errors.Is(err, persistence.ErrConflict) {
+	if err := orch.MarkTaskRunning(ctx, attempt0.TaskExecID, "testutil", attempt0.RetryCount, attempt0.Timeout); !errors.Is(err, persistence.ErrConflict) {
 		t.Fatalf("MarkTaskRunning for attempt 0 = %v, want ErrConflict", err)
 	}
 	if row := testutil.TaskRow(t, store, exec.ID, "t"); row.Status != models.TaskStatusQueued || row.RetryCount != 1 {
 		t.Fatalf("task is %s on attempt %d after a stale pickup; want queued on attempt 1", row.Status, row.RetryCount)
 	}
-	if err := orch.MarkTaskRunning(ctx, attempt1.TaskExecID, "testutil", attempt1.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, attempt1.TaskExecID, "testutil", attempt1.RetryCount, attempt1.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 
@@ -536,7 +536,7 @@ func TestDuplicateResultDoesNotExceedMaxParallel(t *testing.T) {
 	msgs := testutil.Drain(t, redis, 2)
 	m1, m2 := msgs[0], msgs[1]
 	for _, m := range msgs {
-		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount); err != nil {
+		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount, m.Timeout); err != nil {
 			t.Fatalf("MarkTaskRunning: %v", err)
 		}
 	}
@@ -544,7 +544,7 @@ func TestDuplicateResultDoesNotExceedMaxParallel(t *testing.T) {
 		t.Fatalf("ProcessResult: %v", err)
 	}
 	m3 := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, m3.TaskExecID, "testutil", m3.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, m3.TaskExecID, "testutil", m3.RetryCount, m3.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	if err := orch.ProcessResult(ctx, testutil.Ok(m1)); err != nil {
@@ -604,7 +604,7 @@ func TestRecoveryRedeliversOpenTask(t *testing.T) {
 			if tt.held {
 				m := testutil.Drain(t, redis, 1)[0]
 				if tt.pickedUp {
-					if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount); err != nil {
+					if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount, m.Timeout); err != nil {
 						t.Fatalf("MarkTaskRunning: %v", err)
 					}
 				}
@@ -618,7 +618,7 @@ func TestRecoveryRedeliversOpenTask(t *testing.T) {
 
 			var ran *models.TaskMessage
 			for _, m := range testutil.Drain(t, redis, tt.wantQueued) {
-				err := restarted.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount)
+				err := restarted.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount, m.Timeout)
 				switch {
 				case err == nil && ran == nil:
 					ran = m
@@ -698,20 +698,35 @@ func TestRecovery_UsesSnapshot(t *testing.T) {
 func TestReaper_LostResult(t *testing.T) {
 	orch, store, redis, _ := setupOrchestrator(t)
 	ctx := context.Background()
+	tasks := independentTasks("a")
+	tasks[0].Timeout = time.Minute
+	tasks[0].RetryPolicy = &models.RetryPolicy{MaxRetries: 0}
 	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
-		ID: uuid.NewString(), Name: "Lost Result", MaxParallel: 1,
-		Tasks: independentTasks("a"),
+		ID: uuid.NewString(), Name: "Lost Result", MaxParallel: 1, Tasks: tasks,
 	})
 	m := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-lost", m.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-lost", m.RetryCount, m.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 
-	orch.ReapTimedOut(ctx, time.Now().Add(48*time.Hour))
+	orch.ReapTimedOut(ctx, time.Now().Add(time.Minute))
+	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusRunning {
+		t.Fatalf("task a within its grace period = %s, want running", got)
+	}
+	orch.ReapTimedOut(ctx, time.Now().Add(5*time.Minute))
 
 	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusFailed })
 	if row := testutil.TaskRow(t, store, exec.ID, "a"); row.Status != models.TaskStatusDeadLetter || !strings.Contains(row.Error, "timed out") {
 		t.Errorf("task a = %s (%q), want dead_letter with a timeout error", row.Status, row.Error)
+	}
+
+	late := testutil.Ok(m)
+	late.WorkerID = "worker-lost"
+	if err := orch.ProcessResult(ctx, late); err != nil {
+		t.Fatalf("ProcessResult(late): %v", err)
+	}
+	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusDeadLetter {
+		t.Errorf("task a after its late result = %s, want dead_letter", got)
 	}
 }
 
@@ -723,7 +738,7 @@ func TestResultForUnloadedExecutionIsApplied(t *testing.T) {
 	ctx := context.Background()
 	exec := startWorkflow(t, orch, store, chainDef())
 	msgA := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount, msgA.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 
@@ -744,7 +759,7 @@ func TestExecutionCancelledDuringLoadIsNotLeftActive(t *testing.T) {
 	ctx := context.Background()
 	exec := startWorkflow(t, orch, store, chainDef())
 	msgA := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount, msgA.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 
@@ -777,7 +792,7 @@ func recoverAfterCrash(t *testing.T) (restarted *orchestrator.Orchestrator, stor
 		Tasks: independentTasks("a"),
 	})
 	dead = testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, dead.TaskExecID, "worker-dead", dead.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, dead.TaskExecID, "worker-dead", dead.RetryCount, dead.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	restarted = orchestrator.NewOrchestrator(store, redis, rec)
@@ -810,7 +825,7 @@ func execStatus(t *testing.T, store *persistence.Store, execID string) models.Wo
 func TestPreCrashResultDoesNotCloseRerunningAttempt(t *testing.T) {
 	orch, store, execID, dead, resent := recoverAfterCrash(t)
 	ctx := context.Background()
-	if err := orch.MarkTaskRunning(ctx, resent.TaskExecID, "testutil", resent.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, resent.TaskExecID, "testutil", resent.RetryCount, resent.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning after recovery: %v", err)
 	}
 
@@ -837,7 +852,7 @@ func TestPreCrashResultCompletesQueuedAttempt(t *testing.T) {
 		t.Fatalf("ProcessResult: %v", err)
 	}
 	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, execID) == models.WorkflowStatusCompleted })
-	if err := orch.MarkTaskRunning(ctx, resent.TaskExecID, "testutil", resent.RetryCount); !errors.Is(err, persistence.ErrConflict) {
+	if err := orch.MarkTaskRunning(ctx, resent.TaskExecID, "testutil", resent.RetryCount, resent.Timeout); !errors.Is(err, persistence.ErrConflict) {
 		t.Fatalf("pickup of the re-sent message = %v, want ErrConflict", err)
 	}
 }
@@ -852,7 +867,7 @@ func TestRecoveryContinuesPastTaskStoreError(t *testing.T) {
 		Tasks: independentTasks("a", "b"),
 	})
 	for _, m := range testutil.Drain(t, redis, 2) {
-		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount); err != nil {
+		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount, m.Timeout); err != nil {
 			t.Fatalf("MarkTaskRunning: %v", err)
 		}
 	}
@@ -905,7 +920,7 @@ func TestFailedWorkflow_CancelsOpenSiblings(t *testing.T) {
 	for _, m := range msgs {
 		byDef[m.TaskDefinitionID] = m
 	}
-	if err := orch.MarkTaskRunning(ctx, byDef["sibling"].TaskExecID, "testutil", 0); err != nil {
+	if err := orch.MarkTaskRunning(ctx, byDef["sibling"].TaskExecID, "testutil", 0, 0); err != nil {
 		t.Fatalf("MarkTaskRunning sibling: %v", err)
 	}
 	stopped := &recordingCanceller{}
@@ -953,7 +968,7 @@ func TestCancelExecution_AllOrNothing(t *testing.T) {
 		Tasks: independentTasks("a"),
 	})
 	msg := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount, msg.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	// A trigger is the cheapest way to fail one store write on a real database.
@@ -1007,7 +1022,7 @@ func TestCancelExecution_StopsRunningTask(t *testing.T) {
 		Tasks: independentTasks("a"),
 	})
 	msg := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount, msg.Timeout); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 

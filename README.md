@@ -319,6 +319,7 @@ make migrate
 | Jitter | ±25% randomisation — prevents thundering herd |
 | Retry scheduling | A retry waits in its task row (`retrying`, `next_retry_at`); a 5s poller dispatches it once due |
 | Dead-letter | After `max_retries`, task → `workflow:tasks:dead_letter` |
+| Task timeouts | A task's `timeout` (1 h when unset) kills its run; a running task with no result 1 min past its timeout is failed by the same 5s poller, and its retry policy applies |
 | Replay | `POST /api/executions/:id/retry` resets and re-runs |
 | Concurrency control | `max_parallel` counted from the execution's queued and running task rows |
 | Crash recovery | State reconstructed from PostgreSQL on restart |

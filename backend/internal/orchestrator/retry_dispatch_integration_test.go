@@ -33,7 +33,7 @@ func TestRetryNotRedispatchedBySibling(t *testing.T) {
 	}
 	byDef := map[string]*models.TaskMessage{}
 	for _, m := range testutil.Drain(t, rdb, 2) {
-		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount); err != nil {
+		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount, m.Timeout); err != nil {
 			t.Fatal(err)
 		}
 		byDef[m.TaskDefinitionID] = m
@@ -67,7 +67,7 @@ func TestDueRetryCompletesWithoutPickup(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := testutil.Drain(t, rdb, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, first.TaskExecID, "testutil", first.RetryCount); err != nil {
+	if err := orch.MarkTaskRunning(ctx, first.TaskExecID, "testutil", first.RetryCount, first.Timeout); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.ProcessResult(ctx, testutil.Fail(first, "boom")); err != nil {

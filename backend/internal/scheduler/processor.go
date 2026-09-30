@@ -59,7 +59,8 @@ func (p *ResultProcessor) Run(ctx context.Context) {
 }
 
 // RetryPoller re-runs dispatch on a fixed tick, which is what starts a retry
-// once its next_retry_at passes. Single node: one poller per process.
+// once its next_retry_at passes, and reaps timed-out tasks on the same tick.
+// Single node: one poller per process.
 type RetryPoller struct {
 	orchestrator *orchestrator.Orchestrator
 }
@@ -80,6 +81,7 @@ func (p *RetryPoller) Run(ctx context.Context) {
 			log.Info().Msg("retry poller shutting down")
 			return
 		case <-ticker.C:
+			p.orchestrator.ReapTimedOut(ctx, time.Now())
 			p.orchestrator.DispatchDue(ctx)
 		}
 	}

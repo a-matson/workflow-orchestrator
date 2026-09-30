@@ -56,8 +56,8 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		reset, err := o.store.TransitionTask(ctx, task.ID, -1, models.TaskStatusPending, persistence.TaskPatch{})
 		if err != nil {
 			// Skipping the execution would strand every other task in it.
-			// The row keeps its slot and waits for the next restart, as a
-			// stuck pickup does, until the timeout reaper (plan row R17).
+			// A running row is failed by the timeout reaper once its
+			// timeout_at passes; a queued one waits for the next restart.
 			log.Error().Err(err).Str("exec_id", exec.ID).Str("task_id", task.TaskDefinitionID).
 				Msg("could not requeue task left open by the previous process")
 			continue

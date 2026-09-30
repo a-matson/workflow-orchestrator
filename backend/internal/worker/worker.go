@@ -30,7 +30,7 @@ import (
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
-	MarkTaskRunning(ctx context.Context, taskExecID, workerID string, attempt int) error
+	MarkTaskRunning(ctx context.Context, taskExecID, workerID string, attempt int, timeout time.Duration) error
 	StreamLog(workflowExecID, taskExecID, taskName string, entry models.LogEntry)
 }
 
@@ -305,13 +305,12 @@ type logFn func(level, message string, fields map[string]any)
 // conflict means the message is a duplicate, stale, or from a rolled-back
 // dispatch. Any other error leaves the row's state unknown (the write may
 // have committed), so running could duplicate another worker's run; the
-// message is dropped instead. Shortcut: a row whose pickup did commit then
-// stays running until the next restart re-queues it; the timeout reaper
-// (plan row R17) is the upgrade path.
+// message is dropped instead. A row whose pickup did commit then stays
+// running until Orchestrator.ReapTimedOut fails it past its timeout.
 func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, bool, error) {
 	// Before the first log line, so a dropped message streams nothing.
 	if w.notifier != nil {
-		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id, msg.RetryCount); err != nil {
+		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id, msg.RetryCount, msg.Timeout); err != nil {
 			return nil, nil, false, err
 		}
 	}
