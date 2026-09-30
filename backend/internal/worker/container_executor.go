@@ -643,8 +643,8 @@ func buildEnv(msg *models.TaskMessage, spec models.ContainerSpec) []string {
 
 func int64Ptr(v int64) *int64 { return &v }
 
-// mlInferenceCommand mirrors the flags the in-process execMLInference passes
-// (worker.go) so both modes run the same model invocation.
+// mlInferenceCommand keeps the flags the removed in-process executor passed, so
+// saved ml_inference definitions invoke their model the same way.
 func mlInferenceCommand(model string, cfg map[string]any) []string {
 	batchSize := 32
 	if bs, ok := cfg["batch_size"].(float64); ok && bs > 0 {

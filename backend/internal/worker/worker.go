@@ -5,10 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -60,17 +60,19 @@ func NewPool(
 	ws Workspace,
 ) (*Pool, error) {
 	var executor *ContainerExecutor
+	execErr := errors.New("artifact storage (MinIO) unavailable")
 	if storageClient != nil {
-		var err error
-		executor, err = NewContainerExecutor(storageClient, ws)
-		if err != nil {
-			// A configured volume means the deployment expects isolated tasks,
-			// so a broken setup must stop startup rather than run them in-process.
-			if ws.Volume != "" {
-				return nil, fmt.Errorf("container executor: %w", err)
-			}
-			log.Warn().Err(err).Msg("Docker unavailable — container isolation disabled; tasks run in-process")
+		executor, execErr = NewContainerExecutor(storageClient, ws)
+		// A configured volume means the deployment expects task containers, so a
+		// broken setup must stop startup rather than leave code tasks failing.
+		if execErr != nil && ws.Volume != "" {
+			return nil, fmt.Errorf("container executor: %w", execErr)
 		}
+	}
+	if execErr != nil {
+		// http_request, database_query and notification tasks still work, so the
+		// backend starts; code tasks fail closed in dispatch.
+		log.Warn().Err(execErr).Msg("container runtime unavailable: data_transform, generic and ml_inference tasks will fail until it is restored")
 	}
 
 	workers := make([]*Worker, workerCount)
@@ -180,9 +182,8 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
-// executeTask is the top-level dispatcher. It acquires the idempotency lock,
-// notifies the orchestrator that the task is running, then routes to either
-// the container executor or the in-process executor.
+// executeTask acquires the idempotency lock, marks the task running, runs it
+// through dispatch and publishes the result.
 func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	startedAt := time.Now()
 
@@ -192,7 +193,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		Str("task_type", msg.TaskType).
 		Str("task_name", msg.TaskName).
 		Int("retry", msg.RetryCount).
-		Bool("isolated", msg.Container != nil && w.executor != nil).
+		Bool("isolated", w.usesContainer(msg)).
 		Logger()
 
 	taskLogger.Info().Msg("executing task")
@@ -234,7 +235,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		"task_type": msg.TaskType,
 		"task_name": msg.TaskName,
 		"retry":     msg.RetryCount,
-		"isolated":  msg.Container != nil && w.executor != nil,
+		"isolated":  w.usesContainer(msg),
 	})
 
 	// Notify orchestrator: Queued → Running
@@ -244,32 +245,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		}
 	}
 
-	var output map[string]any
-	var artifactsOut []models.ResolvedArtifact
-	var execErr error
-
-	// Route: container isolation if a ContainerSpec is present and Docker is available
-	if msg.Container != nil && w.executor != nil {
-		stdout, arts, runErr := w.executor.Run(taskCtx, msg, addLog)
-		artifactsOut = arts
-		execErr = runErr
-		if runErr == nil {
-			// Try to parse stdout as JSON for structured output
-			if json.Unmarshal([]byte(stdout), &output) != nil {
-				output = map[string]any{"output": stdout}
-			}
-			if len(arts) > 0 {
-				keys := make([]string, len(arts))
-				for i, a := range arts {
-					keys[i] = a.MinioKey
-				}
-				output["artifacts"] = keys
-			}
-		}
-	} else {
-		// In-process execution for built-in task types
-		output, execErr = w.dispatchInProcess(taskCtx, msg, addLog)
-	}
+	output, artifactsOut, execErr := w.dispatch(taskCtx, msg, addLog)
 
 	completedAt := time.Now()
 
@@ -309,20 +285,68 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 
 type logFn func(level, message string, fields map[string]any)
 
+// runsUserCode reports whether a task type executes a user-supplied script,
+// command or binary. Unknown types count as code: they used to fall through
+// to the shell executor, so saved definitions may carry commands.
+func runsUserCode(taskType string) bool {
+	switch taskType {
+	case "http_request", "database_query", "notification":
+		return false
+	default:
+		return true
+	}
+}
+
+func (w *Worker) usesContainer(msg *models.TaskMessage) bool {
+	return runsUserCode(msg.TaskType) || (msg.Container != nil && w.executor != nil)
+}
+
+// dispatch runs msg to completion. User code runs only in a task container;
+// without a container executor those tasks fail closed (ADR 0003).
+func (w *Worker) dispatch(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, error) {
+	if !w.usesContainer(msg) {
+		out, err := w.dispatchInProcess(ctx, msg, addLog)
+		return out, nil, err
+	}
+	// Runs nothing, so it needs no container; demo templates and saved
+	// placeholder tasks rely on it.
+	if msg.TaskType == "generic" && buildCommand(msg) == nil {
+		addLog("info", "No command configured — task is a no-op", nil)
+		return map[string]any{"status": "no-op"}, nil, nil
+	}
+	if w.executor == nil {
+		return nil, nil, fmt.Errorf("container runtime unavailable: %s tasks run only in containers", msg.TaskType)
+	}
+
+	stdout, arts, err := w.executor.Run(ctx, msg, addLog)
+	if err != nil {
+		return nil, arts, err
+	}
+	var output map[string]any
+	// A stdout of "null" decodes without error but leaves output nil.
+	if json.Unmarshal([]byte(stdout), &output) != nil || output == nil {
+		output = map[string]any{"output": stdout}
+	}
+	if len(arts) > 0 {
+		keys := make([]string, len(arts))
+		for i, a := range arts {
+			keys[i] = a.MinioKey
+		}
+		output["artifacts"] = keys
+	}
+	return output, arts, nil
+}
+
 func (w *Worker) dispatchInProcess(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
 	switch msg.TaskType {
 	case "http_request":
 		return w.execHTTP(ctx, msg, addLog)
 	case "database_query":
 		return w.execDBQuery(ctx, msg, addLog)
-	case "data_transform":
-		return w.execDataTransform(ctx, msg, addLog)
-	case "ml_inference":
-		return w.execMLInference(ctx, msg, addLog)
 	case "notification":
 		return w.execNotification(ctx, msg, addLog)
 	default:
-		return w.execGeneric(ctx, msg, addLog)
+		return nil, fmt.Errorf("task type %q has no in-process executor", msg.TaskType)
 	}
 }
 
@@ -501,114 +525,6 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	return map[string]any{"rows": results, "columns": cols, "row_count": len(results)}, nil
 }
 
-// ─── Data Transform ───────────────────────────────────────────────────────────
-// Config: script (string — shell command), input_format, output_format
-
-func (w *Worker) execDataTransform(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
-	cfg := msg.Config
-
-	script, _ := cfg["script"].(string)
-	if script == "" {
-		return nil, fmt.Errorf("data_transform: 'script' is required")
-	}
-
-	// Run in a clean, empty sandbox directory so the script cannot access the
-	// host project source, backend binaries, or any other host files.
-	sandbox, err := createSandbox()
-	if err != nil {
-		return nil, fmt.Errorf("data_transform: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(sandbox) }()
-
-	addLog("info", "Running transform", map[string]any{"script": truncate(script, 200), "sandbox": sandbox})
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", script)
-	cmd.Dir = sandbox
-	cmd.Env = sandboxEnv(msg)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if stderr.Len() > 0 {
-		addLog("warn", "stderr", map[string]any{"output": truncate(stderr.String(), 500)})
-	}
-	if err != nil {
-		return nil, fmt.Errorf("data_transform: %w — %s", err, truncate(stderr.String(), 200))
-	}
-
-	out := stdout.String()
-	addLog("info", "Transform complete", map[string]any{"output_bytes": len(out)})
-
-	var parsed any
-	if json.Unmarshal([]byte(out), &parsed) == nil {
-		return map[string]any{"output": parsed, "output_bytes": len(out)}, nil
-	}
-	return map[string]any{"output": out, "output_bytes": len(out)}, nil
-}
-
-// ─── ML Inference ─────────────────────────────────────────────────────────────
-// Config: model_name (string — path to binary/script), input_path, output_path,
-//         batch_size (number)
-
-func (w *Worker) execMLInference(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
-	cfg := msg.Config
-
-	modelName, _ := cfg["model_name"].(string)
-	if modelName == "" {
-		return nil, fmt.Errorf("ml_inference: 'model_name' is required")
-	}
-
-	inputPath, _ := cfg["input_path"].(string)
-	outputPath, _ := cfg["output_path"].(string)
-	batchSize := 32
-	if bs, ok := cfg["batch_size"].(float64); ok && bs > 0 {
-		batchSize = int(bs)
-	}
-
-	args := []string{"--batch-size", fmt.Sprintf("%d", batchSize)}
-	if inputPath != "" {
-		args = append(args, "--input", inputPath)
-	}
-	if outputPath != "" {
-		args = append(args, "--output", outputPath)
-	}
-
-	addLog("info", fmt.Sprintf("Running model: %s", modelName), map[string]any{
-		"input": inputPath, "output": outputPath, "batch_size": batchSize,
-	})
-
-	sandbox, err := createSandbox()
-	if err != nil {
-		return nil, fmt.Errorf("ml_inference: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(sandbox) }()
-
-	cmd := exec.CommandContext(ctx, modelName, args...)
-	cmd.Dir = sandbox
-	cmd.Env = sandboxEnv(msg)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if stderr.Len() > 0 {
-		addLog("info", "model output", map[string]any{"output": truncate(stderr.String(), 500)})
-	}
-	if err != nil {
-		return nil, fmt.Errorf("ml_inference: %w", err)
-	}
-
-	out := stdout.String()
-	addLog("info", "Inference complete", map[string]any{"output_path": outputPath})
-
-	var parsed any
-	if json.Unmarshal([]byte(out), &parsed) == nil {
-		return map[string]any{"output": parsed, "output_path": outputPath}, nil
-	}
-	return map[string]any{"output": out, "output_path": outputPath}, nil
-}
-
 // ─── Notification ─────────────────────────────────────────────────────────────
 // Config: notify_type (slack|email|webhook|pagerduty), channel (string), message
 
@@ -668,6 +584,8 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 func (w *Worker) notifyEmail(ctx context.Context, to, message string, addLog logFn) (map[string]any, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// Not user code: the argv is fixed and user text only reaches sendmail's
+	// stdin, so this stays outside the container-only rule.
 	cmd := exec.CommandContext(cmdCtx, "sendmail", "-t")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("To: %s\nSubject: Fluxor Notification\n\n%s\n", to, message))
 	var stderr bytes.Buffer
@@ -739,132 +657,9 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 	return map[string]any{"delivered": true, "status": resp.StatusCode}, nil
 }
 
-// ─── Generic / Shell ──────────────────────────────────────────────────────────
-// Config: command (string), args ([]string|[]any), env (map[string]string)
-
-func (w *Worker) execGeneric(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, error) {
-	cfg := msg.Config
-
-	command, _ := cfg["command"].(string)
-	if command == "" {
-		addLog("info", "No command configured — task is a no-op", nil)
-		return map[string]any{"status": "no-op"}, nil
-	}
-
-	var args []string
-	switch a := cfg["args"].(type) {
-	case []any:
-		for _, v := range a {
-			if s, ok := v.(string); ok {
-				args = append(args, s)
-			}
-		}
-	case []string:
-		args = a
-	}
-	// Reject path-traversal attempts in the command binary itself
-	if strings.Contains(command, "..") || strings.HasPrefix(command, "/") {
-		return nil, fmt.Errorf("generic: command must be a binary name, not a path: %q", command)
-	}
-
-	sandbox, sandboxErr := createSandbox()
-	if sandboxErr != nil {
-		return nil, fmt.Errorf("generic: %w", sandboxErr)
-	}
-	defer func() { _ = os.RemoveAll(sandbox) }()
-
-	addLog("info", fmt.Sprintf("Running: %s %s", command, strings.Join(args, " ")), map[string]any{
-		"command": command,
-		"args":    args,
-	})
-
-	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Dir = sandbox
-	// Start with the clean base env, then merge any task-specific vars
-	cmd.Env = sandboxEnv(msg)
-
-	if envMap, ok := cfg["env"].(map[string]any); ok {
-		for k, v := range envMap {
-			if vs, ok := v.(string); ok {
-				cmd.Env = append(cmd.Env, k+"="+vs)
-			}
-		}
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	exitCode := 0
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		exitCode = exitErr.ExitCode()
-	}
-
-	if stderr.Len() > 0 {
-		addLog("warn", "stderr", map[string]any{"output": truncate(stderr.String(), 500)})
-	}
-	if stdout.Len() > 0 {
-		addLog("info", "stdout", map[string]any{"output": truncate(stdout.String(), 500)})
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("generic: exited %d: %w", exitCode, err)
-	}
-
-	addLog("info", "Command completed", map[string]any{"exit_code": exitCode})
-
-	out := stdout.String()
-	var parsed any
-	if json.Unmarshal([]byte(out), &parsed) == nil {
-		return map[string]any{"output": parsed, "exit_code": exitCode}, nil
-	}
-	return map[string]any{"output": out, "exit_code": exitCode}, nil
-}
-
-// createSandbox creates a fresh, empty, world-inaccessible temporary directory
-// that is used as the working directory for all in-process task executors.
-// The directory is completely isolated from the backend source tree: it is
-// created under the OS temp base (e.g. /tmp), has mode 0700 so no other
-// process can list it, and is removed by the caller after the task finishes.
-func createSandbox() (string, error) {
-	dir, err := os.MkdirTemp("", "fluxor-sandbox-*")
-	if err != nil {
-		return "", fmt.Errorf("create sandbox dir: %w", err)
-	}
-	// Restrict to owner only — prevents other processes from peeking
-	if err := os.Chmod(dir, 0o700); err != nil {
-		defer func() { _ = os.RemoveAll(dir) }()
-		return "", fmt.Errorf("chmod sandbox dir: %w", err)
-	}
-	return dir, nil
-}
-
-// sandboxEnv returns a minimal, clean environment for subprocess execution.
-// It deliberately omits the inherited process environment so user scripts
-// cannot read secrets (POSTGRES_URL, MINIO_SECRET_KEY, REDIS_ADDR, etc.)
-// that are present in the backend process env.
-func sandboxEnv(msg *models.TaskMessage) []string {
-	return []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"HOME=/tmp",
-		"TMPDIR=/tmp",
-		"FLUXOR_TASK_EXEC_ID=" + msg.TaskExecID,
-		"FLUXOR_WORKFLOW_EXEC_ID=" + msg.WorkflowExecID,
-		"FLUXOR_TASK_NAME=" + msg.TaskName,
-	}
-}
-
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	return s[:n] + "…"
-}
-
-// dispatch is a stub test seam: with no container executor, main routes every
-// task to dispatchInProcess. The fix moves executeTask's routing here.
-func (w *Worker) dispatch(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, error) {
-	out, err := w.dispatchInProcess(ctx, msg, addLog)
-	return out, nil, err
 }

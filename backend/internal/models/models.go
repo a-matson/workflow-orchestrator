@@ -70,7 +70,9 @@ type RetryPolicy struct {
 //
 // Container    — Docker image and resource limits for the isolated executor.
 //
-//	If nil the task runs in-process (legacy/simple tasks).
+//	Optional for code task types (data_transform, generic, ml_inference),
+//	which always run in a container; nil applies the defaults. For the
+//	other types, nil runs the task in-process.
 type TaskDefinition struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
