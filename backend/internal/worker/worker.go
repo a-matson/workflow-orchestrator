@@ -861,3 +861,10 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// dispatch is a stub test seam: with no container executor, main routes every
+// task to dispatchInProcess. The fix moves executeTask's routing here.
+func (w *Worker) dispatch(ctx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, error) {
+	out, err := w.dispatchInProcess(ctx, msg, addLog)
+	return out, nil, err
+}
