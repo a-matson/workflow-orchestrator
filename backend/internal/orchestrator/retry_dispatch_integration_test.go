@@ -135,3 +135,26 @@ func TestDispatchEnqueuesRowQueuedBehindCache(t *testing.T) {
 		t.Fatalf("%d messages queued for b, want 1", n)
 	}
 }
+
+// Pins REL-6's order, queued before the push: when the queued write fails,
+// no message may exist for the row.
+func TestDispatchPushesNothingWhenQueueWriteFails(t *testing.T) {
+	ctx := context.Background()
+	store, rdb := testutil.Env(t)
+	orch := orchestrator.NewOrchestrator(store, rdb, &testutil.Recorder{})
+	def := chainDef()
+	testutil.SaveDef(t, store, def)
+	exec, err := orch.StartWorkflow(ctx, def, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := testutil.Drain(t, rdb, 1)[0]
+	// No pending -> queued transition can match a cancelled row.
+	setTaskStatus(t, store, exec.ID, "b", models.TaskStatusCancelled)
+
+	runTask(t, orch, a, testutil.Ok(a))
+
+	if n := testutil.Queued(t, rdb, exec.ID); n != 0 {
+		t.Fatalf("%d messages queued for b after its queued write failed, want 0", n)
+	}
+}
