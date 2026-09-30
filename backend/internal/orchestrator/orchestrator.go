@@ -342,14 +342,14 @@ func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskRes
 	taskDefID := taskExec.TaskDefinitionID
 
 	if result.Success {
-		return o.handleTaskSuccess(ctx, execCtx, taskExec, taskDefID, result)
+		return o.handleTaskSuccess(ctx, execCtx, taskDefID, result)
 	}
 	return o.handleTaskFailure(ctx, execCtx, taskExec, taskDefID, result)
 }
 
-func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *ExecutionContext, taskExec *models.TaskExecution, taskDefID string, result *models.TaskResult) error {
+func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *ExecutionContext, taskDefID string, result *models.TaskResult) error {
 	now := time.Now()
-	taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.Attempt(), models.TaskStatusCompleted, persistence.TaskPatch{
+	taskExec, err := o.transitionResult(ctx, result, models.TaskStatusCompleted, persistence.TaskPatch{
 		WorkerID:     result.WorkerID,
 		CompletedAt:  &now,
 		Output:       result.Output,
@@ -427,7 +427,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		patch.RetryCount = &taskExec.RetryCount
 		patch.NextRetryAt = taskExec.NextRetryAt
 
-		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.Attempt(), models.TaskStatusRetrying, patch)
+		taskExec, err := o.transitionResult(ctx, result, models.TaskStatusRetrying, patch)
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusRetrying, err)
 		}
@@ -478,7 +478,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 	} else {
 		// Exhausted retries → dead letter
-		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.Attempt(), models.TaskStatusDeadLetter, patch)
+		taskExec, err := o.transitionResult(ctx, result, models.TaskStatusDeadLetter, patch)
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusDeadLetter, err)
 		}
@@ -590,6 +590,41 @@ func (c *ExecutionContext) snapshot() *models.WorkflowExecution {
 		snap.Tasks[i] = &row
 	}
 	return &snap
+}
+
+// transitionResult applies a result's transition to task result.TaskExecID.
+// The worker runs a task even when its pickup write fails (worker.go logs and
+// carries on), so a row still queued at the result's attempt has only missed
+// that write: it is moved to running and the transition is tried once more.
+// Any other conflict is returned for dropStaleResult.
+func (o *Orchestrator) transitionResult(ctx context.Context, result *models.TaskResult, to models.TaskStatus, p persistence.TaskPatch) (*models.TaskExecution, error) {
+	row, err := o.store.TransitionTask(ctx, result.TaskExecID, result.Attempt(), to, p)
+	if !errors.Is(err, persistence.ErrConflict) {
+		return row, err
+	}
+	cur, getErr := o.store.GetTaskExecution(ctx, result.TaskExecID)
+	if getErr != nil {
+		// Not wrapping err: a failed re-read is not a stale result, and
+		// dropStaleResult would discard anything that matches ErrConflict.
+		return nil, fmt.Errorf("re-reading task after a transition conflict: %w", getErr)
+	}
+	if cur.Status != models.TaskStatusQueued || (result.Attempt() >= 0 && cur.RetryCount != result.Attempt()) {
+		return nil, err
+	}
+
+	log.Warn().
+		Str("task_exec_id", result.TaskExecID).
+		Str("workflow_exec_id", result.WorkflowExecID).
+		Int("attempt", cur.RetryCount).
+		Msg("result for a task whose pickup was not recorded; marking it running first")
+	started := result.StartedAt
+	if _, err := o.store.TransitionTask(ctx, result.TaskExecID, cur.RetryCount, models.TaskStatusRunning, persistence.TaskPatch{
+		WorkerID:  result.WorkerID,
+		StartedAt: &started,
+	}); err != nil {
+		return nil, err
+	}
+	return o.store.TransitionTask(ctx, result.TaskExecID, result.Attempt(), to, p)
 }
 
 // dropStaleResult turns an ErrConflict from a result's transition into a
