@@ -134,7 +134,9 @@ func main() {
 
 	orch := orchestrator.NewOrchestrator(store, redisClient, hub)
 
-	// Crash recovery: reload in-flight executions
+	// Must finish before the result processor and the worker pool start below:
+	// recovery moves every running task back to pending, which would pull a
+	// live pickup out from under its worker.
 	log.Info().Msg("running crash recovery...")
 	if err := orch.RecoverInFlightExecutions(ctx); err != nil {
 		log.Warn().Err(err).Msg("crash recovery encountered errors (non-fatal)")
