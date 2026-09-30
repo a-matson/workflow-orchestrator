@@ -35,7 +35,10 @@ func main() {
 	if getEnv("LOG_LEVEL", "info") == "debug" {
 		logLevel = zerolog.DebugLevel
 	}
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
+	// JSON by default so log shippers can parse request_id; console is for local dev only.
+	if getEnv("LOG_FORMAT", "json") == "console" {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
+	}
 	zerolog.SetGlobalLevel(logLevel)
 
 	log.Info().
