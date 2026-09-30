@@ -170,22 +170,10 @@ func (s *Store) GetWorkflowExecution(ctx context.Context, id string) (*models.Wo
 		FROM workflow_executions WHERE id = $1
 	`, id)
 
-	exec := &models.WorkflowExecution{}
-	var payloadJSON, metaJSON []byte
-	var errorStr *string
-	err := row.Scan(&exec.ID, &exec.WorkflowID, &exec.WorkflowName, &exec.Status,
-		&payloadJSON, &metaJSON, &exec.StartedAt, &exec.CompletedAt,
-		&errorStr, &exec.CreatedAt, &exec.UpdatedAt)
+	exec, err := scanWorkflowExecution(row)
 	if err != nil {
 		return nil, err
 	}
-
-	if errorStr != nil {
-		exec.Error = *errorStr
-	}
-
-	_ = json.Unmarshal(payloadJSON, &exec.TriggerPayload)
-	_ = json.Unmarshal(metaJSON, &exec.Metadata)
 
 	// Load task executions
 	tasks, err := s.ListTaskExecutions(ctx, exec.ID)
@@ -342,6 +330,29 @@ func (s *Store) ListTaskExecutions(ctx context.Context, workflowExecID string) (
 
 type scannable interface {
 	Scan(dest ...any) error
+}
+
+// scanWorkflowExecution reads the columns listed in execColumns. Tasks is left nil.
+func scanWorkflowExecution(row scannable) (*models.WorkflowExecution, error) {
+	exec := &models.WorkflowExecution{}
+	var payloadJSON, metaJSON []byte
+	var errorStr *string
+	err := row.Scan(&exec.ID, &exec.WorkflowID, &exec.WorkflowName, &exec.Status,
+		&payloadJSON, &metaJSON, &exec.StartedAt, &exec.CompletedAt,
+		&errorStr, &exec.CreatedAt, &exec.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	if errorStr != nil {
+		exec.Error = *errorStr
+	}
+
+	// Best effort: a malformed payload or metadata blob must not hide the
+	// execution's status from callers.
+	_ = json.Unmarshal(payloadJSON, &exec.TriggerPayload)
+	_ = json.Unmarshal(metaJSON, &exec.Metadata)
+	return exec, nil
 }
 
 func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
