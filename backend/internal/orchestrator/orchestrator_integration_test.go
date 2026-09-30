@@ -616,6 +616,28 @@ func TestRecoveryRedeliversOpenTask(t *testing.T) {
 	}
 }
 
+// REL-9: a result for an execution this process has not loaded, as when it
+// arrives before recovery registers the execution, must be applied and
+// advance the DAG, not leave its row running forever.
+func TestResultForUnloadedExecutionIsApplied(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, chainDef())
+	msgA := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, msgA.TaskExecID, "testutil", msgA.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+
+	unloaded := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := unloaded.ProcessResult(ctx, testutil.Ok(msgA)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusCompleted {
+		t.Fatalf("task a = %s, want %s", got, models.TaskStatusCompleted)
+	}
+	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
+}
+
 // recoverAfterCrash starts a one-task workflow whose task was running on a
 // worker that the restart killed, recovers it on a new orchestrator, and
 // returns that orchestrator with the killed worker's message and the re-sent one.
