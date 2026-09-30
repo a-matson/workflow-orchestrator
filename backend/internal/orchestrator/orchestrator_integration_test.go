@@ -315,3 +315,39 @@ func TestDuplicateResultIsDropped(t *testing.T) {
 		t.Errorf("%d %s events after a redelivered result, want 1", completed, models.WSEventTaskCompleted)
 	}
 }
+
+func TestResultWithoutAttemptIsApplied(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Legacy Result",
+		Tasks: []models.TaskDefinition{{
+			ID: "t", Name: "T", Type: "generic", Dependencies: []string{},
+			RetryPolicy: &models.RetryPolicy{MaxRetries: 3, InitialDelay: time.Hour, MaxDelay: time.Hour, BackoffMultiple: 1},
+		}},
+		MaxParallel: 10,
+	})
+
+	msg := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, store, msg, testutil.Fail(msg, "transient"))
+	// The retry poller would re-enqueue the task; the worker's pickup is all
+	// this test needs to put attempt 1 in running.
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil"); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	if row := testutil.TaskRow(t, store, exec.ID, "t"); row.Status != models.TaskStatusRunning || row.RetryCount != 1 {
+		t.Fatalf("task is %s on attempt %d; want running on attempt 1", row.Status, row.RetryCount)
+	}
+
+	// A worker built before TaskResult.RetryCount existed publishes none.
+	legacy := testutil.Ok(msg)
+	legacy.RetryCount = nil
+	if err := orch.ProcessResult(ctx, legacy); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	if got := testutil.TaskRow(t, store, exec.ID, "t").Status; got != models.TaskStatusCompleted {
+		t.Errorf("task status = %s after a result without retry_count, want %s", got, models.TaskStatusCompleted)
+	}
+}

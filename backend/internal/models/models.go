@@ -178,17 +178,29 @@ type TaskMessage struct {
 
 // TaskResult is what workers publish back
 type TaskResult struct {
-	TaskExecID     string             `json:"task_exec_id"`
-	WorkflowExecID string             `json:"workflow_exec_id"`
-	WorkerID       string             `json:"worker_id"`
-	RetryCount     int                `json:"retry_count"` // the message's attempt; stale ones are dropped
-	Success        bool               `json:"success"`
-	Output         json.RawMessage    `json:"output,omitempty"`
-	Error          string             `json:"error,omitempty"`
-	Logs           []LogEntry         `json:"logs,omitempty"`
-	StartedAt      time.Time          `json:"started_at"`
-	CompletedAt    time.Time          `json:"completed_at"`
-	ArtifactsOut   []ResolvedArtifact `json:"artifacts_out,omitempty"`
+	TaskExecID     string `json:"task_exec_id"`
+	WorkflowExecID string `json:"workflow_exec_id"`
+	WorkerID       string `json:"worker_id"`
+	// RetryCount is the attempt the worker ran. It is a pointer because
+	// results published before the field existed omit it; see Attempt.
+	RetryCount   *int               `json:"retry_count,omitempty"`
+	Success      bool               `json:"success"`
+	Output       json.RawMessage    `json:"output,omitempty"`
+	Error        string             `json:"error,omitempty"`
+	Logs         []LogEntry         `json:"logs,omitempty"`
+	StartedAt    time.Time          `json:"started_at"`
+	CompletedAt  time.Time          `json:"completed_at"`
+	ArtifactsOut []ResolvedArtifact `json:"artifacts_out,omitempty"`
+}
+
+// Attempt returns the attempt r reports, or -1 when r predates the field.
+// -1 makes Store.TransitionTask skip its attempt guard, so such a result is
+// still checked against the task's status but never dropped for its attempt.
+func (r *TaskResult) Attempt() int {
+	if r.RetryCount == nil {
+		return -1
+	}
+	return *r.RetryCount
 }
 
 // WebSocketEvent is sent to connected UI clients

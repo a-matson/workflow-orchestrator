@@ -342,7 +342,7 @@ func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskRes
 
 func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *ExecutionContext, taskExec *models.TaskExecution, taskDefID string, result *models.TaskResult) error {
 	now := time.Now()
-	taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.RetryCount, models.TaskStatusCompleted, persistence.TaskPatch{
+	taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.Attempt(), models.TaskStatusCompleted, persistence.TaskPatch{
 		WorkerID:     result.WorkerID,
 		CompletedAt:  &now,
 		Output:       result.Output,
@@ -420,7 +420,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		patch.RetryCount = &taskExec.RetryCount
 		patch.NextRetryAt = taskExec.NextRetryAt
 
-		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.RetryCount, models.TaskStatusRetrying, patch)
+		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.Attempt(), models.TaskStatusRetrying, patch)
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusRetrying, err)
 		}
@@ -471,7 +471,7 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 	} else {
 		// Exhausted retries → dead letter
-		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.RetryCount, models.TaskStatusDeadLetter, patch)
+		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.Attempt(), models.TaskStatusDeadLetter, patch)
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusDeadLetter, err)
 		}
@@ -571,7 +571,7 @@ func dropStaleResult(result *models.TaskResult, to models.TaskStatus, err error)
 	log.Warn().Err(err).
 		Str("task_exec_id", result.TaskExecID).
 		Str("workflow_exec_id", result.WorkflowExecID).
-		Int("retry_count", result.RetryCount).
+		Int("attempt", result.Attempt()).
 		Msg("dropping stale task result")
 	return nil
 }

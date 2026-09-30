@@ -304,7 +304,7 @@ func result(m *models.TaskMessage, success bool, errMsg string) *models.TaskResu
 		TaskExecID:     m.TaskExecID,
 		WorkflowExecID: m.WorkflowExecID,
 		WorkerID:       "testutil",
-		RetryCount:     m.RetryCount,
+		RetryCount:     &m.RetryCount,
 		Success:        success,
 		Error:          errMsg,
 		StartedAt:      now,
