@@ -281,6 +281,8 @@
 	import type { Connection, EdgeMouseEvent, NodeMouseEvent } from '@vue-flow/core'
 	import '@vue-flow/core/dist/style.css'
 	import '@vue-flow/core/dist/theme-default.css'
+	// Imported here, not via CSS @import: an @import inlines core's style.css a second time into the app bundle.
+	import '@vue-flow/controls/dist/style.css'
 	import { v4 as uuidv4 } from 'uuid'
 	import { useWorkflowStore } from '../../stores/workflow'
 	import { TASK_TYPES } from '../../types'
@@ -729,9 +731,6 @@
 </script>
 
 <style>
-	@import '../../../node_modules/@vue-flow/core/dist/style.css';
-	@import '../../../node_modules/@vue-flow/controls/dist/style.css';
-
 	.dag-editor {
 		display: flex;
 		flex-direction: column;
