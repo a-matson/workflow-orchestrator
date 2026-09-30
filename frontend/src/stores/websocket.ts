@@ -12,14 +12,21 @@ export const useWebSocketStore = defineStore('websocket', () => {
 	const lastEvent = ref<WebSocketEvent | null>(null)
 	const eventLog = ref<WebSocketEvent[]>([])
 	const reconnectAttempts = ref(0)
-	const maxReconnectAttempts = 10
+	const maxReconnectDelayMs = 30_000
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+	// onclose fires for our own close() too; without this flag disconnect() would schedule a reconnect.
+	let closedByClient = false
+	// Events pushed while the socket was down are lost, so the next open must resync.
+	let wasDropped = false
+	// The server forgets subscriptions with the socket, so they are replayed on every open.
+	const subscriptions = new Set<string>()
 
 	const isConnected = computed(() => status.value === 'connected')
 
 	function connect(url?: string) {
 		const currentUrl = url ?? WS_URL
 		if (ws.value?.readyState === WebSocket.OPEN) return
+		closedByClient = false
 
 		status.value = 'connecting'
 
@@ -32,6 +39,11 @@ export const useWebSocketStore = defineStore('websocket', () => {
 				reconnectAttempts.value = 0
 				ws.value = socket
 				console.log('[WS] Connected to', currentUrl)
+				subscriptions.forEach(sendSubscribe)
+				if (wasDropped) {
+					wasDropped = false
+					resync()
+				}
 			}
 
 			socket.onmessage = (event: MessageEvent<string>) => {
@@ -53,6 +65,8 @@ export const useWebSocketStore = defineStore('websocket', () => {
 				status.value = 'disconnected'
 				ws.value = null
 				console.log('[WS] Disconnected:', event.code, event.reason)
+				if (closedByClient) return
+				wasDropped = true
 				scheduleReconnect(currentUrl)
 			}
 
@@ -68,6 +82,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
 	}
 
 	function disconnect() {
+		closedByClient = true
 		if (reconnectTimer) clearTimeout(reconnectTimer)
 		ws.value?.close(1000, 'Client disconnect')
 		ws.value = null
@@ -75,17 +90,29 @@ export const useWebSocketStore = defineStore('websocket', () => {
 		reconnectAttempts.value = 0
 	}
 
-	function subscribe(workflowExecId: string) {
-		if (!isConnected.value) return
+	function sendSubscribe(workflowExecId: string) {
 		ws.value?.send(JSON.stringify({ type: 'subscribe', payload: workflowExecId }))
 	}
 
+	function subscribe(workflowExecId: string) {
+		subscriptions.add(workflowExecId)
+		if (!isConnected.value) return
+		sendSubscribe(workflowExecId)
+	}
+
+	function resync() {
+		const workflowStore = useWorkflowStore()
+		const selectedId = workflowStore.selectedExecution?.id
+		// Failures are recorded in the store's error state; a failed resync must not break the socket.
+		void workflowStore.fetchExecutions()
+		if (selectedId) void workflowStore.fetchExecution(selectedId).catch(() => {})
+	}
+
 	function scheduleReconnect(url: string) {
-		if (reconnectAttempts.value >= maxReconnectAttempts) {
-			console.error('[WS] Max reconnect attempts reached')
-			return
-		}
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.value), 30000)
+		// Never gives up: the backend restarts on every deploy and the UI should heal without a reload.
+		const ceiling = Math.min(1000 * Math.pow(2, reconnectAttempts.value), maxReconnectDelayMs)
+		// Half-jitter keeps a floor so a fleet of tabs does not reconnect in lockstep yet still backs off.
+		const delay = Math.round(ceiling / 2 + (Math.random() * ceiling) / 2)
 		reconnectAttempts.value++
 		console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.value})`)
 		reconnectTimer = setTimeout(() => connect(url), delay)
