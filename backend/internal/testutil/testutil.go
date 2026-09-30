@@ -221,17 +221,23 @@ func Drain(t *testing.T, r *persistence.RedisClient, n int) []*models.TaskMessag
 	return msgs
 }
 
-// Queued counts the task messages for execID waiting in the task queue.
-func Queued(t *testing.T, r *persistence.RedisClient, execID string) int {
+// Raw returns a plain go-redis client on r's DB, for keys the broker API
+// does not expose (such as keys left behind by an older version).
+func Raw(t *testing.T, r *persistence.RedisClient) *redis.Client {
 	t.Helper()
 	rawMu.Lock()
 	rawClient, ok := raw[r]
 	rawMu.Unlock()
 	if !ok {
-		t.Fatal("testutil.Queued: client was not created by testutil.Env")
+		t.Fatal("testutil: client was not created by testutil.Env")
 	}
+	return rawClient
+}
 
-	items, err := rawClient.LRange(context.Background(), persistence.TaskQueueKey, 0, -1).Result()
+// Queued counts the task messages for execID waiting in the task queue.
+func Queued(t *testing.T, r *persistence.RedisClient, execID string) int {
+	t.Helper()
+	items, err := Raw(t, r).LRange(context.Background(), persistence.TaskQueueKey, 0, -1).Result()
 	if err != nil {
 		t.Fatalf("list task queue: %v", err)
 	}

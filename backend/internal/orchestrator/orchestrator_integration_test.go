@@ -556,3 +556,37 @@ func TestRecoveryDoesNotExceedMaxParallel(t *testing.T) {
 	}
 	testutil.Never(t, 300*time.Millisecond, func() bool { return openTasks(t, store, exec.ID) > maxParallel })
 }
+
+// REL-8: a restart kills every in-process worker, so a task that was running
+// must be sent again, not left waiting for a message that no longer exists.
+func TestRecoveryRedeliversRunningTask(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Redelivery", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	// The drained message is the one the killed worker held.
+	m := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+
+	restarted := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
+
+	again := testutil.Drain(t, redis, 1)[0]
+	if err := restarted.MarkTaskRunning(ctx, again.TaskExecID, "worker-new", again.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning after recovery: %v", err)
+	}
+	if err := restarted.ProcessResult(ctx, testutil.Ok(again)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	testutil.Eventually(t, eventWait, func() bool {
+		got, err := store.GetWorkflowExecution(ctx, exec.ID)
+		return err == nil && got.Status == models.WorkflowStatusCompleted
+	})
+}

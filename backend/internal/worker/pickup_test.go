@@ -20,16 +20,16 @@ type pickupNotifier struct{ err error }
 func (n pickupNotifier) MarkTaskRunning(context.Context, string, string, int) error { return n.err }
 func (pickupNotifier) StreamLog(string, string, string, models.LogEntry)            {}
 
-// Only a pickup conflict stops the task; any other pickup error still runs it
-// (the orchestrator recovers the lost pickup from the result).
-func TestPickUpAndDispatch_ConflictDoesNotRun(t *testing.T) {
+// A pickup that cannot be recorded never runs: after a conflict the message
+// is stale, and after any other error the row's state is unknown.
+func TestPickUpAndDispatch_FailedPickupDoesNotRun(t *testing.T) {
 	tests := []struct {
 		name     string
 		pickup   error
 		wantRuns int32
 	}{
 		{"conflict", fmt.Errorf("%w: task t -> running (attempt 0)", persistence.ErrConflict), 0},
-		{"store outage", errors.New("connection refused"), 1},
+		{"store outage", errors.New("connection refused"), 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
