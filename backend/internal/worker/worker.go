@@ -386,7 +386,7 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 
 	req, err := http.NewRequestWithContext(httpCtx, method, rawURL, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("http_request: %w", err)
+		return nil, fmt.Errorf("http_request: %w", withoutURL(err))
 	}
 	if len(bodyBytes) > 0 {
 		req.Header.Set("Content-Type", "application/json")
@@ -564,7 +564,7 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 	body, _ := json.Marshal(map[string]any{"text": message})
 	req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("slack: %w", err)
+		return nil, fmt.Errorf("slack: %w", withoutURL(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := w.do(req)
@@ -640,7 +640,7 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 	})
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("webhook: %w", err)
+		return nil, fmt.Errorf("webhook: %w", withoutURL(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := w.do(req)
@@ -660,16 +660,23 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 	return map[string]any{"delivered": true, "status": resp.StatusCode}, nil
 }
 
-// do sends a task request. It drops the *url.Error wrapper, whose message
-// repeats the full URL: webhook URLs carry their secret in the path or query,
-// and task errors are stored and shown in the UI.
 func (w *Worker) do(req *http.Request) (*http.Response, error) {
 	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return nil, withoutURL(err)
+	}
+	return resp, nil
+}
+
+// withoutURL drops the *url.Error wrapper, whose message repeats the full URL:
+// webhook URLs carry their secret in the path or query, and task errors are
+// stored and shown in the UI.
+func withoutURL(err error) error {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
-		return nil, urlErr.Err
+		return urlErr.Err
 	}
-	return resp, err
+	return err
 }
 
 func truncate(s string, n int) string {
