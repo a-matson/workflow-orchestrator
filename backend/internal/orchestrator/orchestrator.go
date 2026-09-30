@@ -152,12 +152,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 
 	taskMap := make(map[string]*models.TaskExecution)
 	for _, taskDef := range def.Tasks {
-		maxRetries := 0
-		if taskDef.RetryPolicy != nil {
-			maxRetries = taskDef.RetryPolicy.MaxRetries
-		} else if def.GlobalRetry != nil {
-			maxRetries = def.GlobalRetry.MaxRetries
-		}
+		maxRetries := retry.EffectivePolicy(taskDef.RetryPolicy, def.GlobalRetry).MaxRetries
 
 		taskExec := &models.TaskExecution{
 			ID:               uuid.New().String(),
@@ -536,17 +531,11 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *ExecutionContext, taskExec *models.TaskExecution, taskDefID string, result *models.TaskResult) error {
 	now := time.Now()
 
-	// Resolve retry policy
-	var policy *models.RetryPolicy
+	var taskPolicy *models.RetryPolicy
 	if node, ok := execCtx.Graph.Nodes[taskDefID]; ok {
-		policy = node.Task.RetryPolicy
+		taskPolicy = node.Task.RetryPolicy
 	}
-	if policy == nil {
-		policy = execCtx.Definition.GlobalRetry
-	}
-	if policy == nil {
-		policy = &retry.DefaultPolicy
-	}
+	policy := retry.EffectivePolicy(taskPolicy, execCtx.Definition.GlobalRetry)
 
 	patch := persistence.TaskPatch{
 		WorkerID:    result.WorkerID,
