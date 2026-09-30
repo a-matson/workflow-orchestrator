@@ -7,8 +7,7 @@
   },
   "/executions": {
     "color-contrast": 4,
-    "page-has-heading-one": 1,
-    "select-name": 1
+    "page-has-heading-one": 1
   },
   "/logs": {
     "color-contrast": 5,
