@@ -692,6 +692,29 @@ func TestRecovery_UsesSnapshot(t *testing.T) {
 	}
 }
 
+// REL-24: a running task whose result never arrives, as when the worker's
+// publish fails, must fail once its deadline passes instead of holding its
+// slot until a restart.
+func TestReaper_LostResult(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Lost Result", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	m := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-lost", m.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+
+	orch.ReapTimedOut(ctx, time.Now().Add(48*time.Hour))
+
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusFailed })
+	if row := testutil.TaskRow(t, store, exec.ID, "a"); row.Status != models.TaskStatusDeadLetter || !strings.Contains(row.Error, "timed out") {
+		t.Errorf("task a = %s (%q), want dead_letter with a timeout error", row.Status, row.Error)
+	}
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.
