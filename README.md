@@ -156,6 +156,7 @@ npm run format
 | `HTTP_ADDR` | `:8080` | HTTP listen address |
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `FLUXOR_EGRESS_ALLOW` | _(empty)_ | Comma-separated CIDRs (`10.20.0.0/16`) and exact `host:port` entries (`geo-service.internal:80`) that `http_request`, notification and `database_query` tasks may reach despite the egress guard |
+| `FLUXOR_MAX_ARTIFACT_BYTES` | `104857600` (100 MiB) | Largest artifact a container task may download into or upload from its workspace; an invalid value keeps the container executor from starting |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 | `FLUXOR_SESSION_SECRET` | _(random per start)_ | Base64 HMAC key (≥ 32 bytes) for browser session cookies (see [Browser login](#browser-login)) |
 | `FLUXOR_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` even over plain HTTP, for a TLS-terminating proxy |

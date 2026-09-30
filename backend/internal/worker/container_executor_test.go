@@ -89,3 +89,16 @@ func TestWorkspaceMount(t *testing.T) {
 		t.Errorf("volume mount = %+v (%+v)", vol, vol.VolumeOptions)
 	}
 }
+
+func TestRemoveWorkspace_LockedTopLevel(t *testing.T) {
+	dir := lockedWorkspace(t, t.TempDir())
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeWorkspace(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("workspace still present: %v", err)
+	}
+}

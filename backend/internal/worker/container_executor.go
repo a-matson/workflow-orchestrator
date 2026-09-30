@@ -86,8 +86,22 @@ type ContainerExecutor struct {
 	maxArtifactBytes int64
 }
 
+// DefaultMaxArtifactBytes caps one artifact when FLUXOR_MAX_ARTIFACT_BYTES is unset.
+const DefaultMaxArtifactBytes int64 = 100 << 20
+
+// maxArtifactBytesFromEnv reads FLUXOR_MAX_ARTIFACT_BYTES, the per-artifact size
+// cap for both upload and download. A set but invalid value is an error so a
+// typo cannot silently lift the cap.
 func maxArtifactBytesFromEnv() (int64, error) {
-	return 0, nil
+	v := os.Getenv("FLUXOR_MAX_ARTIFACT_BYTES")
+	if v == "" {
+		return DefaultMaxArtifactBytes, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("FLUXOR_MAX_ARTIFACT_BYTES=%q: want a positive byte count", v)
+	}
+	return n, nil
 }
 
 // NewContainerExecutor connects to the local Docker Engine socket.
@@ -96,6 +110,11 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 	dc, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker: connect: %w", err)
+	}
+
+	maxArtifactBytes, err := maxArtifactBytesFromEnv()
+	if err != nil {
+		return nil, err
 	}
 
 	ctx := context.Background()
@@ -120,7 +139,7 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 		return nil, err
 	}
 
-	ce := &ContainerExecutor{docker: dc, storage: storageClient, workspace: ws}
+	ce := &ContainerExecutor{docker: dc, storage: storageClient, workspace: ws, maxArtifactBytes: maxArtifactBytes}
 	if err := ce.ensureNetwork(ctx); err != nil {
 		return nil, err
 	}
@@ -162,16 +181,24 @@ func prepareWorkspaceRoot(ws Workspace) error {
 // removeWorkspace deletes dir even when the task, which runs as our uid, has
 // removed permissions from directories inside it.
 func removeWorkspace(dir string) error {
-	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// Unreadable despite the chmod; RemoveAll reports it below.
+	// The walk goes through an os.Root so a symlink the task left cannot point
+	// the chmod outside the workspace. dir itself is ours, not the task's, but
+	// the task may have locked it, and the root cannot open it until unlocked.
+	walkErr := os.Chmod(dir, 0o700)
+	if root, err := os.OpenRoot(dir); err != nil {
+		walkErr = errors.Join(walkErr, err)
+	} else {
+		walkErr = errors.Join(walkErr, fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				// Unreadable despite the chmod; RemoveAll reports it below.
+				return nil
+			}
+			if d.IsDir() {
+				return root.Chmod(path, 0o700)
+			}
 			return nil
-		}
-		if d.IsDir() {
-			return os.Chmod(path, 0o700)
-		}
-		return nil
-	})
+		}), root.Close())
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("workspace: remove %q: %w", dir, errors.Join(err, walkErr))
 	}
@@ -440,44 +467,83 @@ func (ce *ContainerExecutor) collectLogs(ctx context.Context, containerID string
 
 // ── Artifact download ─────────────────────────────────────────────────────────
 
+// Artifact paths come from the workflow definition and files in the workspace
+// come from the task, so both are untrusted: every file is opened through an
+// os.Root on the workspace, and errors name the artifact path, never a host path.
+
+// openWorkspaceRoot drops the host path from the error; task errors reach the UI.
+func openWorkspaceRoot(dir string) (*os.Root, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return nil, fmt.Errorf("open task workspace: %w", err)
+	}
+	return root, nil
+}
+
 func (ce *ContainerExecutor) downloadArtifacts(
 	ctx context.Context,
 	refs []models.ResolvedArtifact,
 	destDir string,
 	addLog logFn,
 ) error {
+	root, err := openWorkspaceRoot(destDir)
+	if err != nil {
+		return err
+	}
+	// Read-only directory handle: Close has nothing to flush.
+	defer func() { _ = root.Close() }()
+
 	for _, ref := range refs {
 		if ref.MinioKey == "" {
 			continue
 		}
-
-		destPath := filepath.Join(destDir, ref.Path)
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
-			return fmt.Errorf("mkdir for artifact %q: %w", ref.Path, err)
+		if err := ce.downloadArtifact(ctx, root, ref, addLog); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
-		addLog("info", fmt.Sprintf("Downloading artifact: %s", ref.Path), map[string]any{
-			"minio_key": ref.MinioKey,
-		})
+func (ce *ContainerExecutor) downloadArtifact(ctx context.Context, root *os.Root, ref models.ResolvedArtifact, addLog logFn) error {
+	if !filepath.IsLocal(ref.Path) {
+		return fmt.Errorf("artifact %q: path must be relative and stay inside the workspace", ref.Path)
+	}
+	if err := root.MkdirAll(filepath.Dir(ref.Path), 0o700); err != nil {
+		return fmt.Errorf("mkdir for artifact %q: %w", ref.Path, err)
+	}
 
-		reader, _, err := ce.storage.Download(ctx, ref.MinioKey)
-		if err != nil {
-			return fmt.Errorf("download %q: %w", ref.MinioKey, err)
+	addLog("info", fmt.Sprintf("Downloading artifact: %s", ref.Path), map[string]any{
+		"minio_key": ref.MinioKey,
+	})
+
+	reader, size, err := ce.storage.Download(ctx, ref.MinioKey)
+	if err != nil {
+		return fmt.Errorf("download %q: %w", ref.MinioKey, err)
+	}
+	// Download-only stream: a Close error cannot lose data we kept.
+	defer func() { _ = reader.Close() }()
+	if size > ce.maxArtifactBytes {
+		return fmt.Errorf("artifact %q is %d bytes, over the %d-byte limit", ref.Path, size, ce.maxArtifactBytes)
+	}
+
+	f, err := root.OpenFile(ref.Path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("create artifact %q: %w", ref.Path, err)
+	}
+	// Read one byte past the cap so an object larger than its reported size is caught.
+	n, copyErr := io.Copy(f, io.LimitReader(reader, ce.maxArtifactBytes+1))
+	if err := errors.Join(copyErr, f.Close()); err != nil {
+		return fmt.Errorf("write artifact %q: %w", ref.Path, err)
+	}
+	if n > ce.maxArtifactBytes {
+		if err := root.Remove(ref.Path); err != nil {
+			log.Warn().Err(err).Str("artifact", ref.Path).Msg("oversized artifact not removed; workspace cleanup will")
 		}
-
-		f, err := os.Create(destPath)
-		if err != nil {
-			_ = reader.Close()
-			return fmt.Errorf("create local file %q: %w", destPath, err)
-		}
-
-		_, copyErr := io.Copy(f, reader)
-		_ = reader.Close()
-		_ = f.Close()
-
-		if copyErr != nil {
-			return fmt.Errorf("write artifact %q: %w", ref.Path, copyErr)
-		}
+		return fmt.Errorf("artifact %q exceeds the %d-byte limit", ref.Path, ce.maxArtifactBytes)
 	}
 	return nil
 }
@@ -490,44 +556,76 @@ func (ce *ContainerExecutor) uploadArtifacts(
 	workspaceDir string,
 	addLog logFn,
 ) ([]models.ResolvedArtifact, error) {
+	root, err := openWorkspaceRoot(workspaceDir)
+	if err != nil {
+		return nil, err
+	}
+	// Read-only directory handle: Close has nothing to flush.
+	defer func() { _ = root.Close() }()
+
 	var uploaded []models.ResolvedArtifact
-
 	for _, ref := range msg.ArtifactsOut {
-		localPath := filepath.Join(workspaceDir, ref.Path)
-
-		fi, err := os.Stat(localPath)
-		if os.IsNotExist(err) {
-			addLog("warn", fmt.Sprintf("Expected artifact not found: %s", ref.Path), nil)
-			continue
-		}
+		resolved, found, err := ce.uploadArtifact(ctx, root, msg, ref.Path, addLog)
 		if err != nil {
-			return nil, fmt.Errorf("stat artifact %q: %w", ref.Path, err)
+			return nil, err
 		}
-
-		key := storage.ArtifactKey(msg.WorkflowExecID, msg.TaskDefinitionID, ref.Path)
-
-		addLog("info", fmt.Sprintf("Uploading artifact: %s", ref.Path), map[string]any{
-			"minio_key": key,
-			"size":      fi.Size(),
-		})
-
-		f, err := os.Open(localPath)
-		if err != nil {
-			return nil, fmt.Errorf("open artifact %q: %w", ref.Path, err)
+		if found {
+			uploaded = append(uploaded, resolved)
 		}
+	}
+	return uploaded, nil
+}
 
-		resolved, uploadErr := ce.storage.Upload(ctx, key, f, fi.Size(), "")
-		_ = f.Close()
-
-		if uploadErr != nil {
-			return nil, fmt.Errorf("upload artifact %q: %w", ref.Path, uploadErr)
-		}
-
-		resolved.Path = ref.Path
-		uploaded = append(uploaded, resolved)
+func (ce *ContainerExecutor) uploadArtifact(
+	ctx context.Context,
+	root *os.Root,
+	msg *models.TaskMessage,
+	path string,
+	addLog logFn,
+) (models.ResolvedArtifact, bool, error) {
+	if !filepath.IsLocal(path) {
+		return models.ResolvedArtifact{}, false, fmt.Errorf("artifact %q: path must be relative and stay inside the workspace", path)
+	}
+	fi, err := root.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		addLog("warn", fmt.Sprintf("Expected artifact not found: %s", path), nil)
+		return models.ResolvedArtifact{}, false, nil
+	}
+	if err != nil {
+		return models.ResolvedArtifact{}, false, fmt.Errorf("stat artifact %q: %w", path, err)
+	}
+	// Regular files only. os.Root already stops a symlink escaping the workspace,
+	// but even one resolving inside lets the task publish a file other than the
+	// declared path, and a FIFO or device would block or stream forever.
+	// The container has exited, so nothing can swap the file after this check.
+	if !fi.Mode().IsRegular() {
+		return models.ResolvedArtifact{}, false, fmt.Errorf("artifact %q is not a regular file (%s)", path, fi.Mode().Type())
+	}
+	if fi.Size() > ce.maxArtifactBytes {
+		return models.ResolvedArtifact{}, false, fmt.Errorf("artifact %q is %d bytes, over the %d-byte limit", path, fi.Size(), ce.maxArtifactBytes)
 	}
 
-	return uploaded, nil
+	key := storage.ArtifactKey(msg.WorkflowExecID, msg.TaskDefinitionID, path)
+	addLog("info", fmt.Sprintf("Uploading artifact: %s", path), map[string]any{
+		"minio_key": key,
+		"size":      fi.Size(),
+	})
+
+	f, err := root.Open(path)
+	if err != nil {
+		return models.ResolvedArtifact{}, false, fmt.Errorf("open artifact %q: %w", path, err)
+	}
+	// Opened read-only: Close has nothing to flush.
+	defer func() { _ = f.Close() }()
+
+	// The limit keeps the stream at the size MinIO was promised, so a file that
+	// grew after Lstat cannot push past the cap.
+	resolved, err := ce.storage.Upload(ctx, key, io.LimitReader(f, fi.Size()), fi.Size(), "")
+	if err != nil {
+		return models.ResolvedArtifact{}, false, fmt.Errorf("upload artifact %q: %w", path, err)
+	}
+	resolved.Path = path
+	return resolved, true, nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
