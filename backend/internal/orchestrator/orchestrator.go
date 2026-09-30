@@ -755,11 +755,21 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 	}
 }
 
+// retryingTasks counts retrying rows across active executions. It waits on
+// each execution's lock, which dispatch holds across store and Redis calls,
+// so it must not hold activeMu meanwhile: a queued activeMu writer would
+// then block every reader behind one slow dispatch. It must also stay
+// outside metrics.mu, because dispatch takes metrics.mu under ec.mu.
 func (o *Orchestrator) retryingTasks() int64 {
 	o.activeMu.RLock()
-	defer o.activeMu.RUnlock()
-	var n int64
+	execs := make([]*ExecutionContext, 0, len(o.active))
 	for _, ec := range o.active {
+		execs = append(execs, ec)
+	}
+	o.activeMu.RUnlock()
+
+	var n int64
+	for _, ec := range execs {
 		ec.mu.Lock()
 		for _, t := range ec.TaskMap {
 			if t.Status == models.TaskStatusRetrying {
