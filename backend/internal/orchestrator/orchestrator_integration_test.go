@@ -667,3 +667,44 @@ func TestPreCrashResultCompletesQueuedAttempt(t *testing.T) {
 		t.Fatalf("pickup of the re-sent message = %v, want ErrConflict", err)
 	}
 }
+
+// One task that recovery cannot reset must not strand the rest of its
+// execution: the others are re-sent and the execution stays active.
+func TestRecoveryContinuesPastTaskStoreError(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Partial Recovery", MaxParallel: 2,
+		Tasks: independentTasks("a", "b"),
+	})
+	for _, m := range testutil.Drain(t, redis, 2) {
+		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "worker-dead", m.RetryCount); err != nil {
+			t.Fatalf("MarkTaskRunning: %v", err)
+		}
+	}
+	broken := testutil.TaskRow(t, store, exec.ID, "a")
+	// A trigger is the cheapest way to fail one store write on a real database.
+	if _, err := store.Pool().Exec(ctx, `
+		CREATE FUNCTION fail_write() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'injected store error'; END $$;
+		CREATE TRIGGER fail_reset BEFORE UPDATE ON task_executions FOR EACH ROW
+		WHEN (NEW.status = 'pending' AND OLD.id::text = '`+broken.ID+`') EXECUTE FUNCTION fail_write();`); err != nil {
+		t.Fatalf("install failing trigger: %v", err)
+	}
+
+	restarted := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+
+	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
+	if m := testutil.Drain(t, redis, 1)[0]; m.TaskDefinitionID != "b" {
+		t.Errorf("re-sent task = %s, want b", m.TaskDefinitionID)
+	}
+	if n := restarted.GetMetrics()["active_workflows"]; n != 1 {
+		t.Errorf("active workflows = %d, want 1", n)
+	}
+	if row := testutil.TaskRow(t, store, exec.ID, "a"); row.Status != models.TaskStatusRunning {
+		t.Errorf("task a = %s, want running (its reset failed)", row.Status)
+	}
+}
