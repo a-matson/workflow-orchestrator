@@ -3,7 +3,6 @@ package worker
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
@@ -24,8 +25,6 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 )
-
-var dbCache sync.Map // map[string]*sql.DB
 
 // maxNotifyResponse bounds a notification endpoint's reply, which is only used
 // in an error message; a hostile webhook could otherwise stream until timeout.
@@ -517,32 +516,25 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	if err := w.checkDBDestinations(ctx, connStr); err != nil {
 		return nil, err
 	}
-	// R10 registers the SQL driver. It must dial through Guard.DialContext (as
-	// pgx's DialFunc), not rely on the check above alone: DNS can rebind
-	// between the check and the connection.
-	driver := "postgres"
-	if strings.HasPrefix(connStr, "mysql://") {
-		driver = "mysql"
-		connStr = strings.TrimPrefix(connStr, "mysql://")
+	cfgPG, err := pgx.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("database_query: invalid connection_string")
 	}
+	// Second line of defence after the pre-flight: DNS can rebind between the
+	// check and the connection, so every dial is guarded; fallbacks share Config.DialFunc.
+	cfgPG.DialFunc = w.guard.DialContext
 
-	addLog("info", fmt.Sprintf("Connecting (%s)", driver), nil)
+	addLog("info", "Connecting (postgres)", nil)
 
-	// Use cached connection pool
-	var db *sql.DB
-	if cached, ok := dbCache.Load(connStr); ok {
-		db = cached.(*sql.DB)
-	} else {
-		var err error
-		db, err = sql.Open(driver, connStr)
-		if err != nil {
-			return nil, fmt.Errorf("database_query: open: %w", err)
+	// Opened per task rather than cached by DSN: a cache would keep credentials
+	// in memory and pool connections across tenants' tasks.
+	db := stdlib.OpenDB(*cfgPG)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Msg("failed to close database")
 		}
-		// Configure pool limits appropriately
-		db.SetConnMaxLifetime(30 * time.Minute)
-		db.SetMaxOpenConns(5)
-		dbCache.Store(connStr, db)
-	}
+	}()
+	db.SetMaxOpenConns(1)
 
 	addLog("info", "Executing query", map[string]any{"query": truncate(query, 200)})
 
