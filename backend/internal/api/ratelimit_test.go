@@ -129,3 +129,22 @@ func TestParseTrustedProxies(t *testing.T) {
 		t.Fatal("want an error for a malformed CIDR")
 	}
 }
+
+// The bridge gateway is the source address of every host client, so it must
+// not be trusted even though nginx's own address is.
+func TestRateLimit_GatewayIsNotAProxy(t *testing.T) {
+	nginx := netip.MustParsePrefix("172.29.250.10/32")
+	rl := NewRateLimiter(3, time.Minute).WithTrustedProxies([]netip.Prefix{nginx})
+	req := func(remote, xff string) *http.Request {
+		r := httptest.NewRequestWithContext(context.Background(), "GET", "/api/x", nil)
+		r.RemoteAddr = remote
+		r.Header.Set("X-Forwarded-For", xff)
+		return r
+	}
+	if got := rl.clientIP(req("172.29.250.1:4000", "1.2.3.4")); got != "172.29.250.1" {
+		t.Fatalf("XFF from the gateway must be ignored, keyed on %s", got)
+	}
+	if got := rl.clientIP(req("172.29.250.10:4000", "1.2.3.4, 172.29.250.1")); got != "172.29.250.1" {
+		t.Fatalf("keyed on %s, want the gateway hop nginx observed", got)
+	}
+}
