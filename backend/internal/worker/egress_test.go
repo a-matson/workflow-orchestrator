@@ -89,3 +89,12 @@ func TestExecHTTP_BlocksHostnameResolvingToLoopback(t *testing.T) {
 		t.Errorf("loopback server saw %d requests, want 0", n)
 	}
 }
+
+// A parse error from http.NewRequest also repeats the URL, secret included.
+func TestExecHTTP_MalformedURLErrorOmitsURL(t *testing.T) {
+	err := runHTTPTask(t, "", "https://hooks.example.com/%zz?token=abc")
+
+	if err == nil || strings.Contains(err.Error(), "token=abc") {
+		t.Errorf("err = %v, want an error without the URL", err)
+	}
+}
