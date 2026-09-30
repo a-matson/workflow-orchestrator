@@ -608,13 +608,16 @@ func taskEvent(typ string, task *models.TaskExecution) models.WebSocketEvent {
 }
 
 // transitionResult applies a result's transition to task result.TaskExecID.
+// The transition out of running also requires the row's worker to be the
+// result's: after a restart re-sends an attempt, a result the killed worker
+// published before the crash must not close the run a new worker holds.
 // A row still queued at the result's attempt has only missed its pickup
-// write: the result was published before a restart re-queued the attempt,
-// or by an older worker that ran despite a failed pickup. It is moved to
-// running and the transition is tried once more, and the re-sent message
-// then loses its pickup.
+// write, as when such a pre-crash result arrives before the re-sent message
+// is picked up. It is moved to running under the result's worker and the
+// transition is tried once more; the re-sent message then loses its pickup.
 // Any other conflict is returned for dropStaleResult.
 func (o *Orchestrator) transitionResult(ctx context.Context, result *models.TaskResult, to models.TaskStatus, p persistence.TaskPatch) (*models.TaskExecution, error) {
+	p.ExpectWorkerID = result.WorkerID
 	row, err := o.store.TransitionTask(ctx, result.TaskExecID, result.Attempt(), to, p)
 	if !errors.Is(err, persistence.ErrConflict) {
 		return row, err
