@@ -14,6 +14,7 @@
 					v-for="wf in store.definitions"
 					:key="wf.id"
 					class="wf-item"
+					data-testid="wf-item"
 					:class="{ active: activeWorkflowId === wf.id }"
 					@click="loadWorkflow(wf)"
 				>
