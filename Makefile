@@ -144,10 +144,12 @@ clean:
 
 # ── Load testing ─────────────────────────────────────────
 load-test:
+	@: "$${FLUXOR_API_KEY:?set FLUXOR_API_KEY to an operator key}"
 	@echo "Triggering 20 workflow executions in parallel..."
+	@# The header arrives on stdin (-H @-), keeping the key out of ps output.
 	@for i in $$(seq 1 20); do \
-	  curl -sX POST http://localhost:8080/api/workflows/$(WF_ID)/trigger \
-	    -H "Authorization: Bearer $$FLUXOR_API_KEY" \
+	  printf 'Authorization: Bearer %s\n' "$$FLUXOR_API_KEY" | \
+	  curl -sX POST http://localhost:8080/api/workflows/$(WF_ID)/trigger -H @- \
 	    -H 'Content-Type: application/json' \
 	    -d '{"test_run": '$$i'}' & \
 	done; wait
