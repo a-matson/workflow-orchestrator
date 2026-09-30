@@ -58,14 +58,14 @@ func (p *ResultProcessor) Run(ctx context.Context) {
 	}
 }
 
-// RetryPoller scans the Redis retry ZSet and re-enqueues tasks whose time has come
+// RetryPoller re-runs dispatch on a fixed tick, which is what starts a retry
+// once its next_retry_at passes. Single node: one poller per process.
 type RetryPoller struct {
-	redis        *persistence.RedisClient
 	orchestrator *orchestrator.Orchestrator
 }
 
-func NewRetryPoller(redis *persistence.RedisClient, orch *orchestrator.Orchestrator) *RetryPoller {
-	return &RetryPoller{redis: redis, orchestrator: orch}
+func NewRetryPoller(orch *orchestrator.Orchestrator) *RetryPoller {
+	return &RetryPoller{orchestrator: orch}
 }
 
 func (p *RetryPoller) Run(ctx context.Context) {
@@ -80,22 +80,7 @@ func (p *RetryPoller) Run(ctx context.Context) {
 			log.Info().Msg("retry poller shutting down")
 			return
 		case <-ticker.C:
-			msgs, err := p.redis.PopDueRetries(ctx)
-			if err != nil {
-				log.Error().Err(err).Msg("error polling retries")
-				continue
-			}
-
-			for _, msg := range msgs {
-				log.Info().
-					Str("task_exec_id", msg.TaskExecID).
-					Int("retry_count", msg.RetryCount).
-					Msg("re-enqueuing task for retry")
-
-				if err := p.redis.EnqueueTask(ctx, msg); err != nil {
-					log.Error().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to re-enqueue retry")
-				}
-			}
+			p.orchestrator.DispatchDue(ctx)
 		}
 	}
 }

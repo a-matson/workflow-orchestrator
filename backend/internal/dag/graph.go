@@ -127,30 +127,3 @@ func (g *Graph) TopologicalSort() ([]string, error) {
 
 	return order, nil
 }
-
-// GetReadyTasks returns all tasks whose dependencies are all completed
-func (g *Graph) GetReadyTasks(completedTasks map[string]bool, runningTasks map[string]bool, queuedTasks map[string]bool) []string {
-	var ready []string
-
-	for id, node := range g.Nodes {
-		// Skip if already running, queued, or completed
-		if completedTasks[id] || runningTasks[id] || queuedTasks[id] {
-			continue
-		}
-
-		// Check all dependencies are completed
-		allDepsCompleted := true
-		for _, dep := range node.Dependencies {
-			if !completedTasks[dep.Task.ID] {
-				allDepsCompleted = false
-				break
-			}
-		}
-
-		if allDepsCompleted {
-			ready = append(ready, id)
-		}
-	}
-
-	return ready
-}

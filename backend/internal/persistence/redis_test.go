@@ -109,41 +109,6 @@ func TestRedis_PublishAndConsumeResult(t *testing.T) {
 	}
 }
 
-func TestRedis_RetryScheduling(t *testing.T) {
-	client := setupRedis(t)
-	ctx := context.Background()
-
-	msg := &models.TaskMessage{
-		TaskExecID:     uuid.NewString(),
-		WorkflowExecID: uuid.NewString(),
-		IdempotencyKey: uuid.NewString(),
-	}
-
-	// Scores are whole Unix seconds, so +2s is still in the future after
-	// truncation.
-	if err := client.ScheduleRetry(ctx, msg, time.Now().Add(2*time.Second)); err != nil {
-		t.Fatalf("schedule retry failed: %v", err)
-	}
-
-	popped := func() bool {
-		msgs, err := client.PopDueRetries(ctx)
-		if err != nil {
-			t.Fatalf("pop retries failed: %v", err)
-		}
-		for _, m := range msgs {
-			if m.TaskExecID == msg.TaskExecID {
-				return true
-			}
-		}
-		return false
-	}
-
-	if popped() {
-		t.Fatal("task should not be ready yet")
-	}
-	testutil.Eventually(t, 5*time.Second, popped)
-}
-
 func TestRedis_DistributedLock(t *testing.T) {
 	client := setupRedis(t)
 	ctx := context.Background()

@@ -77,7 +77,7 @@ func TestDueRetryCompletesWithoutPickup(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scheduler.NewRetryPoller(rdb, orch).Run(pollCtx)
+		scheduler.NewRetryPoller(orch).Run(pollCtx)
 	}()
 	t.Cleanup(func() { stop(); <-done })
 
