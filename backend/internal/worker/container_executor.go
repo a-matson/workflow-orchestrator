@@ -90,8 +90,14 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 	if ws.Volume != "" {
 		// Daemons older than API 1.45 drop VolumeOptions.Subpath without an
 		// error and mount the whole volume, exposing every task's workspace.
-		if _, err := dc.Ping(ctx, dockerclient.PingOptions{NegotiateAPIVersion: true}); err != nil {
+		ping, err := dc.Ping(ctx, dockerclient.PingOptions{NegotiateAPIVersion: true})
+		if err != nil {
 			return nil, fmt.Errorf("docker: negotiate API version: %w", err)
+		}
+		// Without a version header the client assumes its own maximum, which would
+		// pass the gate below for a daemon of unknown age.
+		if ping.APIVersion == "" {
+			return nil, fmt.Errorf("docker: daemon did not report an API version; cannot confirm volume subpath support")
 		}
 		if !subpathSupported(dc.ClientVersion()) {
 			return nil, fmt.Errorf("docker: API %s lacks volume subpaths (need >= %s); task workspaces would not be isolated",
@@ -305,7 +311,9 @@ func (ce *ContainerExecutor) Run(
 		defer cancel()
 		// Best effort: the container has usually exited already, so kill fails.
 		_, _ = ce.docker.ContainerKill(cleanupCtx, containerID, dockerclient.ContainerKillOptions{Signal: "KILL"})
-		_, _ = ce.docker.ContainerRemove(cleanupCtx, containerID, dockerclient.ContainerRemoveOptions{Force: true})
+		if _, err := ce.docker.ContainerRemove(cleanupCtx, containerID, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
+			log.Error().Err(err).Str("container_id", containerID).Msg("task container not removed")
+		}
 	}()
 
 	// ── 6. Start container ────────────────────────────────────────────────────
@@ -323,7 +331,7 @@ func (ce *ContainerExecutor) Run(
 	case waitErr := <-wait.Error:
 		return "", nil, fmt.Errorf("container: wait: %w", waitErr)
 	case <-ctx.Done():
-		// Timeout/cancellation — kill the container
+		// Best effort: the deferred force-remove above stops it if this kill fails.
 		_, _ = ce.docker.ContainerKill(context.WithoutCancel(ctx), containerID, dockerclient.ContainerKillOptions{Signal: "KILL"})
 		return "", nil, ctx.Err()
 	}
