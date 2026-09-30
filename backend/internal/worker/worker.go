@@ -419,7 +419,7 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 		}
 	}
 
-	addLog("info", fmt.Sprintf("→ %s %s", method, rawURL), map[string]any{
+	addLog("info", fmt.Sprintf("→ %s %s", method, redactURL(rawURL)), map[string]any{
 		"body_bytes": len(bodyBytes),
 	})
 
@@ -598,7 +598,7 @@ func (w *Worker) execNotification(ctx context.Context, msg *models.TaskMessage, 
 		return nil, fmt.Errorf("notification: 'message' is required")
 	}
 
-	addLog("info", fmt.Sprintf("Sending %s to %s", notifyType, channel), nil)
+	addLog("info", "Sending "+notifyType+" to "+describeChannel(notifyType, channel), nil)
 
 	switch notifyType {
 	case "slack":
@@ -711,6 +711,33 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 	}
 	addLog("info", "Webhook delivered", map[string]any{"status": resp.StatusCode})
 	return map[string]any{"delivered": true, "status": resp.StatusCode}, nil
+}
+
+// redactURL keeps scheme, host and path. Userinfo and the query are where
+// credentials live, and an unparsable URL is dropped whole rather than guessed at.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<unparsable url>"
+	}
+	return u.Scheme + "://" + u.Host + u.Path
+}
+
+// describeChannel names a notification target without its secret: webhook
+// tokens (Slack, Discord) live in the path, so only the host is kept, and a
+// PagerDuty channel is the routing key itself.
+func describeChannel(notifyType, channel string) string {
+	switch notifyType {
+	case "email":
+		return channel
+	case "pagerduty":
+		return "PagerDuty"
+	}
+	u, err := url.Parse(channel)
+	if err != nil || u.Host == "" {
+		return "<unparsable url>"
+	}
+	return u.Host
 }
 
 func (w *Worker) do(req *http.Request) (*http.Response, error) {

@@ -293,7 +293,8 @@ func (ce *ContainerExecutor) Run(
 		"memory_mb":  spec.MemoryMB,
 		"cpu_millis": spec.CPUMillis,
 		"network":    "none",
-		"cmd":        strings.Join(cmd, " "),
+		// Scripts are passed as argv and may embed credentials.
+		"cmd": argv0(cmd),
 	})
 
 	createResp, err := ce.docker.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
@@ -749,4 +750,12 @@ func mlInferenceCommand(model string, cfg map[string]any) []string {
 		args = append(args, "--output", out)
 	}
 	return args
+}
+
+// argv0 is all of a command that is safe to log: the rest is usually a script body.
+func argv0(cmd []string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+	return cmd[0]
 }
