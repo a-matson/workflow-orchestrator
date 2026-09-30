@@ -170,29 +170,19 @@ export const useWorkflowStore = defineStore('workflows', () => {
 				entry: LogEntry
 			}
 
-			// Apply to selected execution if active
-			if (selectedExecution.value) {
-				const task = selectedExecution.value.tasks.find((t) => t.id === payloadLog.task_exec_id)
-				if (task) {
-					task.logs = task.logs || []
-					task.logs.push(payloadLog.entry)
-					// PREVENT MEMORY LEAK
-					// if (task.logs.length > 2000) task.logs.shift()
-				}
-			}
-
-			// Apply to general execution list
-			const exec = executions.value.find((e) =>
-				e.tasks?.some((t) => t.id === payloadLog.task_exec_id),
+			const selectedTask = selectedExecution.value?.tasks.find(
+				(t) => t.id === payloadLog.task_exec_id,
 			)
-			if (exec) {
-				const task = exec.tasks.find((t) => t.id === payloadLog.task_exec_id)
-				if (task) {
-					task.logs = task.logs || []
-					task.logs.push(payloadLog.entry)
-					// PREVENT MEMORY LEAK
-					// if (task.logs.length > 2000) task.logs.shift()
-				}
+			const listedTask = executions.value
+				.find((e) => e.tasks?.some((t) => t.id === payloadLog.task_exec_id))
+				?.tasks.find((t) => t.id === payloadLog.task_exec_id)
+
+			// Fetching or merging an execution leaves the selected and listed copies sharing
+			// task objects, so appending to both would push the same entry twice.
+			for (const task of new Set([selectedTask, listedTask])) {
+				if (!task) continue
+				task.logs = task.logs || []
+				task.logs.push(payloadLog.entry)
 			}
 			return
 		}
