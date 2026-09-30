@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -93,21 +94,19 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 
 	now := time.Now()
 	exec := &models.WorkflowExecution{
-		ID:             uuid.New().String(),
-		WorkflowID:     def.ID,
-		WorkflowName:   def.Name,
-		Status:         models.WorkflowStatusPending,
+		ID:           uuid.New().String(),
+		WorkflowID:   def.ID,
+		WorkflowName: def.Name,
+		// Inserted as running: the insert is atomic with the task rows, so no
+		// reader can observe a pending window, and a follow-up transition would
+		// be a second write that could fail after the commit.
+		Status:         models.WorkflowStatusRunning,
 		TriggerPayload: payload,
+		StartedAt:      &now,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
 
-	// Persist execution record
-	if err := o.store.CreateWorkflowExecution(ctx, exec); err != nil {
-		return nil, fmt.Errorf("persisting execution: %w", err)
-	}
-
-	// Create task execution records for all tasks
 	taskMap := make(map[string]*models.TaskExecution)
 	for _, taskDef := range def.Tasks {
 		maxRetries := 0
@@ -128,14 +127,14 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
-		if err := o.store.CreateTaskExecution(ctx, taskExec); err != nil {
-			return nil, fmt.Errorf("creating task execution %s: %w", taskDef.ID, err)
-		}
 		taskMap[taskDef.ID] = taskExec
 		exec.Tasks = append(exec.Tasks, taskExec)
 	}
 
-	// Build execution context
+	if err := o.store.CreateExecutionWithTasks(ctx, exec, exec.Tasks); err != nil {
+		return nil, fmt.Errorf("persisting execution: %w", err)
+	}
+
 	execCtx := &ExecutionContext{
 		Execution:  exec,
 		Definition: def,
@@ -161,14 +160,6 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	o.semaphores[exec.ID] = make(chan struct{}, maxParallel)
 	o.semMu.Unlock()
 
-	// Transition to running
-	exec.Status = models.WorkflowStatusRunning
-	exec.StartedAt = &now
-	exec.UpdatedAt = now
-	if err := o.store.UpdateWorkflowExecution(ctx, exec); err != nil {
-		log.Error().Err(err).Str("exec_id", exec.ID).Msg("failed to update workflow status")
-	}
-
 	o.metrics.mu.Lock()
 	o.metrics.WorkflowsStarted++
 	o.metrics.mu.Unlock()
@@ -178,7 +169,8 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	log.Info().Str("exec_id", exec.ID).Str("workflow", def.Name).Msg("workflow execution started")
 
 	// Dispatch first wave of tasks (those with no dependencies)
-	go o.dispatchReadyTasks(context.WithoutCancel(ctx), execCtx)
+	dispatchCtx := context.WithoutCancel(ctx)
+	goSafe("dispatch", exec.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 
 	return exec, nil
 }
@@ -613,8 +605,24 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 	}
 }
 
-// runSafe runs fn, recovering and logging any panic so one execution cannot
-// crash the process.
+// goSafe runs fn on a new goroutine via runSafe.
+func goSafe(name, execID string, fn func()) {
+	go runSafe(name, execID, fn)
+}
+
+// runSafe runs fn and logs instead of propagating a panic, so a bug in one
+// execution's goroutine cannot take down every other execution with the
+// process. Whatever state fn left half-updated stays that way.
 func runSafe(name, execID string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().
+				Str("goroutine", name).
+				Str("exec_id", execID).
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Msg("recovered panic in execution goroutine")
+		}
+	}()
 	fn()
 }
