@@ -24,10 +24,20 @@ type Handler struct {
 	orchestrator *orchestrator.Orchestrator
 	hub          *Hub
 	storage      *storage.Client
+	session      SessionConfig
 }
 
+// NewHandler returns a Handler whose session secret is random, so sessions
+// last only as long as the process; production sets one with WithSession.
 func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub, sc *storage.Client) *Handler {
-	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc}
+	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc,
+		session: SessionConfig{Secret: RandomSessionSecret()}}
+}
+
+// WithSession replaces the session cookie configuration.
+func (h *Handler) WithSession(cfg SessionConfig) *Handler {
+	h.session = cfg
+	return h
 }
 
 // Routes registers every endpoint on a fresh mux, without the middleware chain.

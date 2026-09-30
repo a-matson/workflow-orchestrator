@@ -160,7 +160,11 @@ func main() {
 	go workerPool.Start(ctx)
 
 	// HTTP server
-	handler := api.NewHandler(store, redisClient, orch, hub, minioClient)
+	session, err := sessionConfig()
+	if err != nil {
+		log.Fatal().Err(err).Msg("session configuration failed")
+	}
+	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session)
 
 	httpSrv := &http.Server{
 		Addr:         httpAddr,

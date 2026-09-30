@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -90,23 +91,42 @@ var errUnauthenticated = errors.New("authentication required")
 
 // Authenticator resolves a request's credential to a Principal.
 type Authenticator struct {
-	store *persistence.Store
+	store         *persistence.Store
+	sessionSecret []byte
 }
 
-// NewAuthenticator returns an Authenticator backed by store's API keys.
+// NewAuthenticator returns an Authenticator backed by store's API keys. It
+// accepts no session cookie; Handler.Server builds one that does.
 func NewAuthenticator(store *persistence.Store) *Authenticator {
 	return &Authenticator{store: store}
 }
 
-// Authenticate returns the request's principal. It returns an error wrapping
-// errUnauthenticated when the request carries no valid credential, and any
-// other error when the credential could not be checked.
+// Authenticate returns the request's principal from a Bearer key or, when
+// there is no Authorization header, from the session cookie. It returns an
+// error wrapping errUnauthenticated when the request carries no valid
+// credential, and any other error when the credential could not be checked.
 func (a *Authenticator) Authenticate(r *http.Request) (*Principal, error) {
-	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return nil, errUnauthenticated
+	var key *persistence.APIKey
+	var err error
+	if header := r.Header.Get("Authorization"); header != "" {
+		scheme, token, ok := strings.Cut(header, " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") {
+			return nil, errUnauthenticated
+		}
+		key, err = a.store.LookupAPIKey(r.Context(), strings.TrimSpace(token))
+	} else {
+		c, cerr := r.Cookie(sessionCookie)
+		if cerr != nil {
+			return nil, errUnauthenticated
+		}
+		keyID, verr := verifySession(a.sessionSecret, c.Value, time.Now())
+		if verr != nil {
+			return nil, errUnauthenticated
+		}
+		// Looked up on every request, uncached, so revoking the key ends
+		// its browser sessions at once.
+		key, err = a.store.GetActiveAPIKey(r.Context(), keyID)
 	}
-	key, err := a.store.LookupAPIKey(r.Context(), strings.TrimSpace(token))
 	if errors.Is(err, persistence.ErrNotFound) {
 		return nil, errUnauthenticated
 	}

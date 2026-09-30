@@ -157,6 +157,8 @@ npm run format
 | `FLUXOR_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed cross-origin (same-origin on localhost is always allowed) |
 | `FLUXOR_EGRESS_ALLOW` | _(empty)_ | Comma-separated CIDRs (`10.20.0.0/16`) and exact `host:port` entries (`geo-service.internal:80`) that `http_request`, notification and `database_query` tasks may reach despite the egress guard |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
+| `FLUXOR_SESSION_SECRET` | _(random per start)_ | Base64 HMAC key (≥ 32 bytes) for browser session cookies (see [Browser login](#browser-login)) |
+| `FLUXOR_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` even over plain HTTP, for a TLS-terminating proxy |
 | `LOG_FORMAT` | `json` | `json` (one object per line, with `request_id`) or `console` (pretty, local dev) |
 | `FLUXOR_BOOTSTRAP_ADMIN_KEY` | _(empty)_ | Admin API key installed at startup, if set (see [Authentication](#authentication)) |
 
@@ -230,6 +232,20 @@ Alternatively, set `FLUXOR_BOOTSTRAP_ADMIN_KEY` in `.env` to a key you generated
 installs it as an admin key at startup. Revoking it is permanent, even if it stays in `.env`.
 Changing the variable adds the new key but leaves the old one active, so after rotating it
 revoke the old `bootstrap-admin` key (`apikey list`, then `apikey revoke <id>`).
+
+### Browser login
+
+The UI has no Bearer header to send, so it signs in once with an API key at `/login`.
+`POST /api/session` with `{"api_key":"flx_…"}` checks the key and sets the `fluxor_session`
+cookie: HttpOnly, `SameSite=Strict`, `Path=/`, valid for 12 hours. That cookie authenticates
+every request, `/ws` included, with the key's name and role. `GET /api/session` returns
+`{name, role}`; `DELETE /api/session` (the UI's Log out) clears the cookie. Revoking the key ends
+its sessions on the next request and closes their open `/ws` streams within 30 seconds.
+
+The cookie is signed with HMAC-SHA256 under `FLUXOR_SESSION_SECRET`, at least 32 bytes, base64
+encoded (`head -c 32 /dev/urandom | base64`). Without it the backend picks a random secret and
+logs a warning, so every restart logs everyone out. The cookie is marked `Secure` when the request
+arrives over TLS; behind a TLS-terminating proxy, set `FLUXOR_COOKIE_SECURE=true`.
 
 ---
 

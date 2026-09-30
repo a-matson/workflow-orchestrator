@@ -101,6 +101,57 @@ func TestE2E_RequiresAuth(t *testing.T) {
 	}
 }
 
+// The browser path: exchange the key for a cookie, then use only the cookie.
+func TestE2E_BrowserSession(t *testing.T) {
+	if apiKey == "" {
+		t.Skip("FLUXOR_API_KEY is unset")
+	}
+	body, err := json.Marshal(map[string]string{"api_key": apiKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := http.NewRequestWithContext(t.Context(), http.MethodPost, baseURL+"/api/session", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/session: status %d, want 200", resp.StatusCode)
+	}
+	var session *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == "fluxor_session" {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatalf("POST /api/session set no fluxor_session cookie")
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/workflows", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: session.Name, Value: session.Value})
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/workflows with only the session cookie: status %d, want 200", resp.StatusCode)
+	}
+}
+
 func TestE2E_Health(t *testing.T) {
 	do(t, http.MethodGet, baseURL+"/api/health", nil, http.StatusOK, nil)
 	do(t, http.MethodGet, baseURL+"/api/ready", nil, http.StatusOK, nil)
