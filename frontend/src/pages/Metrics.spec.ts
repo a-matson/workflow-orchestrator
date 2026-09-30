@@ -12,6 +12,7 @@ const metrics = (over: Partial<PlatformMetrics>) =>
 		workflows_started: 0,
 		workflows_completed: 0,
 		workflows_failed: 0,
+		workflows_cancelled: 0,
 		tasks_dispatched: 0,
 		tasks_completed: 0,
 		tasks_retried: 0,
@@ -37,6 +38,12 @@ describe('Metrics page', () => {
 		expect(kpi('Success rate', metrics({ workflows_completed: 3, workflows_failed: 1 }))).toBe(
 			'75%',
 		)
+	})
+
+	it('lists cancelled workflows next to failed ones', () => {
+		const store = useWorkflowStore()
+		store.metrics = metrics({ workflows_failed: 1, workflows_cancelled: 2 })
+		expect(mount(Metrics).get('[data-testid="kpi-Success rate"]').text()).toContain('2 cancelled')
 	})
 
 	it('leaves other numbers unchanged', () => {

@@ -104,17 +104,16 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		}
 	}
 
+	function applyExecution(exec: WorkflowExecution) {
+		selectedExecution.value = exec
+		const idx = executions.value.findIndex((e) => e.id === exec.id)
+		if (idx >= 0) executions.value[idx] = exec
+		return exec
+	}
+
 	async function fetchExecution(id: string) {
 		try {
-			const exec = await api.get<WorkflowExecution>(`/api/executions/${id}`)
-			selectedExecution.value = exec
-
-			// Update in list if present
-			const idx = executions.value.findIndex((e) => e.id === id)
-			if (idx >= 0) {
-				executions.value[idx] = exec
-			}
-			return exec
+			return applyExecution(await api.get<WorkflowExecution>(`/api/executions/${id}`))
 		} catch (err) {
 			error.value = 'Failed to load execution'
 			throw err
@@ -150,9 +149,8 @@ export const useWorkflowStore = defineStore('workflows', () => {
 
 	async function cancelExecution(execId: string) {
 		try {
-			await api.post<void>(`/api/executions/${execId}/cancel`, {})
-			const exec = executions.value.find((e) => e.id === execId)
-			if (exec) exec.status = 'cancelled'
+			// The response is the post-cancel snapshot, so tasks show cancelled without a refetch.
+			applyExecution(await api.post<WorkflowExecution>(`/api/executions/${execId}/cancel`, {}))
 		} catch (err) {
 			error.value = 'Failed to cancel execution'
 			throw err

@@ -9,6 +9,7 @@ export type TaskStatus =
 	| 'retrying'
 	| 'skipped'
 	| 'dead_letter'
+	| 'cancelled'
 export type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
 
 export interface RetryPolicy {
@@ -125,6 +126,7 @@ export interface PlatformMetrics {
 	workflows_started: number
 	workflows_completed: number
 	workflows_failed: number
+	workflows_cancelled: number
 	tasks_dispatched: number
 	tasks_completed: number
 	tasks_failed: number

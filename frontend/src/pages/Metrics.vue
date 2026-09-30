@@ -275,7 +275,7 @@
 				label: 'Success rate',
 				value: rate === null ? '—' : `${rate}%`,
 				color: rate === null ? 'var(--text3)' : rate > 90 ? 'var(--green)' : 'var(--amber)',
-				sub: `${m?.workflows_failed ?? 0} failed`,
+				sub: `${m?.workflows_failed ?? 0} failed · ${m?.workflows_cancelled ?? 0} cancelled`,
 				subColor: 'var(--red)',
 			},
 			{

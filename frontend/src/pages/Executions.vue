@@ -4,12 +4,18 @@
 		<div class="exec-list-panel">
 			<div class="panel-header">
 				<h2 class="panel-title">Runs</h2>
-				<select v-model="statusFilter" class="filter-select">
+				<select
+					v-model="statusFilter"
+					class="filter-select"
+					aria-label="Filter runs by status"
+					data-testid="exec-status-filter"
+				>
 					<option value="">All</option>
 					<option value="running">Running</option>
 					<option value="completed">Completed</option>
 					<option value="failed">Failed</option>
 					<option value="pending">Pending</option>
+					<option value="cancelled">Cancelled</option>
 				</select>
 			</div>
 
@@ -77,8 +83,9 @@
 							↺ Retry
 						</button>
 						<button
-							v-if="selectedExec.status === 'running'"
+							v-if="selectedExec.status === 'running' || selectedExec.status === 'pending'"
 							class="btn-action cancel"
+							data-testid="cancel-exec"
 							@click="cancelExec(selectedExec.id)"
 						>
 							◼ Cancel
@@ -122,7 +129,7 @@
 						:class="{ 'task-row--selected': expandedTaskId === task.id }"
 						@click="expandedTaskId = expandedTaskId === task.id ? null : task.id"
 					>
-						<span :class="['badge', task.status]">{{ task.status }}</span>
+						<span :class="['badge', task.status]" data-testid="task-status">{{ task.status }}</span>
 						<span class="task-name">{{ task.task_name }}</span>
 						<span class="task-type">{{ task.task_type }}</span>
 						<span class="task-worker">{{ task.worker_id?.slice(-8) ?? '' }}</span>
@@ -308,8 +315,15 @@
 	async function cancelExec(id: string) {
 		try {
 			await store.cancelExecution(id)
-			showToast?.('◼ Cancellation requested', 'info')
-		} catch {
+			showToast?.('◼ Run cancelled', 'info')
+		} catch (err) {
+			// 409: the run finished first, so show its real final state instead of an error.
+			if (err instanceof ApiError && err.status === 409) {
+				showToast?.('Run already finished', 'info')
+				// Discarded: the store already records a failed refresh in store.error.
+				await store.fetchExecution(id).catch(() => {})
+				return
+			}
 			showToast?.('Cancel failed', 'error')
 		}
 	}
