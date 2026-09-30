@@ -69,4 +69,33 @@ describe('Builder save', () => {
 			global_retry: existing.global_retry,
 		})
 	})
+
+	it('durations save as integer nanoseconds', async () => {
+		const wrapper = mount(Builder, {
+			attachTo: document.body,
+			global: { provide: { showToast: vi.fn() } },
+		})
+		await flushPromises()
+		await wrapper.get('[data-testid="wf-item"]').trigger('click')
+		await flushPromises()
+		await wrapper.get('.vue-flow__node').trigger('click')
+		await flushPromises()
+
+		// 1.001 * 1e9 === 1000999999.9999999 in IEEE doubles (1.1 happens to be exact).
+		for (const id of ['task-timeout', 'retry-initial-delay']) {
+			const input = wrapper.get(`[data-testid="${id}"]`)
+			await input.setValue('1.001')
+			await input.trigger('change')
+		}
+		await wrapper.get('[data-testid="save-workflow"]').trigger('click')
+		await flushPromises()
+
+		const saved = vi.mocked(api.put).mock.calls[0][1] as WorkflowDefinition
+		const task = saved.tasks[0]
+		expect(task.timeout).toBe(1001000000)
+		expect(task.retry_policy?.initial_delay).toBe(1001000000)
+		expect(Number.isInteger(task.timeout)).toBe(true)
+		expect(Number.isInteger(task.retry_policy?.initial_delay)).toBe(true)
+		wrapper.unmount()
+	})
 })

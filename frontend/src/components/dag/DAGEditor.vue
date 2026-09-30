@@ -116,6 +116,7 @@
 							min="0"
 							step="0.5"
 							class="cf-input"
+							data-testid="retry-initial-delay"
 							:value="(selectedNode.data.taskDef.retry_policy?.initial_delay ?? 2e9) / 1e9"
 							@change="
 								setRetryField('initial_delay', +($event.target as HTMLInputElement).value * 1e9)
@@ -142,6 +143,7 @@
 							type="number"
 							min="0"
 							class="cf-input"
+							data-testid="task-timeout"
 							:value="(selectedNode.data.taskDef.timeout ?? 300e9) / 1e9"
 							@change="
 								selectedNode!.data.taskDef.timeout =
