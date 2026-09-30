@@ -6,6 +6,7 @@
 				<div class="field" style="flex: 0 0 90px">
 					<label>Method</label>
 					<select
+						data-testid="cfg-method"
 						class="cf-input"
 						:value="(cfg.method as string) ?? 'GET'"
 						@change="patch('method', ($event.target as HTMLSelectElement).value)"
@@ -18,6 +19,7 @@
 				<div class="field" style="flex: 1">
 					<label>URL</label>
 					<input
+						data-testid="cfg-url"
 						class="cf-input"
 						type="url"
 						:value="cfg.url as string"
@@ -29,6 +31,7 @@
 			<div class="field">
 				<label>Headers <span class="label-hint">KEY: value, one per line</span></label>
 				<textarea
+					data-testid="cfg-headers"
 					class="cf-input cf-textarea cf-code"
 					:value="headersStr"
 					placeholder="Authorization: Bearer token&#10;Content-Type: application/json"
@@ -43,6 +46,7 @@
 						<span v-for="n in bodyLines" :key="n">{{ n }}</span>
 					</div>
 					<textarea
+						data-testid="cfg-body"
 						class="cf-input cf-textarea cf-code code-editor-ta"
 						:value="bodyStr"
 						placeholder='{"key": "value"}'
@@ -57,6 +61,7 @@
 				<div class="field" style="flex: 1">
 					<label>Timeout (ms)</label>
 					<input
+						data-testid="cfg-timeout_ms"
 						class="cf-input"
 						type="number"
 						min="0"
@@ -72,6 +77,7 @@
 			<div class="field">
 				<label>Connection String</label>
 				<input
+					data-testid="cfg-connection_string"
 					class="cf-input cf-code"
 					type="text"
 					:value="cfg.connection_string as string"
@@ -92,6 +98,7 @@
 						rows="6"
 						spellcheck="false"
 						@input="patch('query', ($event.target as HTMLTextAreaElement).value)"
+						data-testid="cfg-query"
 					/>
 				</div>
 			</div>
@@ -99,6 +106,7 @@
 				<div class="field" style="flex: 1">
 					<label>Max Rows</label>
 					<input
+						data-testid="cfg-max_rows"
 						class="cf-input"
 						type="number"
 						min="1"
@@ -115,6 +123,7 @@
 				<div class="field" style="flex: 1">
 					<label>Input Format</label>
 					<select
+						data-testid="cfg-input_format"
 						class="cf-input"
 						:value="(cfg.input_format as string) ?? 'json'"
 						@change="patch('input_format', ($event.target as HTMLSelectElement).value)"
@@ -127,6 +136,7 @@
 				<div class="field" style="flex: 1">
 					<label>Output Format</label>
 					<select
+						data-testid="cfg-output_format"
 						class="cf-input"
 						:value="(cfg.output_format as string) ?? 'json'"
 						@change="patch('output_format', ($event.target as HTMLSelectElement).value)"
@@ -155,6 +165,7 @@
 						rows="7"
 						spellcheck="false"
 						@input="patch('script', ($event.target as HTMLTextAreaElement).value)"
+						data-testid="cfg-script"
 					/>
 				</div>
 				<div class="editor-footer">
@@ -171,6 +182,7 @@
 			<div class="field">
 				<label>Model Binary / Script</label>
 				<input
+					data-testid="cfg-model_name"
 					class="cf-input cf-code"
 					type="text"
 					:value="cfg.model_name as string"
@@ -182,6 +194,7 @@
 				<div class="field" style="flex: 1">
 					<label>Input Path</label>
 					<input
+						data-testid="cfg-input_path"
 						class="cf-input cf-code"
 						type="text"
 						:value="cfg.input_path as string"
@@ -192,6 +205,7 @@
 				<div class="field" style="flex: 1">
 					<label>Output Path</label>
 					<input
+						data-testid="cfg-output_path"
 						class="cf-input cf-code"
 						type="text"
 						:value="cfg.output_path as string"
@@ -204,6 +218,7 @@
 				<div class="field" style="flex: 1">
 					<label>Batch Size</label>
 					<input
+						data-testid="cfg-batch_size"
 						class="cf-input"
 						type="number"
 						min="1"
@@ -218,7 +233,7 @@
 		<template v-else-if="type === 'notification'">
 			<div class="field">
 				<label>Notification Type</label>
-				<div class="notify-type-row">
+				<div class="notify-type-row" data-testid="cfg-notify_type">
 					<button
 						v-for="t in ['slack', 'webhook', 'email', 'pagerduty']"
 						:key="t"
@@ -234,6 +249,7 @@
 			<div class="field">
 				<label>{{ notifyChannelLabel }}</label>
 				<input
+					data-testid="cfg-channel"
 					class="cf-input"
 					type="text"
 					:value="cfg.channel as string"
@@ -244,6 +260,7 @@
 			<div class="field">
 				<label>Message</label>
 				<textarea
+					data-testid="cfg-message"
 					class="cf-input cf-textarea"
 					:value="cfg.message as string"
 					placeholder="Workflow completed successfully"
@@ -261,6 +278,7 @@
 					<span class="editor-hint">binary name or full path</span>
 				</div>
 				<input
+					data-testid="cfg-command"
 					class="cf-input cf-code"
 					type="text"
 					:value="cfg.command as string"
@@ -278,6 +296,7 @@
 						<span v-for="n in argsLines" :key="n">{{ n }}</span>
 					</div>
 					<textarea
+						data-testid="cfg-args"
 						class="cf-input cf-textarea cf-code code-editor-ta"
 						:value="argsStr"
 						placeholder="-c&#10;echo 'hello from fluxor'"
@@ -297,6 +316,7 @@
 						<span v-for="n in envLines" :key="n">{{ n }}</span>
 					</div>
 					<textarea
+						data-testid="cfg-env"
 						class="cf-input cf-textarea cf-code code-editor-ta"
 						:value="envStr"
 						placeholder="MY_VAR=hello&#10;DEBUG=true"
