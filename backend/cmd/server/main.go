@@ -180,7 +180,7 @@ func main() {
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
-	go workerPool.Start(ctx)
+	go workerPool.Start(ctx, 25*time.Second)
 
 	// HTTP server
 	session, err := sessionConfig()
