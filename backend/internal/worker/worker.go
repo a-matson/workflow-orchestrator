@@ -230,7 +230,11 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 
 	output, artifactsOut, ran, execErr := w.pickUpAndDispatch(ctx, taskCtx, msg, addLog)
 	if !ran {
-		taskLogger.Warn().Err(execErr).Msg("dropping task message: its row is not queued at this attempt")
+		if errors.Is(execErr, persistence.ErrConflict) {
+			taskLogger.Warn().Err(execErr).Msg("dropping task message: its row is not queued at this attempt")
+		} else {
+			taskLogger.Error().Err(execErr).Msg("dropping task message: its pickup could not be recorded")
+		}
 		return
 	}
 
@@ -273,19 +277,18 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 type logFn func(level, message string, fields map[string]any)
 
 // pickUpAndDispatch records the pickup of msg, then runs it through dispatch.
-// ran is false, with the conflict as the error, when the row is not queued at
-// msg's attempt: the message is a duplicate, stale, or from a rolled-back
-// dispatch, and must not run.
+// ran is false, with the pickup error, when the pickup was not recorded. A
+// conflict means the message is a duplicate, stale, or from a rolled-back
+// dispatch. Any other error leaves the row's state unknown (the write may
+// have committed), so running could duplicate another worker's run; the
+// message is dropped instead. Shortcut: a row whose pickup did commit then
+// stays running until the next restart re-queues it; the timeout reaper
+// (plan row R17) is the upgrade path.
 func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, bool, error) {
 	// Before the first log line, so a dropped message streams nothing.
 	if w.notifier != nil {
 		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id, msg.RetryCount); err != nil {
-			if errors.Is(err, persistence.ErrConflict) {
-				return nil, nil, false, err
-			}
-			// Runs anyway: the orchestrator records a lost pickup when the
-			// result arrives (transitionResult).
-			log.Warn().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to mark task running")
+			return nil, nil, false, err
 		}
 	}
 
