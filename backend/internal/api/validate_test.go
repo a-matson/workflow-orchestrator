@@ -22,6 +22,14 @@ func TestValidateDefinition(t *testing.T) {
 	emptyPath.ArtifactsOut = []models.ArtifactRef{{Path: ""}}
 	okPath := task("a")
 	okPath.ArtifactsOut = []models.ArtifactRef{{Path: "results/data.csv"}}
+	// Not canonical: a consumer's "./out.txt" never matches a producer's
+	// "out.txt", and the mux redirects such a download URL to its clean form.
+	dotSlash := task("a")
+	dotSlash.ArtifactsIn = []models.ArtifactRef{{Path: "./out.txt"}}
+	doubleSlash := task("a")
+	doubleSlash.ArtifactsOut = []models.ArtifactRef{{Path: "results//data.csv"}}
+	trailingSlash := task("a")
+	trailingSlash.ArtifactsOut = []models.ArtifactRef{{Path: "results/"}}
 
 	tests := []struct {
 		name    string
@@ -41,6 +49,9 @@ func TestValidateDefinition(t *testing.T) {
 		{"absolute artifact in", []models.TaskDefinition{withIn}, "artifact path \"/etc/passwd\""},
 		{"dotdot artifact out", []models.TaskDefinition{withOut}, "artifact path \"../../etc/passwd\""},
 		{"empty artifact path", []models.TaskDefinition{emptyPath}, "artifact path \"\""},
+		{"dot-slash artifact path", []models.TaskDefinition{dotSlash}, "artifact path \"./out.txt\""},
+		{"double-slash artifact path", []models.TaskDefinition{doubleSlash}, "artifact path \"results//data.csv\""},
+		{"trailing-slash artifact path", []models.TaskDefinition{trailingSlash}, "artifact path \"results/\""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
