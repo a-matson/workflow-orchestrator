@@ -111,13 +111,39 @@ func (s *Store) LookupAPIKey(ctx context.Context, plaintext string) (*APIKey, er
 	if err != nil {
 		return nil, fmt.Errorf("looking up API key: %w", err)
 	}
-	if k.LastUsedAt == nil || time.Since(*k.LastUsedAt) >= lastUsedGranularity {
-		// Usage telemetry must not turn a valid key into a failed request.
-		if _, err := s.pool.Exec(ctx, `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, k.ID); err != nil {
-			log.Warn().Err(err).Str("api_key_id", k.ID).Msg("recording API key use failed")
-		}
-	}
+	s.touchAPIKey(ctx, k)
 	return k, nil
+}
+
+// GetActiveAPIKey returns the unrevoked key with id, or ErrNotFound. A browser
+// session resolves its key through this on every request.
+func (s *Store) GetActiveAPIKey(ctx context.Context, id string) (*APIKey, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	k, err := scanAPIKey(s.pool.QueryRow(ctx,
+		`SELECT `+apiKeyColumns+` FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, uid))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up API key: %w", err)
+	}
+	s.touchAPIKey(ctx, k)
+	return k, nil
+}
+
+// touchAPIKey records use at most once per lastUsedGranularity. Usage
+// telemetry must not turn a valid key into a failed request, so a failed
+// write is only logged.
+func (s *Store) touchAPIKey(ctx context.Context, k *APIKey) {
+	if k.LastUsedAt != nil && time.Since(*k.LastUsedAt) < lastUsedGranularity {
+		return
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, k.ID); err != nil {
+		log.Warn().Err(err).Str("api_key_id", k.ID).Msg("recording API key use failed")
+	}
 }
 
 // APIKeyActive reports whether the key with id exists and is not revoked.

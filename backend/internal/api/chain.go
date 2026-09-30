@@ -26,6 +26,6 @@ func (h *Handler) Server(allowedOrigins []string) http.Handler {
 		LoggingMiddleware,
 		OriginPolicy(allowedOrigins),
 		NewRateLimiter(200, time.Minute).Middleware,
-		NewAuthenticator(h.store).Middleware(mux),
+		(&Authenticator{store: h.store, sessionSecret: h.session.Secret}).Middleware(mux),
 	)
 }

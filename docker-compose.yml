@@ -107,6 +107,10 @@ services:
       FLUXOR_EGRESS_ALLOW:     ${FLUXOR_EGRESS_ALLOW:-}
       # Optional admin API key (flx_ + 43 base64url chars) installed at startup.
       FLUXOR_BOOTSTRAP_ADMIN_KEY: ${FLUXOR_BOOTSTRAP_ADMIN_KEY:-}
+      # Browser session HMAC key (base64, >= 32 bytes). Empty: random per start.
+      FLUXOR_SESSION_SECRET: ${FLUXOR_SESSION_SECRET:-}
+      # "true" behind a TLS-terminating proxy, so the cookie is marked Secure.
+      FLUXOR_COOKIE_SECURE: ${FLUXOR_COOKIE_SECURE:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
       - task_workspaces:/workspaces
