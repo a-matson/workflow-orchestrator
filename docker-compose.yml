@@ -104,6 +104,7 @@ services:
       DOCKER_HOST:      unix:///var/run/docker.sock
       FLUXOR_WORKSPACE_ROOT:   /workspaces
       FLUXOR_WORKSPACE_VOLUME: ${FLUXOR_WORKSPACE_VOLUME:-fluxor-task-workspaces}
+      FLUXOR_EGRESS_ALLOW:     ${FLUXOR_EGRESS_ALLOW:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
       - task_workspaces:/workspaces

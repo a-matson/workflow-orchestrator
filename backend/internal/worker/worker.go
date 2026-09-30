@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
+	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
@@ -41,7 +43,7 @@ type Worker struct {
 	executor    *ContainerExecutor // nil if Docker unavailable
 	concurrency int
 	semaphore   chan struct{}
-	httpClient  *http.Client
+	httpClient  *http.Client // guarded: every task-initiated request goes through the egress guard
 }
 
 // Pool manages a set of concurrent workers.
@@ -51,13 +53,15 @@ type Pool struct {
 }
 
 // NewPool creates workers with all capabilities: task notification,
-// container isolation, and artifact storage.
+// container isolation, and artifact storage. Outbound requests made by tasks
+// are restricted by guard.
 func NewPool(
 	redis *persistence.RedisClient,
 	workerCount, concurrencyPerWorker int,
 	notifier TaskNotifier,
 	storageClient *storage.Client,
 	ws Workspace,
+	guard *egress.Guard,
 ) (*Pool, error) {
 	var executor *ContainerExecutor
 	execErr := errors.New("artifact storage (MinIO) unavailable")
@@ -75,6 +79,7 @@ func NewPool(
 		log.Warn().Err(execErr).Msg("container runtime unavailable: data_transform, generic and ml_inference tasks will fail; restart the backend once Docker and MinIO are reachable")
 	}
 
+	httpClient := guard.HTTPClient(60 * time.Second)
 	workers := make([]*Worker, workerCount)
 	for i := 0; i < workerCount; i++ {
 		workers[i] = &Worker{
@@ -84,13 +89,7 @@ func NewPool(
 			executor:    executor,
 			concurrency: concurrencyPerWorker,
 			semaphore:   make(chan struct{}, concurrencyPerWorker),
-			httpClient: &http.Client{
-				Timeout: 60 * time.Second,
-				Transport: &http.Transport{
-					MaxIdleConnsPerHost: 10,
-					IdleConnTimeout:     60 * time.Second,
-				},
-			},
+			httpClient:  httpClient,
 		}
 	}
 	return &Pool{workers: workers, redis: redis}, nil
@@ -404,7 +403,7 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 		"body_bytes": len(bodyBytes),
 	})
 
-	resp, err := w.httpClient.Do(req)
+	resp, err := w.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http_request: %w", err)
 	}
@@ -456,6 +455,10 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 		maxRows = int(mr)
 	}
 
+	// Not guarded yet, and harmless today because no SQL driver is registered,
+	// so sql.Open fails. S4 (database_query allowlist) adds the driver and
+	// routes its connections through egress.Guard.DialContext; until then this
+	// path must not gain a driver.
 	driver := "postgres"
 	if strings.HasPrefix(connStr, "mysql://") {
 		driver = "mysql"
@@ -564,7 +567,7 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 		return nil, fmt.Errorf("slack: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := w.httpClient.Do(req)
+	resp, err := w.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("slack: %w", err)
 	}
@@ -612,7 +615,7 @@ func (w *Worker) notifyPagerDuty(ctx context.Context, routingKey, message string
 		return nil, fmt.Errorf("pagerduty: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := w.httpClient.Do(req)
+	resp, err := w.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("pagerduty: %w", err)
 	}
@@ -640,7 +643,7 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 		return nil, fmt.Errorf("webhook: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := w.httpClient.Do(req)
+	resp, err := w.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: %w", err)
 	}
@@ -655,6 +658,18 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 	}
 	addLog("info", "Webhook delivered", map[string]any{"status": resp.StatusCode})
 	return map[string]any{"delivered": true, "status": resp.StatusCode}, nil
+}
+
+// do sends a task request. It drops the *url.Error wrapper, whose message
+// repeats the full URL: webhook URLs carry their secret in the path or query,
+// and task errors are stored and shown in the UI.
+func (w *Worker) do(req *http.Request) (*http.Response, error) {
+	resp, err := w.httpClient.Do(req)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return nil, urlErr.Err
+	}
+	return resp, err
 }
 
 func truncate(s string, n int) string {

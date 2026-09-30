@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/api"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/metrics"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
@@ -131,10 +132,14 @@ func main() {
 	// Background services
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
 	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
+	egressGuard, err := egress.New(os.Getenv("FLUXOR_EGRESS_ALLOW"))
+	if err != nil {
+		log.Fatal().Err(err).Msg("FLUXOR_EGRESS_ALLOW is invalid")
+	}
 	workerPool, err := worker.NewPool(redisClient, workerCount, workerConc, orch, minioClient, worker.Workspace{
 		Root:   os.Getenv("FLUXOR_WORKSPACE_ROOT"),
 		Volume: os.Getenv("FLUXOR_WORKSPACE_VOLUME"),
-	})
+	}, egressGuard)
 	if err != nil {
 		log.Fatal().Err(err).Msg("worker pool: task workspace setup failed")
 	}
