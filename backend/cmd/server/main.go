@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -69,21 +70,6 @@ func main() {
 	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin")
 	minioBucket := getEnv("MINIO_BUCKET", "fluxor-artifacts")
 	minioSSL := getEnv("MINIO_USE_SSL", "false") == "true"
-
-	// Prometheus
-	reg := prometheus.NewRegistry()
-	prom := metrics.NewMetrics(reg)
-	log.Info().Str("addr", metricsAddr).Msg("Prometheus metrics endpoint")
-
-	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", metrics.Handler(reg))
-		srv := &http.Server{Addr: metricsAddr, Handler: mux, ReadTimeout: 5 * time.Second}
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error().Err(err).Msg("metrics server failed")
-		}
-	}()
-	_ = prom
 
 	// Redis
 	log.Info().Str("addr", redisAddr).Msg("connecting to Redis")
@@ -150,6 +136,23 @@ func main() {
 	go hub.Run()
 
 	orch := orchestrator.NewOrchestrator(store, redisClient, hub)
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	orch.SetTaskDurationObserver(metrics.Register(reg, metrics.Sources{
+		Snapshot:   orch.GetMetrics,
+		QueueDepth: redisClient.QueueDepth,
+		WSClients:  hub.ConnectedClients,
+	}))
+	go func() {
+		log.Info().Str("addr", metricsAddr).Msg("Prometheus metrics endpoint")
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", metrics.Handler(reg))
+		srv := &http.Server{Addr: metricsAddr, Handler: mux, ReadTimeout: 5 * time.Second}
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("metrics server failed")
+		}
+	}()
 
 	// Must finish before the result processor and the worker pool start below:
 	// recovery moves every running task back to pending, which would pull a

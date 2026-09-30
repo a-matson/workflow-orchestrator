@@ -117,6 +117,25 @@ func TestOrchestrator_ProcessResult_AdvancesDAG(t *testing.T) {
 	}
 }
 
+type observations []float64
+
+func (o *observations) Observe(v float64) { *o = append(*o, v) }
+
+func TestCompletedTaskReportsDuration(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	var got observations
+	orch.SetTaskDurationObserver(&got)
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Duration", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	m := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, m, testutil.Ok(m))
+	if len(got) != 1 || got[0] < 0 {
+		t.Fatalf("observed durations = %v, want one non-negative value", got)
+	}
+}
+
 func TestOrchestrator_RetryOnFailure(t *testing.T) {
 	orch, store, redis, rec := setupOrchestrator(t)
 
