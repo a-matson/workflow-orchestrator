@@ -505,3 +505,61 @@ func TestStaleAttemptIsDropped(t *testing.T) {
 		t.Errorf("task is %s on attempt %d after a stale attempt-0 result; want running on attempt 1", row.Status, row.RetryCount)
 	}
 }
+
+// openTasks counts execID's tasks that hold a dispatch: queued or running.
+func openTasks(t *testing.T, store *persistence.Store, execID string) int {
+	t.Helper()
+	tasks, err := store.ListTaskExecutions(context.Background(), execID)
+	if err != nil {
+		t.Fatalf("list task executions of %s: %v", execID, err)
+	}
+	n := 0
+	for _, task := range tasks {
+		if task.Status == models.TaskStatusQueued || task.Status == models.TaskStatusRunning {
+			n++
+		}
+	}
+	return n
+}
+
+func independentTasks(ids ...string) []models.TaskDefinition {
+	tasks := make([]models.TaskDefinition, 0, len(ids))
+	for _, id := range ids {
+		tasks = append(tasks, models.TaskDefinition{ID: id, Name: id, Type: "generic", Dependencies: []string{}})
+	}
+	return tasks
+}
+
+// REL-12: a duplicate result must not let dispatch exceed MaxParallel.
+func TestDuplicateResultDoesNotExceedMaxParallel(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	const maxParallel = 2
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Duplicate Slot", MaxParallel: maxParallel,
+		Tasks: independentTasks("a", "b", "c", "d", "e"),
+	})
+	overLimit := func() bool { return openTasks(t, store, exec.ID) > maxParallel }
+
+	msgs := testutil.Drain(t, redis, 2)
+	m1, m2 := msgs[0], msgs[1]
+	for _, m := range msgs {
+		if err := orch.MarkTaskRunning(ctx, m.TaskExecID, "testutil", m.RetryCount); err != nil {
+			t.Fatalf("MarkTaskRunning: %v", err)
+		}
+	}
+	if err := orch.ProcessResult(ctx, testutil.Ok(m1)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	m3 := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, m3.TaskExecID, "testutil", m3.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	if err := orch.ProcessResult(ctx, testutil.Ok(m1)); err != nil {
+		t.Fatalf("duplicate result: ProcessResult = %v, want nil", err)
+	}
+	if err := orch.ProcessResult(ctx, testutil.Ok(m2)); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	testutil.Never(t, 300*time.Millisecond, overLimit)
+}
