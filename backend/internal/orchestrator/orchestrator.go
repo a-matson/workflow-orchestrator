@@ -51,7 +51,7 @@ type ExecutionContext struct {
 	TaskMap    map[string]*models.TaskExecution // taskDefID -> TaskExecution
 	Completed  map[string]bool
 	Failed     map[string]bool
-	// done is set once completeWorkflow has claimed the execution; a late
+	// done is set once the execution's terminal status is committed; a late
 	// result must not change the rows its final event reported.
 	done bool
 	mu   sync.Mutex
@@ -523,27 +523,34 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 	return nil
 }
 
+// completeWorkflow moves the execution to completed, or to failed and then
+// cancels its still-open tasks. A conflict means another terminal write, such
+// as a cancel, got there first; that write owns the final event.
 func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionContext, failed bool) error {
-	now := time.Now()
 	status, evtType := models.WorkflowStatusCompleted, models.WSEventWorkflowCompleted
 	if failed {
 		status, evtType = models.WorkflowStatusFailed, models.WSEventWorkflowFailed
 	}
 
-	execCtx.mu.Lock()
-	if execCtx.done {
-		// A result that raced the first completion; the execution already
-		// has its final status and event.
-		execCtx.mu.Unlock()
+	row, err := o.store.TransitionExecution(ctx, execCtx.Execution.ID, status, "")
+	if errors.Is(err, persistence.ErrConflict) {
+		log.Warn().Err(err).Str("exec_id", execCtx.Execution.ID).Msg("execution already final; not overwriting it")
 		return nil
 	}
-	execCtx.done = true
-	execCtx.Execution.CompletedAt = &now
-	execCtx.Execution.UpdatedAt = now
-	execCtx.Execution.Status = status
-	final := execCtx.snapshot()
-	execCtx.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("persisting workflow completion: %w", err)
+	}
 
+	var closed []*models.TaskExecution
+	if failed {
+		// The execution leaves the active map below, so nothing would ever
+		// close a sibling that is still running or waiting for its retry:
+		// its result would reach handleOrphanedResult, and recovery skips
+		// failed executions. Plan row R7 may later let siblings finish first.
+		closed = o.cancelOpenTasks(ctx, row.ID)
+	}
+
+	final := o.finish(execCtx, row, closed)
 	o.metrics.mu.Lock()
 	if failed {
 		o.metrics.WorkflowsFailed++
@@ -552,18 +559,74 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	}
 	o.metrics.mu.Unlock()
 
-	if err := o.store.UpdateWorkflowExecution(ctx, final); err != nil {
-		return fmt.Errorf("persisting workflow completion: %w", err)
-	}
-
-	// Cleanup in-memory state
-	o.activeMu.Lock()
-	delete(o.active, execCtx.Execution.ID)
-	o.activeMu.Unlock()
-
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: evtType, Payload: final})
 	log.Info().Str("exec_id", final.ID).Str("status", string(final.Status)).Msg("workflow finished")
 	return nil
+}
+
+// CancelExecution moves execution id to cancelled and cancels its open tasks,
+// so no further task of it is dispatched and late results are dropped. It
+// returns persistence.ErrConflict when the execution is missing or already
+// final. Containers of running tasks keep running until they finish on their
+// own (plan row R31 stops them).
+func (o *Orchestrator) CancelExecution(ctx context.Context, id string) (*models.WorkflowExecution, error) {
+	row, err := o.store.TransitionExecution(ctx, id, models.WorkflowStatusCancelled, "")
+	if err != nil {
+		return nil, err
+	}
+	closed := o.cancelOpenTasks(ctx, id)
+
+	o.activeMu.RLock()
+	execCtx, ok := o.active[id]
+	o.activeMu.RUnlock()
+	var final *models.WorkflowExecution
+	if ok {
+		final = o.finish(execCtx, row, closed)
+	} else {
+		// Not running in this process (never recovered, or pending), so
+		// there is no cache to update; the event reports the stored rows.
+		if final, err = o.store.GetWorkflowExecution(ctx, id); err != nil {
+			return nil, fmt.Errorf("reloading cancelled execution: %w", err)
+		}
+	}
+
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowCancelled, Payload: final})
+	log.Info().Str("exec_id", id).Int("tasks_cancelled", len(closed)).Msg("workflow cancelled")
+	return final, nil
+}
+
+// cancelOpenTasks closes the open tasks of an execution that is already
+// final. A failure is logged rather than returned: the execution's terminal
+// status is committed and its final event must still go out. The rows stay
+// open, and no dispatch touches them once the execution leaves the active map.
+func (o *Orchestrator) cancelOpenTasks(ctx context.Context, execID string) []*models.TaskExecution {
+	closed, err := o.store.CancelOpenTasks(ctx, execID)
+	if err != nil {
+		log.Error().Err(err).Str("exec_id", execID).Msg("execution is final but its open tasks were not cancelled")
+	}
+	return closed
+}
+
+// finish records row, the execution's committed terminal state, and tasks in
+// the cache, marks the execution done so no dispatch or late result changes
+// it, drops it from the active map, and returns the final event's snapshot.
+func (o *Orchestrator) finish(execCtx *ExecutionContext, row *models.WorkflowExecution, tasks []*models.TaskExecution) *models.WorkflowExecution {
+	execCtx.mu.Lock()
+	for _, task := range tasks {
+		execCtx.cacheTask(task)
+	}
+	execCtx.Execution.Status = row.Status
+	execCtx.Execution.CompletedAt = row.CompletedAt
+	execCtx.Execution.UpdatedAt = row.UpdatedAt
+	execCtx.Execution.Error = row.Error
+	execCtx.done = true
+	final := execCtx.snapshot()
+	execCtx.mu.Unlock()
+
+	o.activeMu.Lock()
+	delete(o.active, execCtx.Execution.ID)
+	o.activeMu.Unlock()
+	return final
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -674,7 +737,8 @@ func (o *Orchestrator) handleOrphanedResult(ctx context.Context, result *models.
 		return fmt.Errorf("reloading workflow execution: %w", err)
 	}
 
-	if exec.Status == models.WorkflowStatusCompleted || exec.Status == models.WorkflowStatusFailed {
+	if exec.Status == models.WorkflowStatusCompleted || exec.Status == models.WorkflowStatusFailed ||
+		exec.Status == models.WorkflowStatusCancelled {
 		return nil
 	}
 	log.Info().Str("exec_id", exec.ID).Msg("workflow state reloaded from DB")

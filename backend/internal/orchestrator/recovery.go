@@ -85,7 +85,7 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 			task = reset
 			fullExec.Tasks[i] = reset
 
-		case models.TaskStatusFailed, models.TaskStatusDeadLetter:
+		case models.TaskStatusFailed, models.TaskStatusDeadLetter, models.TaskStatusCancelled:
 			failed[task.TaskDefinitionID] = true
 
 		case models.TaskStatusPending, models.TaskStatusRetrying, models.TaskStatusSkipped:

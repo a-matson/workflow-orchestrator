@@ -186,16 +186,6 @@ func insertExecution(ctx context.Context, db execer, exec *models.WorkflowExecut
 	return err
 }
 
-func (s *Store) UpdateWorkflowExecution(ctx context.Context, exec *models.WorkflowExecution) error {
-	_, err := s.pool.Exec(ctx, `
-		UPDATE workflow_executions SET
-			status = $2, started_at = $3, completed_at = $4, error = $5, updated_at = $6
-		WHERE id = $1
-	`, exec.ID, exec.Status, exec.StartedAt, exec.CompletedAt, exec.Error, exec.UpdatedAt)
-
-	return err
-}
-
 func (s *Store) GetWorkflowExecution(ctx context.Context, id string) (*models.WorkflowExecution, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_id, workflow_name, status, trigger_payload, metadata, 

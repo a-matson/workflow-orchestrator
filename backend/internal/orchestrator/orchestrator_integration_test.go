@@ -732,3 +732,42 @@ func TestRecoveryContinuesPastTaskStoreError(t *testing.T) {
 		t.Errorf("task a = %s, want running (its reset failed)", row.Status)
 	}
 }
+
+// A failed execution leaves the active map, so a sibling still running or
+// waiting for its retry would otherwise stay open forever.
+func TestFailedWorkflow_CancelsOpenSiblings(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Fail Siblings",
+		Tasks: []models.TaskDefinition{
+			{ID: "doomed", Name: "Doomed", Type: "generic", Dependencies: []string{},
+				RetryPolicy: &models.RetryPolicy{MaxRetries: 0}},
+			{ID: "sibling", Name: "Sibling", Type: "generic", Dependencies: []string{}},
+		},
+		MaxParallel: 10,
+	})
+
+	msgs := testutil.Drain(t, redis, 2)
+	byDef := map[string]*models.TaskMessage{}
+	for _, m := range msgs {
+		byDef[m.TaskDefinitionID] = m
+	}
+	if err := orch.MarkTaskRunning(ctx, byDef["sibling"].TaskExecID, "testutil", 0); err != nil {
+		t.Fatalf("MarkTaskRunning sibling: %v", err)
+	}
+	runTask(t, orch, byDef["doomed"], testutil.Fail(byDef["doomed"], "fatal"))
+
+	if got := testutil.TaskRow(t, store, exec.ID, "sibling").Status; got != models.TaskStatusCancelled {
+		t.Errorf("sibling status = %s, want %s", got, models.TaskStatusCancelled)
+	}
+	stored, err := store.GetWorkflowExecution(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("get execution: %v", err)
+	}
+	if stored.Status != models.WorkflowStatusFailed {
+		t.Errorf("execution status = %s, want %s", stored.Status, models.WorkflowStatusFailed)
+	}
+}
