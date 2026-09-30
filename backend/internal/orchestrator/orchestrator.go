@@ -30,6 +30,7 @@ type Orchestrator struct {
 	retryMgr    *retry.Manager
 	broadcaster EventBroadcaster
 	canceller   TaskCanceller
+	durations   DurationObserver
 
 	// In-memory state for active executions (keyed by workflow exec ID).
 	// Lock order: activeMu and an ExecutionContext's mu are never held
@@ -76,6 +77,17 @@ type TaskCanceller interface {
 // the tasks they close. Call it before any execution can finish.
 func (o *Orchestrator) SetTaskCanceller(c TaskCanceller) {
 	o.canceller = c
+}
+
+// DurationObserver records a value, such as a Prometheus histogram does.
+type DurationObserver interface {
+	Observe(float64)
+}
+
+// SetTaskDurationObserver makes each completed task report its run time in
+// seconds to d. Call it before any result is processed.
+func (o *Orchestrator) SetTaskDurationObserver(d DurationObserver) {
+	o.durations = d
 }
 
 // stopRuns stops the runs of tasks, which FinishExecution just closed.
@@ -440,6 +452,9 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	// Duration has no column; it only rides on the broadcast payload.
 	dur := now.Sub(result.StartedAt)
 	taskExec.Duration = &dur
+	if o.durations != nil {
+		o.durations.Observe(dur.Seconds())
+	}
 
 	// Update in-memory state — acquire lock, update maps, release, then act
 	execCtx.mu.Lock()
