@@ -397,13 +397,16 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 }
 
 func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskResult) error {
-	o.activeMu.RLock()
-	execCtx, exists := o.active[result.WorkflowExecID]
-	o.activeMu.RUnlock()
-
-	if !exists {
-		// Execution not in memory — reload from DB (e.g. after restart)
-		return o.handleOrphanedResult(ctx, result)
+	execCtx, err := o.activeExecution(ctx, result.WorkflowExecID)
+	if err != nil {
+		return err
+	}
+	if execCtx == nil {
+		log.Debug().
+			Str("task_exec_id", result.TaskExecID).
+			Str("workflow_exec_id", result.WorkflowExecID).
+			Msg("dropping result for a final execution")
+		return nil
 	}
 
 	taskExec, err := o.store.GetTaskExecution(ctx, result.TaskExecID)
@@ -561,7 +564,7 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	}
 
 	// Siblings are closed rather than left to finish: the execution leaves
-	// the active map, so their results would reach handleOrphanedResult, and
+	// the active map, so their results would be dropped as late, and
 	// recovery skips failed executions. Plan row R7 may let them finish.
 	row, closed, err := o.store.FinishExecution(ctx, execCtx.Execution.ID, status, "")
 	if errors.Is(err, persistence.ErrConflict) {
@@ -739,23 +742,38 @@ func dropStaleResult(result *models.TaskResult, to models.TaskStatus, err error)
 	return nil
 }
 
-func (o *Orchestrator) handleOrphanedResult(ctx context.Context, result *models.TaskResult) error {
-	log.Warn().
-		Str("task_exec_id", result.TaskExecID).
-		Str("workflow_exec_id", result.WorkflowExecID).
-		Msg("result for non-active workflow — checking DB")
+// activeExecution returns execution id's cached context. On a miss it loads
+// the execution from the store and registers it, because a result can reach
+// an execution recovery never loaded, and dropping it would leave its task
+// running forever (REL-9). It returns nil for a final execution: its rows
+// are closed, and registering it would let dispatch run again.
+func (o *Orchestrator) activeExecution(ctx context.Context, id string) (*ExecutionContext, error) {
+	o.activeMu.RLock()
+	execCtx, ok := o.active[id]
+	o.activeMu.RUnlock()
+	if ok {
+		return execCtx, nil
+	}
 
-	exec, err := o.store.GetWorkflowExecution(ctx, result.WorkflowExecID)
+	loaded, err := o.loadExecution(ctx, id)
 	if err != nil {
-		return fmt.Errorf("reloading workflow execution: %w", err)
+		return nil, fmt.Errorf("loading execution %s: %w", id, err)
+	}
+	// Open means a cancel could still close it: the same set recovery loads.
+	if !slices.Contains(models.ExecFrom(models.WorkflowStatusCancelled), loaded.Execution.Status) {
+		return nil, nil
 	}
 
-	if exec.Status == models.WorkflowStatusCompleted || exec.Status == models.WorkflowStatusFailed ||
-		exec.Status == models.WorkflowStatusCancelled {
-		return nil
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	// Another result for the same execution may have registered it meanwhile;
+	// two contexts would each dispatch from their own copy of the rows.
+	if execCtx, ok := o.active[id]; ok {
+		return execCtx, nil
 	}
-	log.Info().Str("exec_id", exec.ID).Msg("workflow state reloaded from DB")
-	return nil
+	o.active[id] = loaded
+	log.Info().Str("exec_id", id).Msg("execution loaded from the store for a result")
+	return loaded, nil
 }
 
 // resolveArtifactsIn matches each ArtifactRef spec against the ResolvedArtifacts
