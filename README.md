@@ -182,7 +182,8 @@ GET    /api/tasks/{id}/logs            Get task logs
 GET    /api/tasks/{id}/artifacts       Get task artifact metadata
 GET    /api/artifacts/url?key=…        Pre-signed MinIO download URL
 GET    /api/metrics                    Platform metrics
-GET    /api/health                     Health check
+GET    /api/health                     Liveness (process up, no dependency checks)
+GET    /api/ready                      Readiness (Postgres, Redis, MinIO; 503 if any is down)
 GET    /ws                             WebSocket (real-time events)
 ```
 

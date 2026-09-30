@@ -58,6 +58,18 @@ func (c *Client) ensureBucket(ctx context.Context) error {
 	return nil
 }
 
+// Ping fails if the artifact bucket is unreachable or missing.
+func (c *Client) Ping(ctx context.Context) error {
+	exists, err := c.mc.BucketExists(ctx, c.bucket)
+	if err != nil {
+		return fmt.Errorf("minio: check bucket: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("minio: bucket %q missing", c.bucket)
+	}
+	return nil
+}
+
 // ArtifactKey builds the canonical MinIO object key for an artifact.
 //
 //	artifacts/{workflowExecID}/{taskDefID}/{relativePath}
