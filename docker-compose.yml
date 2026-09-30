@@ -11,7 +11,7 @@ networks:
     # Fixed so FLUXOR_TRUSTED_PROXIES can name it: nginx (frontend) reaches the
     # backend over this network, and without trust every client shares its IP.
     # Docker refuses overlapping networks, so stacks side by side (dev and e2e)
-    # need distinct values; set FLUXOR_TRUSTED_PROXIES to match.
+    # need distinct values; set FLUXOR_PROXY_IP inside the new subnet.
     ipam:
       config:
         - subnet: ${FLUXOR_INTERNAL_SUBNET:-172.29.250.0/24}
@@ -118,8 +118,11 @@ services:
       FLUXOR_SESSION_SECRET: ${FLUXOR_SESSION_SECRET:-}
       # "true" behind a TLS-terminating proxy, so the cookie is marked Secure.
       FLUXOR_COOKIE_SECURE: ${FLUXOR_COOKIE_SECURE:-false}
-      # The frontend's nginx sets X-Forwarded-For; trust it from the compose network only.
-      FLUXOR_TRUSTED_PROXIES: ${FLUXOR_TRUSTED_PROXIES:-172.29.250.0/24}  # keep equal to FLUXOR_INTERNAL_SUBNET
+      # Trust nginx alone, not the subnet: the bridge gateway (every host client's
+      # source address) lies inside it, and would let a client choose its own bucket.
+      FLUXOR_TRUSTED_PROXIES: ${FLUXOR_TRUSTED_PROXIES:-${FLUXOR_PROXY_IP:-172.29.250.10}/32}
+      FLUXOR_RATE_LIMIT_PER_MIN: ${FLUXOR_RATE_LIMIT_PER_MIN:-200}
+      FLUXOR_LOGIN_RATE_LIMIT_PER_MIN: ${FLUXOR_LOGIN_RATE_LIMIT_PER_MIN:-10}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
       - task_workspaces:/workspaces
@@ -142,7 +145,10 @@ services:
   frontend:
     build: {context: ./frontend}
     restart: unless-stopped
-    networks: [fluxor-internal]
+    # Fixed address: the backend trusts X-Forwarded-For from this one peer.
+    networks:
+      fluxor-internal:
+        ipv4_address: ${FLUXOR_PROXY_IP:-172.29.250.10}
     ports: ["127.0.0.1:3000:80"]
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
