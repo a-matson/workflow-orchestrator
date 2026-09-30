@@ -216,3 +216,10 @@ func TestUploadArtifacts_RejectsFIFO(t *testing.T) {
 		t.Errorf("upload of a FIFO: err=%v uploaded=%v", err, store.uploaded)
 	}
 }
+
+func TestWithoutHostPath(t *testing.T) {
+	_, err := os.MkdirTemp(filepath.Join(t.TempDir(), "missing"), "ws-*")
+	if got := withoutHostPath(err).Error(); strings.Contains(got, "missing") {
+		t.Errorf("error %q still names the host path", got)
+	}
+}
