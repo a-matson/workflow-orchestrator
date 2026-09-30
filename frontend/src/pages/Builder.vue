@@ -4,7 +4,9 @@
 		<aside class="wf-sidebar">
 			<div class="sidebar-header">
 				<span class="sidebar-title">Workflows</span>
-				<button class="btn-new" title="New workflow" data-testid="new-workflow" @click="createNew">+</button>
+				<button class="btn-new" title="New workflow" data-testid="new-workflow" @click="createNew">
+					+
+				</button>
 			</div>
 
 			<div v-if="store.loading" class="sidebar-loading">Loading…</div>
