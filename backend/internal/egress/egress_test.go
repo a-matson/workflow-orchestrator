@@ -91,7 +91,7 @@ func TestGuard_AllowlistOverridesDeniedCIDR(t *testing.T) {
 }
 
 func TestNew_RejectsMalformedEntries(t *testing.T) {
-	for _, spec := range []string{"not-a-cidr", "10.0.0.0/33", "example.com", "10.0.0.1", "host:notaport"} {
+	for _, spec := range []string{"not-a-cidr", "10.0.0.0/33", "example.com", "10.0.0.1", "host:notaport", "host:0", "10.0.0.1/8", "fd00::1/8"} {
 		if _, err := New(spec); err == nil {
 			t.Errorf("New(%q) = nil error, want error", spec)
 		}
