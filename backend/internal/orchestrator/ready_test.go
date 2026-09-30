@@ -27,7 +27,7 @@ func TestReadyTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &ExecutionContext{Graph: g, Completed: map[string]bool{"done": true}, TaskMap: map[string]*models.TaskExecution{
+	c := &ExecutionContext{Definition: def, Graph: g, Completed: map[string]bool{"done": true}, TaskMap: map[string]*models.TaskExecution{
 		"done":        {Status: models.TaskStatusCompleted},
 		"root":        {Status: models.TaskStatusPending},
 		"unblocked":   {Status: models.TaskStatusPending},
@@ -41,8 +41,7 @@ func TestReadyTasks(t *testing.T) {
 	}}
 
 	got := c.readyTasks(now)
-	slices.Sort(got)
-	if want := []string{"retry-due", "retry-unscheduled", "root", "unblocked"}; !slices.Equal(got, want) {
+	if want := []string{"root", "unblocked", "retry-due", "retry-unscheduled"}; !slices.Equal(got, want) {
 		t.Errorf("readyTasks = %v, want %v", got, want)
 	}
 }

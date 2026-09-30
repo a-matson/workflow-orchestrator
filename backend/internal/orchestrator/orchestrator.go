@@ -34,18 +34,15 @@ type Orchestrator struct {
 	activeMu sync.RWMutex
 	active   map[string]*ExecutionContext
 
-	// Concurrency semaphore per workflow (max parallel tasks)
-	semaphores map[string]chan struct{}
-	semMu      sync.Mutex
-
 	metrics *Metrics
 }
 
 // ExecutionContext holds runtime state for one active workflow execution.
 // mu guards the Completed/Failed maps, TaskMap, the task rows in
 // Execution.Tasks, and done. dispatchReadyTasks holds it across its store
-// and Redis calls so the cache and the semaphore slots stay consistent with
-// what it queued; the store's transition is what stops a double queue.
+// and Redis calls so the cache, from which it counts free slots, stays
+// consistent with what it queued; the store's transition is what stops a
+// double queue.
 // Never call any method that re-acquires this mutex while holding it.
 type ExecutionContext struct {
 	Execution  *models.WorkflowExecution
@@ -85,7 +82,6 @@ func NewOrchestrator(store *persistence.Store, redis *persistence.RedisClient, b
 		retryMgr:    retry.NewManager(),
 		broadcaster: broadcaster,
 		active:      make(map[string]*ExecutionContext),
-		semaphores:  make(map[string]chan struct{}),
 		metrics:     &Metrics{},
 	}
 }
@@ -159,15 +155,6 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	o.active[exec.ID] = execCtx
 	o.activeMu.Unlock()
 
-	// Initialize concurrency semaphore for this workflow
-	maxParallel := def.MaxParallel
-	if maxParallel <= 0 {
-		maxParallel = 10 // sensible default
-	}
-	o.semMu.Lock()
-	o.semaphores[exec.ID] = make(chan struct{}, maxParallel)
-	o.semMu.Unlock()
-
 	o.metrics.mu.Lock()
 	o.metrics.WorkflowsStarted++
 	o.metrics.mu.Unlock()
@@ -186,6 +173,10 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 // dispatchReadyTasks queues and enqueues every ready task of execCtx. Each
 // row is moved to queued before its message exists, so a worker can never
 // hold a message for a row the store does not yet show as queued (REL-6).
+// At most MaxParallel of the execution's tasks are queued or running at
+// once. The limit is counted from the task rows rather than tracked in a
+// separate counter, so duplicate results, retries and recovery cannot make
+// the two drift apart (REL-12).
 // It holds execCtx.mu throughout; see ExecutionContext.
 func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *ExecutionContext) {
 	execCtx.mu.Lock()
@@ -194,31 +185,38 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 		return
 	}
 
+	limit := execCtx.Definition.MaxParallel
+	if limit <= 0 {
+		limit = defaultMaxParallel
+	}
 	for _, taskDefID := range execCtx.readyTasks(time.Now()) {
-		// Acquire concurrency slot
-		sem := o.getSemaphore(execCtx.Execution.ID)
-		if sem == nil {
-			// Workflow already cleaned up (cancelled/completed race)
+		// Recounted per task: a dispatch that fails can still cache a row
+		// that is queued or running, when its re-read finds another write.
+		if execCtx.openTasks() >= limit {
+			log.Debug().Str("task_id", taskDefID).Msg("concurrency limit reached, task deferred")
 			return
 		}
-		select {
-		case sem <- struct{}{}:
-		default:
-			// Semaphore full — will be dispatched when a slot opens
-			log.Debug().
-				Str("task_id", taskDefID).
-				Msg("concurrency limit reached, task deferred")
-			continue
-		}
-		if !o.dispatchTask(ctx, execCtx, taskDefID) {
-			<-sem
-		}
+		o.dispatchTask(ctx, execCtx, taskDefID)
 	}
 }
 
-// dispatchTask queues and enqueues one ready task, reporting whether its
-// message was enqueued. Callers hold execCtx.mu.
-func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionContext, taskDefID string) bool {
+// defaultMaxParallel applies when a definition leaves max_parallel unset.
+const defaultMaxParallel = 10
+
+// openTasks counts the tasks holding a dispatch: queued or running.
+// Callers hold c.mu.
+func (c *ExecutionContext) openTasks() int {
+	n := 0
+	for _, task := range c.TaskMap {
+		if task.Status == models.TaskStatusQueued || task.Status == models.TaskStatusRunning {
+			n++
+		}
+	}
+	return n
+}
+
+// dispatchTask queues and enqueues one ready task. Callers hold execCtx.mu.
+func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionContext, taskDefID string) {
 	taskDef := execCtx.Graph.Nodes[taskDefID].Task
 	cached := execCtx.TaskMap[taskDefID]
 	queuedAt := time.Now()
@@ -231,13 +229,13 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		cur, getErr := o.store.GetTaskExecution(ctx, cached.ID)
 		if getErr != nil {
 			log.Error().Err(err).AnErr("reread_err", getErr).Str("task_exec_id", cached.ID).Msg("failed to queue task")
-			return false
+			return
 		}
 		if cur.Status != models.TaskStatusQueued || cur.RetryCount != cached.RetryCount {
 			execCtx.cacheTask(cur)
 			log.Warn().Err(err).Str("task_exec_id", cached.ID).Str("status", string(cur.Status)).
 				Msg("task not queued; cached its stored row instead")
-			return false
+			return
 		}
 		taskExec = cur
 	}
@@ -276,10 +274,10 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 			// Shortcut: the row stays queued with no message, and nothing
 			// re-drives it until the timeout reaper (plan row R17) exists.
 			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("task left queued without a message")
-			return false
+			return
 		}
 		execCtx.cacheTask(back)
-		return false
+		return
 	}
 
 	o.metrics.mu.Lock()
@@ -288,16 +286,17 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 
 	o.broadcaster.Broadcast(taskEvent(models.WSEventTaskQueued, taskExec))
 	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskDef.Name).Msg("task dispatched")
-	return true
 }
 
-// readyTasks lists the tasks dispatch may queue at now: pending tasks whose
-// dependencies have all completed, and retrying tasks whose retry is due.
+// readyTasks lists, in definition order, the tasks dispatch may queue at
+// now: pending tasks whose dependencies have all completed, and retrying
+// tasks whose retry is due. The order decides which tasks get the free slots.
 // A retrying task is ready on its own clock, never because a sibling
 // finished (REL-5). Callers hold c.mu.
 func (c *ExecutionContext) readyTasks(now time.Time) []string {
 	var ready []string
-	for id, node := range c.Graph.Nodes {
+	for _, def := range c.Definition.Tasks {
+		id, node := def.ID, c.Graph.Nodes[def.ID]
 		switch task := c.TaskMap[id]; task.Status {
 		case models.TaskStatusRetrying:
 			if task.NextRetryAt == nil || !task.NextRetryAt.After(now) {
@@ -410,7 +409,6 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	// Duration has no column; it only rides on the broadcast payload.
 	dur := now.Sub(result.StartedAt)
 	taskExec.Duration = &dur
-	o.releaseSlot(execCtx.Execution.ID)
 
 	// Mark idempotency so re-delivered messages are no-ops
 	_ = o.redis.SetIdempotency(ctx,
@@ -477,7 +475,6 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusRetrying, err)
 		}
-		o.releaseSlot(execCtx.Execution.ID)
 		log.Info().
 			Str("task_exec_id", taskExec.ID).
 			Str("task_name", taskExec.TaskName).
@@ -505,7 +502,6 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		if err != nil {
 			return dropStaleResult(result, models.TaskStatusDeadLetter, err)
 		}
-		o.releaseSlot(execCtx.Execution.ID)
 
 		if err := o.redis.SendToDeadLetter(ctx, &models.TaskMessage{
 			TaskExecID:     taskExec.ID,
@@ -570,10 +566,6 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	o.activeMu.Lock()
 	delete(o.active, execCtx.Execution.ID)
 	o.activeMu.Unlock()
-
-	o.semMu.Lock()
-	delete(o.semaphores, execCtx.Execution.ID)
-	o.semMu.Unlock()
 
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: evtType, Payload: final})
 	log.Info().Str("exec_id", final.ID).Str("status", string(final.Status)).Msg("workflow finished")
@@ -671,26 +663,6 @@ func dropStaleResult(result *models.TaskResult, to models.TaskStatus, err error)
 		Int("attempt", result.Attempt()).
 		Msg("dropping stale task result")
 	return nil
-}
-
-// releaseSlot frees one of the execution's concurrency slots. Only an
-// accepted result releases one, so a dropped duplicate cannot free a slot
-// that another task still holds.
-func (o *Orchestrator) releaseSlot(workflowExecID string) {
-	sem := o.getSemaphore(workflowExecID)
-	if sem == nil {
-		return
-	}
-	select {
-	case <-sem:
-	default:
-	}
-}
-
-func (o *Orchestrator) getSemaphore(workflowExecID string) chan struct{} {
-	o.semMu.Lock()
-	defer o.semMu.Unlock()
-	return o.semaphores[workflowExecID]
 }
 
 func (o *Orchestrator) handleOrphanedResult(ctx context.Context, result *models.TaskResult) error {

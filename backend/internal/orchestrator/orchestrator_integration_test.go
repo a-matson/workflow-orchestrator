@@ -429,40 +429,12 @@ func TestResultForQueuedRowIsApplied(t *testing.T) {
 	if got := testutil.TaskRow(t, store, exec.ID, first.TaskDefinitionID).Status; got != models.TaskStatusCompleted {
 		t.Errorf("task %s status = %s, want %s", first.TaskDefinitionID, got, models.TaskStatusCompleted)
 	}
-	// With one slot, the other task is dispatched only if the result released it.
+	// With MaxParallel 1, the other task is dispatched only once the result
+	// has moved this row out of queued.
 	second := testutil.Drain(t, redis, 1)[0]
 	if second.TaskDefinitionID == first.TaskDefinitionID {
 		t.Errorf("dispatched %s again, want the other task", second.TaskDefinitionID)
 	}
-}
-
-// A dropped result must not free a slot. The spare slot only shows once a
-// later completion dispatches, so two slots are needed: with one, the next
-// release is a no-op and absorbs it.
-func TestDroppedResultKeepsItsSlot(t *testing.T) {
-	orch, store, redis, _ := setupOrchestrator(t)
-
-	var tasks []models.TaskDefinition
-	for _, id := range []string{"t1", "t2", "t3", "t4", "t5"} {
-		tasks = append(tasks, models.TaskDefinition{ID: id, Name: id, Type: "generic", Dependencies: []string{}})
-	}
-	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
-		ID: uuid.NewString(), Name: "Slot Accounting", Tasks: tasks, MaxParallel: 2,
-	})
-
-	running := testutil.Drain(t, redis, 2)
-	first, second := running[0], running[1]
-	runTask(t, orch, first, testutil.Ok(first))
-	testutil.Drain(t, redis, 1) // takes first's slot
-
-	if err := orch.ProcessResult(context.Background(), testutil.Ok(first)); err != nil {
-		t.Fatalf("redelivered result: ProcessResult = %v, want nil", err)
-	}
-
-	// Both slots are held, so second's completion frees exactly one.
-	runTask(t, orch, second, testutil.Ok(second))
-	testutil.Drain(t, redis, 1)
-	testutil.Never(t, 300*time.Millisecond, func() bool { return testutil.Queued(t, redis, exec.ID) > 0 })
 }
 
 func TestStaleAttemptIsDropped(t *testing.T) {
