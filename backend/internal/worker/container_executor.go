@@ -72,11 +72,22 @@ type Workspace struct {
 	Volume string
 }
 
+// artifactStore is the part of the MinIO client the executor uses; tests fake it.
+type artifactStore interface {
+	Upload(ctx context.Context, key string, r io.Reader, size int64, contentType string) (models.ResolvedArtifact, error)
+	Download(ctx context.Context, key string) (io.ReadCloser, int64, error)
+}
+
 // ContainerExecutor wraps the Docker client and MinIO client.
 type ContainerExecutor struct {
-	docker    *dockerclient.Client
-	storage   *storage.Client
-	workspace Workspace
+	docker           *dockerclient.Client
+	storage          artifactStore
+	workspace        Workspace
+	maxArtifactBytes int64
+}
+
+func maxArtifactBytesFromEnv() (int64, error) {
+	return 0, nil
 }
 
 // NewContainerExecutor connects to the local Docker Engine socket.
