@@ -388,6 +388,8 @@ func TestCancelOpenTasks(t *testing.T) {
 			t.Fatalf("create task %s: %v", defID, err)
 		}
 	}
+	// Each task is named after its seeded status, so the assertions below
+	// can tell from the name alone what the task must end as.
 	for _, st := range statuses {
 		create(exec.ID, string(st), st)
 	}
