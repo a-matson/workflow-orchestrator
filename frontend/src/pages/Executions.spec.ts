@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import type * as UseApi from '../composables/useApi'
 import Executions from './Executions.vue'
-import { api } from '../composables/useApi'
+import { api, ApiError } from '../composables/useApi'
 
-vi.mock('../composables/useApi', () => ({ api: { get: vi.fn() } }))
+vi.mock('../composables/useApi', async (orig) => ({
+	...(await orig<typeof UseApi>()),
+	api: { get: vi.fn() },
+}))
 vi.mock('../stores/websocket', () => ({ useWebSocketStore: () => ({ subscribe: vi.fn() }) }))
 vi.mock('vue-router', () => ({
 	useRoute: () => ({ params: { execId: 'e1' } }),
@@ -62,5 +66,21 @@ describe('Executions elapsed timers', () => {
 		await vi.advanceTimersByTimeAsync(2000)
 
 		expect(w.get('[data-testid="task-dur"]').text()).toBe('1m 7s')
+	})
+})
+
+describe('Executions deep link', () => {
+	beforeEach(() => setActivePinia(createPinia()))
+
+	it('shows a not-found state when the linked run does not exist', async () => {
+		vi.mocked(api.get).mockImplementation(async (path: string) => {
+			if (path.startsWith('/api/executions?')) return { executions: [] }
+			throw new ApiError(404, 'execution not found')
+		})
+		const w = mount(Executions)
+		await flushPromises()
+
+		expect(w.find('[data-testid="exec-not-found"]').exists()).toBe(true)
+		w.unmount()
 	})
 })

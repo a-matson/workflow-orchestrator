@@ -8,6 +8,15 @@ export function setUnauthorizedHandler(fn: () => void) {
 	onUnauthorized = fn
 }
 
+export class ApiError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message)
+	}
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const res = await fetch(`${BASE_URL}${path}`, {
 		method,
@@ -17,7 +26,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 	if (res.status === 401 && !path.startsWith('/api/session')) onUnauthorized?.()
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }))
-		throw new Error((err as { error?: string }).error || `HTTP ${res.status}`)
+		throw new ApiError(res.status, (err as { error?: string }).error || `HTTP ${res.status}`)
 	}
 	if (res.status === 204) return undefined as T
 	return res.json()
