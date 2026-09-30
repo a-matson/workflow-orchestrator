@@ -1,6 +1,6 @@
 <template>
 	<div class="app-shell">
-		<header class="topbar">
+		<header v-if="principal" class="topbar">
 			<div class="brand">
 				<div class="brand-mark">⬡</div>
 				<span class="brand-name">Fluxor</span>
@@ -33,6 +33,11 @@
 					<strong>{{ failedCount }}</strong
 					><span>failed</span>
 				</div>
+				<div class="session" data-testid="session-principal">
+					<span class="session-name">{{ principal.name }}</span>
+					<span class="session-role">{{ principal.role }}</span>
+				</div>
+				<button class="logout" type="button" data-testid="logout" @click="onLogout">Log out</button>
 			</div>
 		</header>
 		<main class="page-content">
@@ -55,8 +60,9 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
-	import { RouterLink, RouterView } from 'vue-router'
+	import { ref, computed, onUnmounted, provide, watch } from 'vue'
+	import { RouterLink, RouterView, useRouter } from 'vue-router'
+	import { logout, principal } from './composables/useSession'
 	import { useWebSocketStore } from './stores/websocket'
 	import { useWorkflowStore } from './stores/workflow'
 	import { navRoutes } from './router'
@@ -98,20 +104,44 @@
 	}
 	provide('showToast', showToast)
 
+	const router = useRouter()
 	let metricsTimer = 0
-	onMounted(async () => {
-		wsStore.connect()
-		await Promise.all([
-			wfStore.fetchDefinitions(),
-			wfStore.fetchExecutions(),
-			wfStore.fetchMetrics(),
-		])
-		metricsTimer = window.setInterval(() => wfStore.fetchMetrics(), 5000)
-	})
-	onUnmounted(() => {
+
+	function stopLive() {
 		wsStore.disconnect()
 		clearInterval(metricsTimer)
-	})
+	}
+
+	// The socket and polling need the session cookie, so they follow the
+	// session rather than the component's lifetime.
+	watch(
+		() => principal.value !== null,
+		async (signedIn) => {
+			if (!signedIn) {
+				stopLive()
+				return
+			}
+			wsStore.connect()
+			metricsTimer = window.setInterval(() => wfStore.fetchMetrics(), 5000)
+			await Promise.all([
+				wfStore.fetchDefinitions(),
+				wfStore.fetchExecutions(),
+				wfStore.fetchMetrics(),
+			])
+		},
+		{ immediate: true },
+	)
+	onUnmounted(stopLive)
+
+	async function onLogout() {
+		try {
+			await logout()
+		} catch (err) {
+			// The local session is already gone; the cookie ages out on its own.
+			showToast(`Logout failed: ${err instanceof Error ? err.message : err}`, 'error')
+		}
+		await router.push({ name: 'login' })
+	}
 </script>
 
 <style scoped>
@@ -220,6 +250,30 @@
 		font-size: 11px;
 		color: var(--text3);
 		font-family: var(--mono);
+	}
+	.session {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		font-size: 12px;
+	}
+	.session-role {
+		font-size: 11px;
+		color: var(--text3);
+		font-family: var(--mono);
+	}
+	.logout {
+		padding: 3px 10px;
+		font-size: 12px;
+		color: var(--text2);
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.logout:hover {
+		color: var(--text);
+		background: var(--bg3);
 	}
 	.metric-pill {
 		display: flex;

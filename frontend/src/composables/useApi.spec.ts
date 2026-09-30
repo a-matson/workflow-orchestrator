@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, wsUrl } from './useApi'
+import { api, setUnauthorizedHandler, wsUrl } from './useApi'
 
 afterEach(() => {
 	vi.unstubAllGlobals()
@@ -37,5 +37,25 @@ describe('request helper', () => {
 		const [, init] = fetchMock.mock.calls[0]
 		expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
 		expect(init.body).toBe('{"a":1}')
+	})
+})
+
+describe('401 handling', () => {
+	it('leaves /api/session 401s to the guard and the login page', async () => {
+		const expired = vi.fn()
+		setUnauthorizedHandler(expired)
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) }),
+		)
+		await expect(api.post('/api/session', { api_key: 'x' })).rejects.toThrow()
+		expect(expired).not.toHaveBeenCalled()
+		await expect(api.get('/api/workflows')).rejects.toThrow()
+		expect(expired).toHaveBeenCalledTimes(1)
+	})
+
+	it('resolves an empty 204 instead of failing to parse it', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }))
+		await expect(api.delete('/api/session')).resolves.toBeUndefined()
 	})
 })
