@@ -58,12 +58,17 @@ func NewPool(
 	notifier TaskNotifier,
 	storageClient *storage.Client,
 	ws Workspace,
-) *Pool {
+) (*Pool, error) {
 	var executor *ContainerExecutor
 	if storageClient != nil {
 		var err error
 		executor, err = NewContainerExecutor(storageClient, ws)
 		if err != nil {
+			// A configured volume means the deployment expects isolated tasks,
+			// so a broken setup must stop startup rather than run them in-process.
+			if ws.Volume != "" {
+				return nil, fmt.Errorf("container executor: %w", err)
+			}
 			log.Warn().Err(err).Msg("Docker unavailable — container isolation disabled; tasks run in-process")
 		}
 	}
@@ -86,7 +91,7 @@ func NewPool(
 			},
 		}
 	}
-	return &Pool{workers: workers, redis: redis}
+	return &Pool{workers: workers, redis: redis}, nil
 }
 
 func (p *Pool) Start(ctx context.Context) {
