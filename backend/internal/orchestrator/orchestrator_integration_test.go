@@ -174,3 +174,43 @@ func TestOrchestrator_DeadLetter_MaxRetriesExceeded(t *testing.T) {
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskFailed) })
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventWorkflowFailed) })
 }
+
+func TestStartWorkflow_NoPartialRows(t *testing.T) {
+	orch, store, _, rec := setupOrchestrator(t)
+	ctx := context.Background()
+
+	tasks := []models.TaskDefinition{
+		{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
+		{ID: "b", Name: "B", Type: "generic", Dependencies: []string{}},
+		{ID: "c", Name: "C", Type: "generic", Dependencies: []string{}},
+	}
+	def := &models.WorkflowDefinition{ID: uuid.NewString(), Name: "Partial Start", Tasks: tasks, MaxParallel: 10}
+	// The definition row must exist for the executions FK, but jsonb rejects
+	// NUL too, so only the in-memory copy carries the poisoned name.
+	testutil.SaveDef(t, store, def)
+	poisoned := *def
+	poisoned.Tasks = append([]models.TaskDefinition(nil), tasks...)
+	// Postgres text rejects NUL, so inserting the third task row fails.
+	poisoned.Tasks[2].Name = "C\x00"
+
+	if _, err := orch.StartWorkflow(ctx, &poisoned, nil); err == nil {
+		t.Fatal("StartWorkflow succeeded; want an error from the rejected task row")
+	}
+
+	var execs, taskRows int
+	if err := store.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM workflow_executions WHERE workflow_id = $1`, def.ID).Scan(&execs); err != nil {
+		t.Fatalf("count executions: %v", err)
+	}
+	if err := store.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM task_executions t JOIN workflow_executions e ON e.id = t.workflow_exec_id
+		 WHERE e.workflow_id = $1`, def.ID).Scan(&taskRows); err != nil {
+		t.Fatalf("count task executions: %v", err)
+	}
+	if execs != 0 || taskRows != 0 {
+		t.Errorf("failed start left %d execution rows and %d task rows; want 0 and 0", execs, taskRows)
+	}
+	if hasEvent(rec, models.WSEventWorkflowStarted) {
+		t.Error("failed start broadcast workflow_started")
+	}
+}
