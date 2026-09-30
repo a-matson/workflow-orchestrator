@@ -112,6 +112,12 @@ func (a *Authenticator) Authenticate(r *http.Request) (*Principal, error) {
 	return &Principal{KeyID: key.ID, Name: key.Name, Role: Role(key.Role)}, nil
 }
 
+// StillValid reports whether p's credential is still usable; long-lived
+// connections call it to notice revocation after they were authenticated.
+func (a *Authenticator) StillValid(ctx context.Context, p *Principal) (bool, error) {
+	return a.store.APIKeyActive(ctx, p.KeyID)
+}
+
 // Middleware enforces routePolicy for requests served by mux. A registered
 // pattern absent from the policy requires admin, so it fails closed.
 func (a *Authenticator) Middleware(mux *http.ServeMux) func(http.Handler) http.Handler {

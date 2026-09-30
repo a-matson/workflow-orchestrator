@@ -201,7 +201,9 @@ DELETE /api/keys/{id}                  Revoke an API key (admin)
 
 Every endpoint except `GET /api/health` and `GET /api/ready` requires an API key, sent as
 `Authorization: Bearer flx_…`. That includes the `/ws` upgrade request. A missing, unknown or
-revoked key gets `401`; a key whose role is too low gets `403`.
+revoked key gets `401`; a key whose role is too low gets `403`. Revocation applies to the next
+HTTP request; an already open `/ws` connection re-checks its key every 30 seconds and is closed
+with code 1008 (policy violation), so it can outlive the revocation by up to 30 seconds.
 
 | Role | May |
 |------|-----|

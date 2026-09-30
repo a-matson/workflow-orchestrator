@@ -125,7 +125,11 @@ func main() {
 
 	// Core services
 	allowedOrigins := strings.Split(getEnv("FLUXOR_ALLOWED_ORIGINS", ""), ",")
-	hub := api.NewHub(api.WithAllowedOrigins(allowedOrigins))
+	hub := api.NewHub(
+		api.WithAllowedOrigins(allowedOrigins),
+		// Bounds how long a revoked key keeps an open /ws stream (README "Authentication").
+		api.WithPrincipalRecheck(api.NewAuthenticator(store).StillValid, 30*time.Second),
+	)
 	go hub.Run()
 
 	orch := orchestrator.NewOrchestrator(store, redisClient, hub)

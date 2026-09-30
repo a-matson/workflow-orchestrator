@@ -117,6 +117,17 @@ func (s *Store) LookupAPIKey(ctx context.Context, plaintext string) (*APIKey, er
 	return k, nil
 }
 
+// APIKeyActive reports whether the key with id exists and is not revoked.
+func (s *Store) APIKeyActive(ctx context.Context, id string) (bool, error) {
+	var active bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM api_keys WHERE id::text = $1 AND revoked_at IS NULL)`, id,
+	).Scan(&active); err != nil {
+		return false, fmt.Errorf("checking API key: %w", err)
+	}
+	return active, nil
+}
+
 // RevokeAPIKey revokes the key with id, or returns ErrNotFound if there is no
 // such unrevoked key.
 func (s *Store) RevokeAPIKey(ctx context.Context, id string) error {

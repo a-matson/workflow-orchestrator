@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -151,5 +153,34 @@ func TestAPI_AuthLogsKeyNotSecret(t *testing.T) {
 	}
 	if strings.Contains(out, plain) {
 		t.Errorf("access log contains the plaintext key:\n%s", out)
+	}
+}
+
+func TestAPI_RevokedKeyClosesWebSocket(t *testing.T) {
+	store, redis := testutil.Env(t)
+	ctx := context.Background()
+	hub := api.NewHub(api.WithPrincipalRecheck(api.NewAuthenticator(store).StillValid, 50*time.Millisecond))
+	go hub.Run()
+	srv := httptest.NewServer(api.NewHandler(store, redis, nil, hub, nil).Server(nil))
+	defer srv.Close()
+
+	plain, k, err := store.CreateAPIKey(ctx, "ws", "viewer")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws",
+		http.Header{"Authorization": {"Bearer " + plain}})
+	if err != nil {
+		t.Fatalf("dial with a valid key: %v", err)
+	}
+	_ = resp.Body.Close()               // handshake response has no body worth reading
+	defer func() { _ = conn.Close() }() // test teardown; nothing to act on
+
+	if err := store.RevokeAPIKey(ctx, k.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second)) // a timeout fails the check below
+	if _, _, err := conn.ReadMessage(); !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("after revocation: %v, want close 1008", err)
 	}
 }

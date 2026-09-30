@@ -46,7 +46,8 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}{key, plaintext})
 }
 
-// RevokeAPIKey revokes a key immediately; revocation cannot be undone.
+// RevokeAPIKey revokes a key; it cannot be undone. HTTP requests see it at
+// once, open WebSockets within the hub's recheck interval (30s in main).
 func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	err := h.store.RevokeAPIKey(r.Context(), r.PathValue("id"))
 	if errors.Is(err, persistence.ErrNotFound) {

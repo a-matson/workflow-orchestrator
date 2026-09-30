@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -19,6 +20,8 @@ type Client struct {
 	hub     *Hub
 	filters map[string]bool // Optional workflow exec ID filters
 	mu      sync.RWMutex
+	// principal authenticated the upgrade; a nil one fails every recheck.
+	principal *Principal
 }
 
 // Hub manages all connected WebSocket clients and broadcasts events
@@ -29,6 +32,9 @@ type Hub struct {
 	unregister chan *Client
 	mu         sync.RWMutex
 	upgrader   websocket.Upgrader
+
+	recheck      func(context.Context, *Principal) (bool, error)
+	recheckEvery time.Duration
 }
 
 // HubOption keeps NewHub() callable without arguments while the origin policy
@@ -41,6 +47,16 @@ func WithAllowedOrigins(allowed []string) HubOption {
 	return func(h *Hub) {
 		checker := newOriginChecker(allowed)
 		h.upgrader.CheckOrigin = checker.allows
+	}
+}
+
+// WithPrincipalRecheck makes every connection re-validate its principal each
+// interval and close with 1008 once check reports it invalid. Auth otherwise
+// runs only on the upgrade, so a revoked key would keep its event stream.
+func WithPrincipalRecheck(check func(context.Context, *Principal) (bool, error), every time.Duration) HubOption {
+	return func(h *Hub) {
+		h.recheck = check
+		h.recheckEvery = every
 	}
 }
 
@@ -132,10 +148,11 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		conn:    conn,
-		send:    make(chan []byte, 256),
-		hub:     h,
-		filters: make(map[string]bool),
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		hub:       h,
+		filters:   make(map[string]bool),
+		principal: PrincipalFrom(r.Context()),
 	}
 
 	// Optional: filter by workflow exec ID via query param
@@ -145,7 +162,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	h.register <- client
 
-	go client.writePump()
+	// The request context is cancelled when this handler returns, long before
+	// the connection ends; keep its values, drop its cancellation.
+	go client.writePump(context.WithoutCancel(r.Context()))
 	go client.readPump()
 }
 
@@ -168,8 +187,30 @@ func (c *Client) shouldReceive(event models.WebSocketEvent) bool {
 	return true // Events without exec ID are always delivered (e.g. metrics)
 }
 
-func (c *Client) writePump() {
+// stillAuthorized fails open on a check error, so a database blip does not
+// drop every client; revocation still takes effect on the next good check.
+func (c *Client) stillAuthorized(ctx context.Context) bool {
+	if c.principal == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ok, err := c.hub.recheck(ctx, c.principal)
+	if err != nil {
+		log.Warn().Err(err).Str("api_key_id", c.principal.KeyID).Msg("WebSocket credential recheck failed")
+		return true
+	}
+	return ok
+}
+
+func (c *Client) writePump(ctx context.Context) {
 	ticker := time.NewTicker(54 * time.Second)
+	var recheck <-chan time.Time
+	if c.hub.recheck != nil {
+		t := time.NewTicker(c.hub.recheckEvery)
+		defer t.Stop()
+		recheck = t.C
+	}
 	defer func() {
 		ticker.Stop()
 		_ = c.conn.Close()
@@ -186,6 +227,15 @@ func (c *Client) writePump() {
 
 			// One event per frame: the frontend JSON.parses each frame whole.
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
+
+		case <-recheck:
+			if !c.stillAuthorized(ctx) {
+				// Best effort: the connection is closed on return either way.
+				_ = c.conn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential revoked"),
+					time.Now().Add(time.Second))
 				return
 			}
 
