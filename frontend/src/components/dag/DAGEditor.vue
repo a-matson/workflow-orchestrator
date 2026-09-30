@@ -119,7 +119,10 @@
 							data-testid="retry-initial-delay"
 							:value="(selectedNode.data.taskDef.retry_policy?.initial_delay ?? 2e9) / 1e9"
 							@change="
-								setRetryField('initial_delay', +($event.target as HTMLInputElement).value * 1e9)
+								setRetryField(
+									'initial_delay',
+									secondsToNs(+($event.target as HTMLInputElement).value),
+								)
 							"
 						/>
 					</div>
@@ -146,8 +149,9 @@
 							data-testid="task-timeout"
 							:value="(selectedNode.data.taskDef.timeout ?? 300e9) / 1e9"
 							@change="
-								selectedNode!.data.taskDef.timeout =
-									+($event.target as HTMLInputElement).value * 1e9
+								selectedNode!.data.taskDef.timeout = secondsToNs(
+									+($event.target as HTMLInputElement).value,
+								)
 							"
 						/>
 					</div>
@@ -309,6 +313,9 @@
 	// ── State ──────────────────────────────────────────────────────
 	const workflowName = ref('New Workflow')
 	const selectedTaskType = ref('')
+	// The API carries time.Duration as integer nanoseconds; s * 1e9 can be fractional (1.001 s).
+	const secondsToNs = (s: number) => Math.round(s * 1e9)
+
 	const selectedNode = ref<DAGNode | null>(null)
 	const saving = ref(false)
 	const savedWorkflowId = ref<string | null>(null)
