@@ -23,7 +23,9 @@
 				<button class="btn-secondary" data-testid="auto-layout" @click="autoLayout">
 					Auto Layout
 				</button>
-				<button class="btn-secondary" @click="runValidation">Validate</button>
+				<button class="btn-secondary" data-testid="validate-workflow" @click="runValidation">
+					Validate
+				</button>
 				<button
 					class="btn-primary"
 					data-testid="save-workflow"
