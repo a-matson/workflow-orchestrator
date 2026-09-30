@@ -41,6 +41,8 @@ func (r Role) allows(required Role) bool {
 var routePolicy = map[string]Role{
 	"GET /api/health": RolePublic,
 	"GET /api/ready":  RolePublic,
+	// Login exchanges a key for a cookie, so it cannot itself need one.
+	"POST /api/session": RolePublic,
 
 	"GET /api/workflows":                 RoleViewer,
 	"GET /api/workflows/{id}":            RoleViewer,
@@ -53,6 +55,8 @@ var routePolicy = map[string]Role{
 	"GET /api/artifacts/url":             RoleViewer,
 	"GET /api/metrics":                   RoleViewer,
 	"GET /ws":                            RoleViewer,
+	"GET /api/session":                   RoleViewer,
+	"DELETE /api/session":                RoleViewer,
 
 	"POST /api/workflows":              RoleOperator,
 	"PUT /api/workflows/{id}":          RoleOperator,

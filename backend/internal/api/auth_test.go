@@ -25,7 +25,17 @@ func TestRoutePolicy_CoversEveryRoute(t *testing.T) {
 }
 
 // publicRoutes is the complete list of routes reachable without a key.
-var publicRoutes = map[string]bool{"GET /api/health": true, "GET /api/ready": true}
+var publicRoutes = map[string]bool{
+	"GET /api/health": true,
+	"GET /api/ready":  true,
+	// Login: it takes the key in its body and exchanges it for a cookie, so
+	// requiring a credential first would make browser sign-in impossible.
+	"POST /api/session": true,
+}
+
+// ownSessionRoutes mutate only the caller's own browser session, never shared
+// state, so they are open to every role, and to anyone for login.
+var ownSessionRoutes = map[string]bool{"POST /api/session": true, "DELETE /api/session": true}
 
 // The role model as invariants, so an entry that is present but too lax
 // (a viewer on a mutating route, say) fails here and not in production.
@@ -35,7 +45,7 @@ func TestRoutePolicy_Levels(t *testing.T) {
 		if publicRoutes[pattern] != (role == RolePublic) {
 			t.Errorf("%s: role %q, but public = %v", pattern, role, publicRoutes[pattern])
 		}
-		if method != http.MethodGet && method != http.MethodHead && !role.allows(RoleOperator) {
+		if method != http.MethodGet && method != http.MethodHead && !ownSessionRoutes[pattern] && !role.allows(RoleOperator) {
 			t.Errorf("%s mutates but requires only %q", pattern, role)
 		}
 		if strings.HasPrefix(path, "/api/keys") && role != RoleAdmin {
