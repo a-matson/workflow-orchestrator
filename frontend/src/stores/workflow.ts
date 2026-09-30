@@ -12,8 +12,24 @@ export const useWorkflowStore = defineStore('workflows', () => {
 	const loading = ref(false)
 	const error = ref<string | null>(null)
 
+	// App shell and the page it renders both load on mount; sharing the in-flight request keeps
+	// that to one round trip without moving either caller's ownership of the data.
+	const inFlight = new Map<string, Promise<void>>()
+	function once(key: string, run: () => Promise<void>) {
+		let p = inFlight.get(key)
+		if (!p) {
+			p = run().finally(() => inFlight.delete(key))
+			inFlight.set(key, p)
+		}
+		return p
+	}
+
 	// Actions
-	async function fetchDefinitions() {
+	function fetchDefinitions() {
+		return once('definitions', loadDefinitions)
+	}
+
+	async function loadDefinitions() {
 		try {
 			loading.value = true
 			// The API caps a page at 200, so the sidebar shows only the newest 200 until the API reports a total.
@@ -69,7 +85,11 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		}
 	}
 
-	async function fetchExecutions(limit = 50, offset = 0) {
+	function fetchExecutions(limit = 50, offset = 0) {
+		return once(`executions:${limit}:${offset}`, () => loadExecutions(limit, offset))
+	}
+
+	async function loadExecutions(limit: number, offset: number) {
 		try {
 			loading.value = true
 			const data = await api.get<{ executions: WorkflowExecution[] }>(
