@@ -21,8 +21,8 @@ import (
 // Postgres keeps microseconds, so fixtures are truncated to compare with Equal.
 func pgNow() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
-// seedTask stores a task in status with retryCount and a populated row: one
-// log line, a worker, queued_at, an error, an output and one artifact.
+// seedTask stores a task in status with retryCount and every patchable column
+// non-NULL and distinct, so a test can tell "kept" from "cleared" or "rewritten".
 func seedTask(t *testing.T, store *persistence.Store, status models.TaskStatus, retryCount int) *models.TaskExecution {
 	t.Helper()
 	ctx := context.Background()
@@ -43,9 +43,15 @@ func seedTask(t *testing.T, store *persistence.Store, status models.TaskStatus, 
 	if err := store.CreateTaskExecution(ctx, task); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	queued := now.Add(-time.Minute)
+	queued := now.Add(-4 * time.Minute)
+	started := now.Add(-3 * time.Minute)
+	completed := now.Add(-2 * time.Minute)
+	nextRetry := now.Add(-time.Minute)
 	task.WorkerID = "w0"
 	task.QueuedAt = &queued
+	task.StartedAt = &started
+	task.CompletedAt = &completed
+	task.NextRetryAt = &nextRetry
 	task.Error = "old error"
 	task.Output = json.RawMessage(`{"old":true}`)
 	task.Logs = []models.LogEntry{{Timestamp: queued, Level: "info", Message: "old"}}
@@ -63,6 +69,13 @@ func getTask(t *testing.T, store *persistence.Store, id string) *models.TaskExec
 		t.Fatalf("get task %s: %v", id, err)
 	}
 	return task
+}
+
+func equalTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
 }
 
 func messages(logs []models.LogEntry) []string {
@@ -98,7 +111,6 @@ func TestTransitionTask_Allowed(t *testing.T) {
 				if got.Status != to {
 					t.Errorf("status = %s, want %s", got.Status, to)
 				}
-				// Patched columns.
 				if got.WorkerID != "w1" || got.StartedAt == nil || !got.StartedAt.Equal(started) ||
 					got.RetryCount != 1 || string(got.Output) != `{"new": true}` {
 					t.Errorf("patched columns not written: worker=%q started=%v retry=%d output=%s",
@@ -107,8 +119,8 @@ func TestTransitionTask_Allowed(t *testing.T) {
 				if want := []string{"old", "new"}; !slices.Equal(messages(got.Logs), want) {
 					t.Errorf("logs = %v, want %v", messages(got.Logs), want)
 				}
-				// Nil columns keep their values.
-				if !got.QueuedAt.Equal(*before.QueuedAt) || got.CompletedAt != nil || got.NextRetryAt != nil ||
+				if !equalTime(got.QueuedAt, before.QueuedAt) || !equalTime(got.CompletedAt, before.CompletedAt) ||
+					!equalTime(got.NextRetryAt, before.NextRetryAt) ||
 					got.Error != before.Error || !slices.Equal(got.ArtifactsOut, before.ArtifactsOut) {
 					t.Errorf("unpatched columns changed: queued=%v completed=%v next_retry=%v error=%q artifacts=%v",
 						got.QueuedAt, got.CompletedAt, got.NextRetryAt, got.Error, got.ArtifactsOut)
@@ -146,9 +158,10 @@ func TestTransitionTask_PatchesRemainingColumns(t *testing.T) {
 			got.QueuedAt, got.CompletedAt, got.NextRetryAt, got.Error, got.ArtifactsOut)
 	}
 	if got.WorkerID != before.WorkerID || got.RetryCount != before.RetryCount ||
+		!equalTime(got.StartedAt, before.StartedAt) ||
 		string(got.Output) != string(before.Output) || !slices.Equal(messages(got.Logs), messages(before.Logs)) {
-		t.Errorf("unpatched columns changed: worker=%q retry=%d output=%s logs=%v",
-			got.WorkerID, got.RetryCount, got.Output, messages(got.Logs))
+		t.Errorf("unpatched columns changed: worker=%q retry=%d started=%v output=%s logs=%v",
+			got.WorkerID, got.RetryCount, got.StartedAt, got.Output, messages(got.Logs))
 	}
 }
 
@@ -336,5 +349,21 @@ func TestTransitionExecution_TerminalSetsCompletedAt(t *testing.T) {
 	}
 	if !done.StartedAt.Equal(*running.StartedAt) {
 		t.Errorf("started_at moved from %v to %v", running.StartedAt, done.StartedAt)
+	}
+}
+
+func TestTransitionExecution_EmptyErrMsgKeepsError(t *testing.T) {
+	store := setupStore(t)
+	ctx := context.Background()
+	exec := createExecution(t, store, makeWorkflowDef("transitions"), models.WorkflowStatusPending)
+	if _, err := store.TransitionExecution(ctx, exec.ID, models.WorkflowStatusRunning, "first"); err != nil {
+		t.Fatalf("to running: %v", err)
+	}
+	got, err := store.TransitionExecution(ctx, exec.ID, models.WorkflowStatusFailed, "")
+	if err != nil {
+		t.Fatalf("to failed: %v", err)
+	}
+	if got.Error != "first" {
+		t.Errorf("error = %q, want %q", got.Error, "first")
 	}
 }
