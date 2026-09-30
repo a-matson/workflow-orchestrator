@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os/exec"
 	"strings"
@@ -656,20 +657,62 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 
 type sendmailFunc func(ctx context.Context, args []string, stdin []byte) error
 
+// notifyEmail validates the recipients itself and hands them to sendmail as
+// argv, never as headers: with `sendmail -t` the To/Cc/Bcc headers choose the
+// recipients, so any header injected through user text would add recipients.
 func (w *Worker) notifyEmail(ctx context.Context, to, message string, addLog logFn) (map[string]any, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	// Not user code: the argv is fixed and user text only reaches sendmail's
-	// stdin, so this stays outside the container-only rule.
-	cmd := exec.CommandContext(cmdCtx, "sendmail", "-t")
-	cmd.Stdin = strings.NewReader(fmt.Sprintf("To: %s\nSubject: Fluxor Notification\n\n%s\n", to, message))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("email: sendmail: %w — %s", err, stderr.String())
+	// net/mail tolerates folded lines, so CR and LF are rejected up front.
+	if strings.ContainsAny(to, "\r\n") {
+		return nil, fmt.Errorf("email: recipient must not contain line breaks")
+	}
+	addrs, err := mail.ParseAddressList(to)
+	if err != nil {
+		return nil, fmt.Errorf("email: invalid recipient: %w", err)
+	}
+	header := make([]string, len(addrs))
+	args := []string{"--"}
+	for i, a := range addrs {
+		header[i] = a.String()
+		args = append(args, a.Address)
+	}
+	if max := w.limits.output(); int64(len(message)) > max {
+		message = message[:max] + truncationLine
+	}
+	msg := "To: " + strings.Join(header, ", ") + "\nSubject: Fluxor Notification\n\n" + message + "\n"
+
+	run := w.sendmail
+	if run == nil {
+		run = runSendmail
+	}
+	if err := run(ctx, args, []byte(msg)); err != nil {
+		return nil, err
 	}
 	addLog("info", "Email sent", map[string]any{"to": to})
 	return map[string]any{"delivered": true, "to": to}, nil
+}
+
+func runSendmail(ctx context.Context, args []string, stdin []byte) error {
+	bin, err := exec.LookPath("sendmail")
+	if err != nil {
+		return fmt.Errorf("email notifications need a sendmail binary or SMTP config")
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// Not user code: the argv is fixed except for validated addresses placed
+	// after "--", and the body only reaches stdin, so this stays outside the
+	// container-only rule.
+	cmd := exec.CommandContext(cmdCtx, bin, args...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		out := stderr.String()
+		if len(out) > maxErrorBodyBytes {
+			out = out[:maxErrorBodyBytes]
+		}
+		return fmt.Errorf("email: sendmail: %w — %s", err, out)
+	}
+	return nil
 }
 
 func (w *Worker) notifyPagerDuty(ctx context.Context, routingKey, message string, addLog logFn) (map[string]any, error) {
