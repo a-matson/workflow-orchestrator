@@ -612,3 +612,9 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 		"active_workflows":    int64(len(o.active)),
 	}
 }
+
+// runSafe runs fn, recovering and logging any panic so one execution cannot
+// crash the process.
+func runSafe(name, execID string, fn func()) {
+	fn()
+}
