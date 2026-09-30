@@ -46,6 +46,12 @@ export default defineConfig({
 	test: {
 		environment: 'happy-dom',
 		include: ['src/**/*.spec.ts'],
+		coverage: {
+			// Count every source file, not only those a test imports: otherwise a new spec that
+			// pulls in a large untested component lowers the ratio and trips the ratchet.
+			include: ['src/**/*.{ts,vue}'],
+			exclude: ['src/**/*.spec.ts', 'src/**/*.d.ts'],
+		},
 	},
 	optimizeDeps: {
 		include: ['@vue-flow/core', '@vue-flow/background', '@vue-flow/controls', '@vue-flow/minimap'],
