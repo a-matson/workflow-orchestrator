@@ -219,3 +219,80 @@ func TestStartWorkflow_NoPartialRows(t *testing.T) {
 		t.Error("failed start broadcast workflow_started")
 	}
 }
+
+// runTask takes msg through the worker's pickup and returns once the
+// orchestrator has accepted res. It waits for the queued write first because
+// a worker only receives a message after dispatch enqueued it.
+func runTask(t *testing.T, orch *orchestrator.Orchestrator, store *persistence.Store, msg *models.TaskMessage, res *models.TaskResult) {
+	t.Helper()
+	ctx := context.Background()
+	testutil.Eventually(t, eventWait, func() bool {
+		return testutil.TaskRow(t, store, msg.WorkflowExecID, msg.TaskDefinitionID).Status == models.TaskStatusQueued
+	})
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil"); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	if err := orch.ProcessResult(ctx, res); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+}
+
+func TestArtifactsFlowToDependents(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Artifact Flow",
+		Tasks: []models.TaskDefinition{
+			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{},
+				ArtifactsOut: []models.ArtifactRef{{Path: "out.txt"}}},
+			{ID: "b", Name: "B", Type: "generic", Dependencies: []string{"a"},
+				ArtifactsIn: []models.ArtifactRef{{Path: "out.txt"}}},
+		},
+		MaxParallel: 10,
+	})
+
+	msgA := testutil.Drain(t, redis, 1)[0]
+	produced := models.ResolvedArtifact{Path: "out.txt", MinioKey: "artifacts/a/out.txt", Size: 3}
+	res := testutil.Ok(msgA)
+	res.ArtifactsOut = []models.ResolvedArtifact{produced}
+	runTask(t, orch, store, msgA, res)
+
+	msgB := testutil.Drain(t, redis, 1)[0]
+	if msgB.TaskDefinitionID != "b" {
+		t.Fatalf("expected b dispatched after a, got %s", msgB.TaskDefinitionID)
+	}
+	if len(msgB.ArtifactsIn) != 1 || msgB.ArtifactsIn[0] != produced {
+		t.Errorf("b ArtifactsIn = %+v, want [%+v]", msgB.ArtifactsIn, produced)
+	}
+}
+
+func TestCompletedEventHasFinalTaskStates(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:          uuid.NewString(),
+		Name:        "Final States",
+		Tasks:       []models.TaskDefinition{{ID: "only", Name: "Only", Type: "generic", Dependencies: []string{}}},
+		MaxParallel: 10,
+	})
+
+	msg := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, store, msg, testutil.Ok(msg))
+
+	var done *models.WorkflowExecution
+	for _, ev := range rec.Events() {
+		if ev.Type == models.WSEventWorkflowCompleted {
+			done, _ = ev.Payload.(*models.WorkflowExecution)
+		}
+	}
+	if done == nil {
+		t.Fatalf("no %s event with a *WorkflowExecution payload", models.WSEventWorkflowCompleted)
+	}
+	if len(done.Tasks) != 1 {
+		t.Fatalf("%s event lists %d tasks, want 1", models.WSEventWorkflowCompleted, len(done.Tasks))
+	}
+	if got := done.Tasks[0].Status; got != models.TaskStatusCompleted {
+		t.Errorf("task status = %s in %s event, want %s", got, models.WSEventWorkflowCompleted, models.TaskStatusCompleted)
+	}
+}
