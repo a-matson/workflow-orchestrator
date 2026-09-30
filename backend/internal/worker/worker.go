@@ -523,6 +523,10 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	// Second line of defence after the pre-flight: DNS can rebind between the
 	// check and the connection, so every dial is guarded; fallbacks share Config.DialFunc.
 	cfgPG.DialFunc = w.guard.DialContext
+	// pgx would resolve names itself and dial bare IPs, hiding the name from the
+	// guard, so an allowlisted host:port could never match. Passing the name
+	// through lets the guard's dialer resolve it and apply both rules.
+	cfgPG.LookupFunc = func(_ context.Context, host string) ([]string, error) { return []string{host}, nil }
 
 	addLog("info", "Connecting (postgres)", nil)
 
