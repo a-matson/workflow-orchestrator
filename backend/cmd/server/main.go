@@ -77,7 +77,7 @@ func main() {
 
 	go func() {
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", metrics.Handler())
+		mux.Handle("/metrics", metrics.Handler(reg))
 		srv := &http.Server{Addr: metricsAddr, Handler: mux, ReadTimeout: 5 * time.Second}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error().Err(err).Msg("metrics server failed")

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -95,7 +96,19 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
+// Sources are read at scrape time.
+type Sources struct {
+	Snapshot   func() map[string]int64
+	QueueDepth func(context.Context) (int64, error)
+	WSClients  func() int
+}
+
+// Register is a stub for the red test.
+func Register(reg prometheus.Registerer, src Sources) prometheus.Observer {
+	return prometheus.NewHistogram(prometheus.HistogramOpts{Name: "task_duration_seconds"})
+}
+
 // Handler returns the Prometheus HTTP handler for /metrics
-func Handler() http.Handler {
+func Handler(reg *prometheus.Registry) http.Handler {
 	return promhttp.Handler()
 }
