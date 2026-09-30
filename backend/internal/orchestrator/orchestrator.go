@@ -44,7 +44,8 @@ type Orchestrator struct {
 // ExecutionContext holds runtime state for one active workflow execution.
 // mu guards the Completed/Failed maps, TaskMap, the task rows in
 // Execution.Tasks, and done. dispatchReadyTasks holds it across its store
-// calls so two dispatches cannot queue one task.
+// and Redis calls so the cache and the semaphore slots stay consistent with
+// what it queued; the store's transition is what stops a double queue.
 // Never call any method that re-acquires this mutex while holding it.
 type ExecutionContext struct {
 	Execution  *models.WorkflowExecution
@@ -185,7 +186,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 // dispatchReadyTasks queues and enqueues every ready task of execCtx. Each
 // row is moved to queued before its message exists, so a worker can never
 // hold a message for a row the store does not yet show as queued (REL-6).
-// It holds execCtx.mu throughout so two dispatches cannot queue one task.
+// It holds execCtx.mu throughout; see ExecutionContext.
 func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *ExecutionContext) {
 	execCtx.mu.Lock()
 	defer execCtx.mu.Unlock()

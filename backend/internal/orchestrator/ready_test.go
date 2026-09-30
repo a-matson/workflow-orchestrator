@@ -20,6 +20,8 @@ func TestReadyTasks(t *testing.T) {
 		{ID: "retry-due"},
 		{ID: "retry-later"},
 		{ID: "queued"},
+		{ID: "running"},
+		{ID: "retry-unscheduled"},
 	}}
 	g, err := dag.Parse(def)
 	if err != nil {
@@ -33,11 +35,14 @@ func TestReadyTasks(t *testing.T) {
 		"retry-due":   {Status: models.TaskStatusRetrying, NextRetryAt: &past},
 		"retry-later": {Status: models.TaskStatusRetrying, NextRetryAt: &future},
 		"queued":      {Status: models.TaskStatusQueued},
+		"running":     {Status: models.TaskStatusRunning},
+		// No next_retry_at counts as due rather than stranding the retry.
+		"retry-unscheduled": {Status: models.TaskStatusRetrying},
 	}}
 
 	got := c.readyTasks(now)
 	slices.Sort(got)
-	if want := []string{"retry-due", "root", "unblocked"}; !slices.Equal(got, want) {
+	if want := []string{"retry-due", "retry-unscheduled", "root", "unblocked"}; !slices.Equal(got, want) {
 		t.Errorf("readyTasks = %v, want %v", got, want)
 	}
 }
