@@ -136,7 +136,45 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 	}
 
 	ce := &ContainerExecutor{docker: dc, storage: storageClient, workspace: ws, maxArtifactBytes: maxArtifactBytes}
+	ce.reapOrphans(ctx)
 	return ce, nil
+}
+
+// stackLabel tells apart the task containers of stacks sharing one daemon (dev
+// and e2e), so one stack's startup does not reap the other's running tasks.
+const stackLabel = "fluxor.stack"
+
+// stackID is the volume when there is one (compose gives each stack its own,
+// while Root is the same in-container path in all of them), else the root.
+func (w Workspace) stackID() string {
+	if w.Volume != "" {
+		return w.Volume
+	}
+	return w.Root
+}
+
+// reapOrphans force-removes this stack's task containers in any state. Workers
+// run in-process, so at startup none can be legitimately running: they are
+// leftovers of a previous process, and the recovery re-send would duplicate them.
+// Failures are logged and never block startup.
+func (ce *ContainerExecutor) reapOrphans(ctx context.Context) {
+	list, err := ce.docker.ContainerList(ctx, dockerclient.ContainerListOptions{
+		All:     true,
+		Filters: make(dockerclient.Filters).Add("label", stackLabel+"="+ce.workspace.stackID()),
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("orphan task containers not listed")
+		return
+	}
+	removed := 0
+	for _, c := range list.Items {
+		if _, err := ce.docker.ContainerRemove(ctx, c.ID, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
+			log.Error().Err(err).Str("container_id", c.ID).Msg("orphan task container not removed")
+			continue
+		}
+		removed++
+	}
+	log.Info().Int("removed", removed).Msg("orphan task containers reaped")
 }
 
 const minSubpathAPI = "1.45"
@@ -253,6 +291,7 @@ func (ce *ContainerExecutor) Run(
 		Labels: map[string]string{
 			"fluxor.task_exec_id":     msg.TaskExecID,
 			"fluxor.workflow_exec_id": msg.WorkflowExecID,
+			stackLabel:                ce.workspace.stackID(),
 		},
 	}
 
