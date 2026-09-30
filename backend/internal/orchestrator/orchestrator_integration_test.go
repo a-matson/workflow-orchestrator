@@ -102,15 +102,7 @@ func TestOrchestrator_ProcessResult_AdvancesDAG(t *testing.T) {
 	if msgA.TaskDefinitionID != "a" {
 		t.Fatalf("expected a dispatched first, got %s", msgA.TaskDefinitionID)
 	}
-	// dispatchReadyTasks persists "queued" only after the enqueue, so a
-	// result processed before that write lands is overwritten back to queued.
-	// Wait for the write so this test checks DAG advancement, not that race.
-	testutil.Eventually(t, eventWait, func() bool {
-		return testutil.TaskRow(t, store, exec.ID, "a").Status == models.TaskStatusQueued
-	})
-	if err := orch.ProcessResult(context.Background(), testutil.Ok(msgA)); err != nil {
-		t.Fatalf("ProcessResult: %v", err)
-	}
+	runTask(t, orch, store, msgA, testutil.Ok(msgA))
 
 	msgB := testutil.Drain(t, redis, 1)[0]
 	if msgB.TaskDefinitionID != "b" {
@@ -144,9 +136,7 @@ func TestOrchestrator_RetryOnFailure(t *testing.T) {
 	})
 
 	msg := testutil.Drain(t, redis, 1)[0]
-	if err := orch.ProcessResult(context.Background(), testutil.Fail(msg, "transient error")); err != nil {
-		t.Fatalf("ProcessResult: %v", err)
-	}
+	runTask(t, orch, store, msg, testutil.Fail(msg, "transient error"))
 
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskRetrying) })
 }
@@ -168,9 +158,7 @@ func TestOrchestrator_DeadLetter_MaxRetriesExceeded(t *testing.T) {
 	})
 
 	msg := testutil.Drain(t, redis, 1)[0]
-	if err := orch.ProcessResult(context.Background(), testutil.Fail(msg, "fatal error")); err != nil {
-		t.Fatalf("ProcessResult: %v", err)
-	}
+	runTask(t, orch, store, msg, testutil.Fail(msg, "fatal error"))
 
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskFailed) })
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventWorkflowFailed) })
@@ -294,5 +282,36 @@ func TestCompletedEventHasFinalTaskStates(t *testing.T) {
 	}
 	if got := done.Tasks[0].Status; got != models.TaskStatusCompleted {
 		t.Errorf("task status = %s in %s event, want %s", got, models.WSEventWorkflowCompleted, models.TaskStatusCompleted)
+	}
+}
+
+func TestDuplicateResultIsDropped(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Duplicate Result",
+		Tasks: []models.TaskDefinition{
+			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
+			{ID: "b", Name: "B", Type: "generic", Dependencies: []string{"a"}},
+		},
+		MaxParallel: 10,
+	})
+
+	msgA := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, store, msgA, testutil.Ok(msgA))
+	testutil.Drain(t, redis, 1)
+
+	if err := orch.ProcessResult(context.Background(), testutil.Ok(msgA)); err != nil {
+		t.Fatalf("redelivered result: ProcessResult = %v, want nil", err)
+	}
+	completed := 0
+	for _, ev := range rec.Events() {
+		if ev.Type == models.WSEventTaskCompleted {
+			completed++
+		}
+	}
+	if completed != 1 {
+		t.Errorf("%d %s events after a redelivered result, want 1", completed, models.WSEventTaskCompleted)
 	}
 }

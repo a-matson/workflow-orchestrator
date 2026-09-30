@@ -181,6 +181,7 @@ type TaskResult struct {
 	TaskExecID     string             `json:"task_exec_id"`
 	WorkflowExecID string             `json:"workflow_exec_id"`
 	WorkerID       string             `json:"worker_id"`
+	RetryCount     int                `json:"retry_count"` // the message's attempt; stale ones are dropped
 	Success        bool               `json:"success"`
 	Output         json.RawMessage    `json:"output,omitempty"`
 	Error          string             `json:"error,omitempty"`
