@@ -224,8 +224,21 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 	taskExec, err := o.store.TransitionTask(ctx, cached.ID, cached.RetryCount,
 		models.TaskStatusQueued, persistence.TaskPatch{QueuedAt: &queuedAt})
 	if err != nil {
-		log.Error().Err(err).Str("task_exec_id", cached.ID).Msg("failed to queue task")
-		return false
+		// The write may have committed although the client saw an error (a
+		// connection reset after COMMIT). Re-read, or the stale cache keeps
+		// the task ready and every tick fails the same transition.
+		cur, getErr := o.store.GetTaskExecution(ctx, cached.ID)
+		if getErr != nil {
+			log.Error().Err(err).AnErr("reread_err", getErr).Str("task_exec_id", cached.ID).Msg("failed to queue task")
+			return false
+		}
+		if cur.Status != models.TaskStatusQueued || cur.RetryCount != cached.RetryCount {
+			execCtx.cacheTask(cur)
+			log.Warn().Err(err).Str("task_exec_id", cached.ID).Str("status", string(cur.Status)).
+				Msg("task not queued; cached its stored row instead")
+			return false
+		}
+		taskExec = cur
 	}
 	execCtx.cacheTask(taskExec)
 
