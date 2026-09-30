@@ -34,7 +34,7 @@ const maxNotifyResponse = 64 << 10
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
-	MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error
+	MarkTaskRunning(ctx context.Context, taskExecID, workerID string, attempt int) error
 	StreamLog(workflowExecID, taskExecID, taskName string, entry models.LogEntry)
 }
 
@@ -236,22 +236,11 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	}
 	defer func() { _ = w.redis.ReleaseTaskLock(ctx, msg.TaskExecID) }()
 
-	addLog("info", "Task execution started", map[string]any{
-		"worker_id": w.id,
-		"task_type": msg.TaskType,
-		"task_name": msg.TaskName,
-		"retry":     msg.RetryCount,
-		"isolated":  w.usesContainer(msg),
-	})
-
-	// Notify orchestrator: Queued → Running
-	if w.notifier != nil {
-		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id); err != nil {
-			log.Warn().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to mark task running")
-		}
+	output, artifactsOut, ran, execErr := w.pickUpAndDispatch(ctx, taskCtx, msg, addLog)
+	if !ran {
+		taskLogger.Warn().Err(execErr).Msg("dropping task message: its row is not queued at this attempt")
+		return
 	}
-
-	output, artifactsOut, execErr := w.dispatch(taskCtx, msg, addLog)
 
 	completedAt := time.Now()
 
@@ -290,6 +279,35 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 }
 
 type logFn func(level, message string, fields map[string]any)
+
+// pickUpAndDispatch records the pickup of msg, then runs it through dispatch.
+// ran is false, with the conflict as the error, when the row is not queued at
+// msg's attempt: the message is a duplicate, stale, or from a rolled-back
+// dispatch, and must not run.
+func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, bool, error) {
+	// Before the first log line, so a dropped message streams nothing.
+	if w.notifier != nil {
+		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id, msg.RetryCount); err != nil {
+			if errors.Is(err, persistence.ErrConflict) {
+				return nil, nil, false, err
+			}
+			// Runs anyway: the orchestrator records a lost pickup when the
+			// result arrives (transitionResult).
+			log.Warn().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to mark task running")
+		}
+	}
+
+	addLog("info", "Task execution started", map[string]any{
+		"worker_id": w.id,
+		"task_type": msg.TaskType,
+		"task_name": msg.TaskName,
+		"retry":     msg.RetryCount,
+		"isolated":  w.usesContainer(msg),
+	})
+
+	out, arts, err := w.dispatch(taskCtx, msg, addLog)
+	return out, arts, true, err
+}
 
 // runsUserCode reports whether a task type executes a user-supplied script,
 // command or binary. Unknown types count as code: they used to fall through

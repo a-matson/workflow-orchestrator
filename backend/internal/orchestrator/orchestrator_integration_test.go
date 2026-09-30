@@ -5,6 +5,7 @@ package orchestrator_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -104,7 +105,7 @@ func TestOrchestrator_ProcessResult_AdvancesDAG(t *testing.T) {
 	if msgA.TaskDefinitionID != "a" {
 		t.Fatalf("expected a dispatched first, got %s", msgA.TaskDefinitionID)
 	}
-	runTask(t, orch, store, msgA, testutil.Ok(msgA))
+	runTask(t, orch, msgA, testutil.Ok(msgA))
 
 	msgB := testutil.Drain(t, redis, 1)[0]
 	if msgB.TaskDefinitionID != "b" {
@@ -138,7 +139,7 @@ func TestOrchestrator_RetryOnFailure(t *testing.T) {
 	})
 
 	msg := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msg, testutil.Fail(msg, "transient error"))
+	runTask(t, orch, msg, testutil.Fail(msg, "transient error"))
 
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskRetrying) })
 }
@@ -160,7 +161,7 @@ func TestOrchestrator_DeadLetter_MaxRetriesExceeded(t *testing.T) {
 	})
 
 	msg := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msg, testutil.Fail(msg, "fatal error"))
+	runTask(t, orch, msg, testutil.Fail(msg, "fatal error"))
 
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventTaskFailed) })
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(rec, models.WSEventWorkflowFailed) })
@@ -211,15 +212,11 @@ func TestStartWorkflow_NoPartialRows(t *testing.T) {
 }
 
 // runTask takes msg through the worker's pickup and returns once the
-// orchestrator has accepted res. It waits for the queued write first because
-// a worker only receives a message after dispatch enqueued it.
-func runTask(t *testing.T, orch *orchestrator.Orchestrator, store *persistence.Store, msg *models.TaskMessage, res *models.TaskResult) {
+// orchestrator has accepted res.
+func runTask(t *testing.T, orch *orchestrator.Orchestrator, msg *models.TaskMessage, res *models.TaskResult) {
 	t.Helper()
 	ctx := context.Background()
-	testutil.Eventually(t, eventWait, func() bool {
-		return testutil.TaskRow(t, store, msg.WorkflowExecID, msg.TaskDefinitionID).Status == models.TaskStatusQueued
-	})
-	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil"); err != nil {
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	if err := orch.ProcessResult(ctx, res); err != nil {
@@ -246,7 +243,7 @@ func TestArtifactsFlowToDependents(t *testing.T) {
 	produced := models.ResolvedArtifact{Path: "out.txt", MinioKey: "artifacts/a/out.txt", Size: 3}
 	res := testutil.Ok(msgA)
 	res.ArtifactsOut = []models.ResolvedArtifact{produced}
-	runTask(t, orch, store, msgA, res)
+	runTask(t, orch, msgA, res)
 
 	msgB := testutil.Drain(t, redis, 1)[0]
 	if msgB.TaskDefinitionID != "b" {
@@ -268,7 +265,7 @@ func TestCompletedEventHasFinalTaskStates(t *testing.T) {
 	})
 
 	msg := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msg, testutil.Ok(msg))
+	runTask(t, orch, msg, testutil.Ok(msg))
 
 	var done *models.WorkflowExecution
 	for _, ev := range rec.Events() {
@@ -301,7 +298,7 @@ func TestDuplicateResultIsDropped(t *testing.T) {
 	})
 
 	msgA := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msgA, testutil.Ok(msgA))
+	runTask(t, orch, msgA, testutil.Ok(msgA))
 	testutil.Drain(t, redis, 1)
 
 	if err := orch.ProcessResult(context.Background(), testutil.Ok(msgA)); err != nil {
@@ -327,16 +324,17 @@ func TestResultWithoutAttemptIsApplied(t *testing.T) {
 		Name: "Legacy Result",
 		Tasks: []models.TaskDefinition{{
 			ID: "t", Name: "T", Type: "generic", Dependencies: []string{},
-			RetryPolicy: &models.RetryPolicy{MaxRetries: 3, InitialDelay: time.Hour, MaxDelay: time.Hour, BackoffMultiple: 1},
+			RetryPolicy: &models.RetryPolicy{MaxRetries: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond, BackoffMultiple: 1},
 		}},
 		MaxParallel: 10,
 	})
 
 	msg := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msg, testutil.Fail(msg, "transient"))
-	// The retry poller would re-enqueue the task; the worker's pickup is all
-	// this test needs to put attempt 1 in running.
-	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil"); err != nil {
+	runTask(t, orch, msg, testutil.Fail(msg, "transient"))
+	// Stands in for the retry poller's tick.
+	orch.DispatchDue(ctx)
+	msg = testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, msg.TaskExecID, "testutil", msg.RetryCount); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 	if row := testutil.TaskRow(t, store, exec.ID, "t"); row.Status != models.TaskStatusRunning || row.RetryCount != 1 {
@@ -398,14 +396,15 @@ func TestExecutionEventsAreSnapshots(t *testing.T) {
 	// workflow.started is still being marshalled when these results arrive
 	// and replace the cached task rows.
 	msgA := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msgA, testutil.Ok(msgA))
+	runTask(t, orch, msgA, testutil.Ok(msgA))
 	msgB := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, msgB, testutil.Ok(msgB))
+	runTask(t, orch, msgB, testutil.Ok(msgB))
 	testutil.Eventually(t, eventWait, func() bool { return hasEvent(&hub.Recorder, models.WSEventWorkflowCompleted) })
 }
 
-// The worker runs a task even when its pickup write fails (worker.go logs
-// and carries on), so the result can find the row still queued.
+// The worker runs a task when its pickup write fails with anything but a
+// conflict (worker.go logs and carries on), so the result can find the row
+// still queued.
 func TestResultForQueuedRowIsApplied(t *testing.T) {
 	orch, store, redis, _ := setupOrchestrator(t)
 
@@ -453,7 +452,7 @@ func TestDroppedResultKeepsItsSlot(t *testing.T) {
 
 	running := testutil.Drain(t, redis, 2)
 	first, second := running[0], running[1]
-	runTask(t, orch, store, first, testutil.Ok(first))
+	runTask(t, orch, first, testutil.Ok(first))
 	testutil.Drain(t, redis, 1) // takes first's slot
 
 	if err := orch.ProcessResult(context.Background(), testutil.Ok(first)); err != nil {
@@ -461,7 +460,7 @@ func TestDroppedResultKeepsItsSlot(t *testing.T) {
 	}
 
 	// Both slots are held, so second's completion frees exactly one.
-	runTask(t, orch, store, second, testutil.Ok(second))
+	runTask(t, orch, second, testutil.Ok(second))
 	testutil.Drain(t, redis, 1)
 	testutil.Never(t, 300*time.Millisecond, func() bool { return testutil.Queued(t, redis, exec.ID) > 0 })
 }
@@ -475,15 +474,22 @@ func TestStaleAttemptIsDropped(t *testing.T) {
 		Name: "Stale Attempt",
 		Tasks: []models.TaskDefinition{{
 			ID: "t", Name: "T", Type: "generic", Dependencies: []string{},
-			RetryPolicy: &models.RetryPolicy{MaxRetries: 3, InitialDelay: time.Hour, MaxDelay: time.Hour, BackoffMultiple: 1},
+			RetryPolicy: &models.RetryPolicy{MaxRetries: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond, BackoffMultiple: 1},
 		}},
 		MaxParallel: 10,
 	})
 
 	attempt0 := testutil.Drain(t, redis, 1)[0]
-	runTask(t, orch, store, attempt0, testutil.Fail(attempt0, "transient"))
-	if err := orch.MarkTaskRunning(ctx, attempt0.TaskExecID, "testutil"); err != nil {
+	runTask(t, orch, attempt0, testutil.Fail(attempt0, "transient"))
+	// Stands in for the retry poller's tick.
+	orch.DispatchDue(ctx)
+	attempt1 := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, attempt1.TaskExecID, "testutil", attempt1.RetryCount); err != nil {
 		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	// A redelivered attempt-0 message must not be picked up again.
+	if err := orch.MarkTaskRunning(ctx, attempt0.TaskExecID, "testutil", attempt0.RetryCount); !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("MarkTaskRunning for attempt 0 = %v, want ErrConflict", err)
 	}
 
 	// Attempt 0's failure arrives again while attempt 1 runs.

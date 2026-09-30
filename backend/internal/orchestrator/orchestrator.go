@@ -43,8 +43,8 @@ type Orchestrator struct {
 
 // ExecutionContext holds runtime state for one active workflow execution.
 // mu guards the Completed/Failed maps, TaskMap, the task rows in
-// Execution.Tasks, and done. dispatchReadyTasks and MarkTaskRunning hold it
-// across store calls so their writes to a task row land in order.
+// Execution.Tasks, and done. dispatchReadyTasks holds it across its store
+// calls so two dispatches cannot queue one task.
 // Never call any method that re-acquires this mutex while holding it.
 type ExecutionContext struct {
 	Execution  *models.WorkflowExecution
@@ -324,11 +324,16 @@ func (o *Orchestrator) StreamLog(workflowExecID, taskExecID, taskName string, en
 	})
 }
 
-// Called by the worker (via the API or directly) when it picks up a task.
-// Moves the task from Queued → Running so dispatchReadyTasks knows the slot
-// is actively occupied and the task won't be re-dispatched.
-func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID string) error {
-	taskExec, err := o.store.GetTaskExecution(ctx, taskExecID)
+// MarkTaskRunning records workerID's pickup of attempt of task taskExecID.
+// An error matching persistence.ErrConflict means the row is not queued at
+// that attempt (a duplicate, a stale attempt, or a rolled-back dispatch), and
+// the worker must drop the message instead of running it.
+func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID string, attempt int) error {
+	now := time.Now()
+	taskExec, err := o.store.TransitionTask(ctx, taskExecID, attempt, models.TaskStatusRunning, persistence.TaskPatch{
+		WorkerID:  workerID,
+		StartedAt: &now,
+	})
 	if err != nil {
 		return err
 	}
@@ -337,31 +342,9 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 	execCtx, ok := o.active[taskExec.WorkflowExecID]
 	o.activeMu.RUnlock()
 	if ok {
-		// dispatchReadyTasks persists "queued" after the enqueue, under
-		// execCtx.mu, so a fast worker can get here first. Its full-row write
-		// would then put the row back to queued, and a queued task's result
-		// is rejected (completion requires running). Wait for dispatch and
-		// re-read so this write lands last.
 		execCtx.mu.Lock()
-		defer execCtx.mu.Unlock()
-		if taskExec, err = o.store.GetTaskExecution(ctx, taskExecID); err != nil {
-			return err
-		}
-	}
-
-	// Not TransitionTask: a retry is re-enqueued with its row still in
-	// retrying, and retrying -> running is not an allowed transition.
-	now := time.Now()
-	taskExec.Status = models.TaskStatusRunning
-	taskExec.WorkerID = workerID
-	taskExec.StartedAt = &now
-	taskExec.UpdatedAt = now
-	if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
-		return err
-	}
-
-	if ok {
 		execCtx.cacheTask(taskExec)
+		execCtx.mu.Unlock()
 	}
 
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskStarted, Payload: taskExec})
@@ -611,9 +594,10 @@ func (c *ExecutionContext) snapshot() *models.WorkflowExecution {
 }
 
 // transitionResult applies a result's transition to task result.TaskExecID.
-// The worker runs a task even when its pickup write fails (worker.go logs and
-// carries on), so a row still queued at the result's attempt has only missed
-// that write: it is moved to running and the transition is tried once more.
+// The worker runs a task when its pickup write fails with anything but a
+// conflict (a store outage, say), so a row still queued at the result's
+// attempt has only missed that write: it is moved to running and the
+// transition is tried once more.
 // Any other conflict is returned for dropStaleResult.
 func (o *Orchestrator) transitionResult(ctx context.Context, result *models.TaskResult, to models.TaskStatus, p persistence.TaskPatch) (*models.TaskExecution, error) {
 	row, err := o.store.TransitionTask(ctx, result.TaskExecID, result.Attempt(), to, p)
