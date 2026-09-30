@@ -166,6 +166,14 @@ type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
+// querier is execer plus reads, for transitions that must also run inside a
+// transaction (FinishExecution).
+type querier interface {
+	execer
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func insertExecution(ctx context.Context, db execer, exec *models.WorkflowExecution) error {
 	payloadJSON, err := json.Marshal(exec.TriggerPayload)
 	if err != nil {

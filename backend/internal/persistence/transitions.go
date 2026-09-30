@@ -123,6 +123,38 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 // overwrites error. The returned execution has no Tasks loaded. Errors are as
 // for TransitionTask.
 func (s *Store) TransitionExecution(ctx context.Context, id string, to models.WorkflowStatus, errMsg string) (*models.WorkflowExecution, error) {
+	return transitionExecution(ctx, s.pool, id, to, errMsg)
+}
+
+// FinishExecution moves execution id to the terminal status `to` and cancels
+// its open tasks in one transaction, returning the execution (no Tasks
+// loaded) and the cancelled rows. Either both writes commit or neither does:
+// a terminal execution with open tasks is never recovered, and a queued row
+// under it would still be picked up and run. Errors are as for
+// TransitionExecution.
+func (s *Store) FinishExecution(ctx context.Context, id string, to models.WorkflowStatus, errMsg string) (*models.WorkflowExecution, []*models.TaskExecution, error) {
+	if to == models.WorkflowStatusRunning {
+		return nil, nil, fmt.Errorf("%w: execution %s -> %s is not terminal", ErrInvalidTransition, id, to)
+	}
+	var (
+		exec  *models.WorkflowExecution
+		tasks []*models.TaskExecution
+	)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		if exec, err = transitionExecution(ctx, tx, id, to, errMsg); err != nil {
+			return err
+		}
+		tasks, err = cancelOpenTasks(ctx, tx, id)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return exec, tasks, nil
+}
+
+func transitionExecution(ctx context.Context, db querier, id string, to models.WorkflowStatus, errMsg string) (*models.WorkflowExecution, error) {
 	from := models.ExecFrom(to)
 	if from == nil {
 		return nil, fmt.Errorf("%w: execution -> %s", ErrInvalidTransition, to)
@@ -136,7 +168,7 @@ func (s *Store) TransitionExecution(ctx context.Context, id string, to models.Wo
 		errText = &errMsg
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	row := db.QueryRow(ctx, `
 		UPDATE workflow_executions SET
 			status       = $2,
 			started_at   = CASE WHEN $2 = 'running' THEN COALESCE(started_at, NOW()) ELSE started_at END,
@@ -161,7 +193,11 @@ func (s *Store) TransitionExecution(ctx context.Context, id string, to models.Wo
 // completed_at, and returns the rows it changed. Tasks already final are left
 // alone. It does not stop a running task's container.
 func (s *Store) CancelOpenTasks(ctx context.Context, execID string) ([]*models.TaskExecution, error) {
-	rows, err := s.pool.Query(ctx, `
+	return cancelOpenTasks(ctx, s.pool, execID)
+}
+
+func cancelOpenTasks(ctx context.Context, db querier, execID string) ([]*models.TaskExecution, error) {
+	rows, err := db.Query(ctx, `
 		UPDATE task_executions SET status = $2, completed_at = NOW()
 		WHERE workflow_exec_id = $1 AND status = ANY($3)
 		RETURNING `+taskColumns,
