@@ -4,7 +4,9 @@ package orchestrator_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,4 +352,54 @@ func TestResultWithoutAttemptIsApplied(t *testing.T) {
 	if got := testutil.TaskRow(t, store, exec.ID, "t").Status; got != models.TaskStatusCompleted {
 		t.Errorf("task status = %s after a result without retry_count, want %s", got, models.TaskStatusCompleted)
 	}
+}
+
+// hubLike marshals each payload on its own goroutine, as api.Hub.Run does,
+// so the race detector sees any write the orchestrator makes to a payload
+// after broadcasting it. It keeps marshalling for a while, timed by the clock
+// rather than a channel, so the reads overlap later writes without a
+// happens-before edge that would hide them.
+type hubLike struct {
+	testutil.Recorder
+	wg sync.WaitGroup
+}
+
+const hubMarshalFor = 300 * time.Millisecond
+
+func (h *hubLike) Broadcast(ev models.WebSocketEvent) {
+	h.Recorder.Broadcast(ev)
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		for start := time.Now(); time.Since(start) < hubMarshalFor; {
+			// Only the reads matter here; the payloads are plain structs
+			// that always marshal.
+			_, _ = json.Marshal(ev)
+		}
+	}()
+}
+
+func TestExecutionEventsAreSnapshots(t *testing.T) {
+	store, redis := testutil.Env(t)
+	hub := &hubLike{}
+	t.Cleanup(hub.wg.Wait)
+	orch := orchestrator.NewOrchestrator(store, redis, hub)
+
+	startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Snapshot Events",
+		Tasks: []models.TaskDefinition{
+			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
+			{ID: "b", Name: "B", Type: "generic", Dependencies: []string{"a"}},
+		},
+		MaxParallel: 10,
+	})
+
+	// workflow.started is still being marshalled when these results arrive
+	// and replace the cached task rows.
+	msgA := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, store, msgA, testutil.Ok(msgA))
+	msgB := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, store, msgB, testutil.Ok(msgB))
+	testutil.Eventually(t, eventWait, func() bool { return hasEvent(&hub.Recorder, models.WSEventWorkflowCompleted) })
 }
