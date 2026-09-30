@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,91 @@ func TestE2E_FrontendServesSPA(t *testing.T) {
 		if status != http.StatusOK || !strings.Contains(string(body), `<div id="app">`) {
 			t.Errorf("GET %s%s: status %d, body lacks the SPA mount:\n%s", frontendURL, path, status, body)
 		}
+	}
+}
+
+// get returns the response so header assertions can see it; send drops headers.
+func get(t *testing.T, url string) (*http.Response, []byte) {
+	t.Helper()
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Errorf("close body of %s: %v", url, err)
+		}
+	}()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp, body
+}
+
+var scriptSrc = regexp.MustCompile(`src="(/assets/[^"]+\.js)"`)
+
+// firstScriptAsset finds a hashed bundle through index.html so the tests survive rebuilds.
+func firstScriptAsset(t *testing.T) string {
+	t.Helper()
+	_, index := get(t, frontendURL+"/")
+	m := scriptSrc.FindSubmatch(index)
+	if m == nil {
+		t.Fatalf("index.html references no /assets/*.js:\n%s", index)
+	}
+	return string(m[1])
+}
+
+// nginx drops inherited add_header in any location that declares its own, so every
+// location class (SPA, asset, proxied API) is probed, not just "/".
+func TestFrontend_SecurityHeaders(t *testing.T) {
+	for _, path := range []string{"/", "/executions", firstScriptAsset(t), "/api/health"} {
+		resp, _ := get(t, frontendURL+path)
+		h := resp.Header
+		if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", path, got)
+		}
+		// The proxied API is JSON, so the document-level headers are asserted on frontend paths only.
+		if path != "/api/health" {
+			if h.Get("Content-Security-Policy") == "" {
+				t.Errorf("%s: no Content-Security-Policy", path)
+			}
+			if got := h.Get("X-Frame-Options"); got != "DENY" {
+				t.Errorf("%s: X-Frame-Options = %q, want DENY", path, got)
+			}
+			if got := h.Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+				t.Errorf("%s: Referrer-Policy = %q, want strict-origin-when-cross-origin", path, got)
+			}
+			if h.Get("Permissions-Policy") == "" {
+				t.Errorf("%s: no Permissions-Policy", path)
+			}
+		}
+		if server := h.Get("Server"); strings.ContainsAny(server, "0123456789/") {
+			t.Errorf("%s: Server = %q leaks the nginx version", path, server)
+		}
+	}
+}
+
+func TestFrontend_NoSourceMaps(t *testing.T) {
+	asset := firstScriptAsset(t)
+	resp, js := get(t, frontendURL+asset)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: %d", asset, resp.StatusCode)
+	}
+	if strings.Contains(string(js), "sourceMappingURL") {
+		t.Errorf("%s still carries a sourceMappingURL comment", asset)
+	}
+	resp, _ = get(t, frontendURL+asset+".map")
+	// SPA fallback would answer 200 with index.html, so only an explicit 404 passes.
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET %s.map = %d, want 404", asset, resp.StatusCode)
+	}
+}
+
+func TestFrontend_Robots(t *testing.T) {
+	resp, body := get(t, frontendURL+"/robots.txt")
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
+		t.Errorf("/robots.txt: status %d, type %q, want 200 text/plain:\n%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	}
 }
 
