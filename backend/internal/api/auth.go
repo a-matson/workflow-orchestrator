@@ -115,6 +115,12 @@ func (a *Authenticator) Authenticate(r *http.Request) (*Principal, error) {
 // Middleware enforces routePolicy for requests served by mux. A registered
 // pattern absent from the policy requires admin, so it fails closed.
 func (a *Authenticator) Middleware(mux *http.ServeMux) func(http.Handler) http.Handler {
+	return requireRoles(mux, a.Authenticate)
+}
+
+// requireRoles takes the credential check as a function so the policy
+// decisions can be unit-tested without a database.
+func requireRoles(mux *http.ServeMux, authenticate func(*http.Request) (*Principal, error)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, pattern := mux.Handler(r)
@@ -132,7 +138,7 @@ func (a *Authenticator) Middleware(mux *http.ServeMux) func(http.Handler) http.H
 				return
 			}
 
-			p, err := a.Authenticate(r)
+			p, err := authenticate(r)
 			switch {
 			case errors.Is(err, errUnauthenticated):
 				w.Header().Set("WWW-Authenticate", "Bearer")
