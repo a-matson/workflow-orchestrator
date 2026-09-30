@@ -72,7 +72,7 @@ jobs:
           version: v0.74.0
           image-ref: fluxor-backend:scan
           severity: HIGH,CRITICAL
-          # Unfixed CVEs (docker/docker, see .govulncheck-allow) cannot be acted on.
+          # A CVE with no fixed version gives a PR nothing to change, so it must not block unrelated work.
           ignore-unfixed: true
           exit-code: "1"
 

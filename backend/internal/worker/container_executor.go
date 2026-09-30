@@ -29,14 +29,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/versions"
-	dockerclient "github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -82,10 +80,8 @@ type ContainerExecutor struct {
 
 // NewContainerExecutor connects to the local Docker Engine socket.
 func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*ContainerExecutor, error) {
-	dc, err := dockerclient.NewClientWithOpts(
-		dockerclient.FromEnv,
-		dockerclient.WithAPIVersionNegotiation(),
-	)
+	// The client negotiates the API version on its first request.
+	dc, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker: connect: %w", err)
 	}
@@ -94,7 +90,15 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 	if ws.Volume != "" {
 		// Daemons older than API 1.45 drop VolumeOptions.Subpath without an
 		// error and mount the whole volume, exposing every task's workspace.
-		dc.NegotiateAPIVersion(ctx)
+		ping, err := dc.Ping(ctx, dockerclient.PingOptions{NegotiateAPIVersion: true})
+		if err != nil {
+			return nil, fmt.Errorf("docker: negotiate API version: %w", err)
+		}
+		// Without a version header the client assumes its own maximum, which would
+		// pass the gate below for a daemon of unknown age.
+		if ping.APIVersion == "" {
+			return nil, fmt.Errorf("docker: daemon did not report an API version; cannot confirm volume subpath support")
+		}
 		if !subpathSupported(dc.ClientVersion()) {
 			return nil, fmt.Errorf("docker: API %s lacks volume subpaths (need >= %s); task workspaces would not be isolated",
 				dc.ClientVersion(), minSubpathAPI)
@@ -166,20 +170,20 @@ func removeWorkspace(dir string) error {
 // The network is internal (no external routing) so task containers cannot
 // reach the internet, Postgres, or Redis.
 func (ce *ContainerExecutor) ensureNetwork(ctx context.Context) error {
-	nets, err := ce.docker.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("name", TaskNetwork)),
+	nets, err := ce.docker.NetworkList(ctx, dockerclient.NetworkListOptions{
+		Filters: dockerclient.Filters{}.Add("name", TaskNetwork),
 	})
 	if err != nil {
 		return fmt.Errorf("docker: list networks: %w", err)
 	}
-	for _, n := range nets {
+	for _, n := range nets.Items {
 		if n.Name == TaskNetwork {
 			log.Debug().Str("network", TaskNetwork).Msg("task network already exists")
 			return nil
 		}
 	}
 
-	_, err = ce.docker.NetworkCreate(ctx, TaskNetwork, network.CreateOptions{
+	_, err = ce.docker.NetworkCreate(ctx, TaskNetwork, dockerclient.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: true, // no external routing — tasks are isolated
 		Labels:   map[string]string{"managed-by": "fluxor"},
@@ -290,7 +294,11 @@ func (ce *ContainerExecutor) Run(
 		"cmd":        strings.Join(cmd, " "),
 	})
 
-	createResp, err := ce.docker.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, "")
+	createResp, err := ce.docker.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config:           containerCfg,
+		HostConfig:       hostCfg,
+		NetworkingConfig: netCfg,
+	})
 	if err != nil {
 		return "", nil, fmt.Errorf("container: create: %w", err)
 	}
@@ -301,27 +309,30 @@ func (ce *ContainerExecutor) Run(
 		detachedCtx := context.WithoutCancel(ctx)
 		cleanupCtx, cancel := context.WithTimeout(detachedCtx, 15*time.Second)
 		defer cancel()
-		_ = ce.docker.ContainerKill(cleanupCtx, containerID, "KILL")
-		_ = ce.docker.ContainerRemove(cleanupCtx, containerID, container.RemoveOptions{Force: true})
+		// Best effort: the container has usually exited already, so kill fails.
+		_, _ = ce.docker.ContainerKill(cleanupCtx, containerID, dockerclient.ContainerKillOptions{Signal: "KILL"})
+		if _, err := ce.docker.ContainerRemove(cleanupCtx, containerID, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
+			log.Error().Err(err).Str("container_id", containerID).Msg("task container not removed")
+		}
 	}()
 
 	// ── 6. Start container ────────────────────────────────────────────────────
 	addLog("info", fmt.Sprintf("Starting container %s", containerID[:12]), nil)
-	if err := ce.docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := ce.docker.ContainerStart(ctx, containerID, dockerclient.ContainerStartOptions{}); err != nil {
 		return "", nil, fmt.Errorf("container: start: %w", err)
 	}
 
 	// ── 7. Wait for exit ──────────────────────────────────────────────────────
-	statusCh, errCh := ce.docker.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	wait := ce.docker.ContainerWait(ctx, containerID, dockerclient.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	var exitCode int64
 	select {
-	case status := <-statusCh:
+	case status := <-wait.Result:
 		exitCode = status.StatusCode
-	case waitErr := <-errCh:
+	case waitErr := <-wait.Error:
 		return "", nil, fmt.Errorf("container: wait: %w", waitErr)
 	case <-ctx.Done():
-		// Timeout/cancellation — kill the container
-		_ = ce.docker.ContainerKill(context.WithoutCancel(ctx), containerID, "KILL")
+		// Best effort: the deferred force-remove above stops it if this kill fails.
+		_, _ = ce.docker.ContainerKill(context.WithoutCancel(ctx), containerID, dockerclient.ContainerKillOptions{Signal: "KILL"})
 		return "", nil, ctx.Err()
 	}
 
@@ -375,7 +386,7 @@ func (ce *ContainerExecutor) pullImage(ctx context.Context, img string) error {
 		return nil // already present
 	}
 
-	reader, err := ce.docker.ImagePull(ctx, img, image.PullOptions{})
+	reader, err := ce.docker.ImagePull(ctx, img, dockerclient.ImagePullOptions{})
 	if err != nil {
 		return err
 	}
@@ -387,7 +398,7 @@ func (ce *ContainerExecutor) pullImage(ctx context.Context, img string) error {
 // ── Log collection ────────────────────────────────────────────────────────────
 
 func (ce *ContainerExecutor) collectLogs(ctx context.Context, containerID string) (string, error) {
-	reader, err := ce.docker.ContainerLogs(ctx, containerID, container.LogsOptions{
+	reader, err := ce.docker.ContainerLogs(ctx, containerID, dockerclient.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})

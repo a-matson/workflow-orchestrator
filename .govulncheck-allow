@@ -1,3 +1,1 @@
 # One OSV ID per line: GO-ID  # reason, revisit-by YYYY-MM-DD
-GO-2026-4883  # github.com/docker/docker: no fixed version; moby client migration (V3), revisit-by 2026-12-31
-GO-2026-4887  # github.com/docker/docker: no fixed version; moby client migration (V3), revisit-by 2026-12-31
