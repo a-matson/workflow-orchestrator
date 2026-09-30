@@ -33,6 +33,10 @@ const (
 // TaskPatch lists the columns a task transition writes besides status.
 // A nil or zero field leaves its column unchanged; Logs are appended.
 type TaskPatch struct {
+	// ExpectWorkerID is a precondition, not a write: when non-empty, the
+	// transition matches only a row whose worker_id equals it.
+	ExpectWorkerID string
+
 	WorkerID                         string
 	QueuedAt, StartedAt, CompletedAt *time.Time
 	NextRetryAt                      *time.Time
@@ -44,7 +48,8 @@ type TaskPatch struct {
 }
 
 // TransitionTask moves task id to `to` and applies p in one statement, only if
-// the row is in one of models.TaskFrom(to) and its retry_count equals attempt.
+// the row is in one of models.TaskFrom(to), its retry_count equals attempt,
+// and, when p.ExpectWorkerID is set, its worker_id equals that.
 // attempt < 0 skips the retry_count guard (cancel, recovery). It returns the
 // updated row, ErrConflict when no row matched, or ErrInvalidTransition when
 // `to` is not a transition target.
@@ -100,9 +105,10 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 			logs          = (CASE WHEN jsonb_typeof(logs) = 'array' THEN logs ELSE '[]'::jsonb END) || $12::jsonb,
 			artifacts_out = COALESCE($13::jsonb, artifacts_out)
 		WHERE id = $1 AND status = ANY($14) AND ($3::int < 0 OR retry_count = $3::int)
+		  AND ($15::text = '' OR worker_id = $15::text)
 		RETURNING `+taskColumns,
 		id, string(to), attempt, workerID, p.QueuedAt, p.StartedAt, p.CompletedAt,
-		p.NextRetryAt, p.RetryCount, p.Error, output, logs, artifactsOut, fromText)
+		p.NextRetryAt, p.RetryCount, p.Error, output, logs, artifactsOut, fromText, p.ExpectWorkerID)
 
 	task, err := scanTaskExecution(row)
 	if errors.Is(err, pgx.ErrNoRows) {
