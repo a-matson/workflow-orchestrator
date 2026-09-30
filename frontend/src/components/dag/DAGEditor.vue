@@ -296,7 +296,8 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, markRaw, nextTick } from 'vue'
+	import { ref, markRaw, nextTick, onMounted, onBeforeUnmount } from 'vue'
+	import { onBeforeRouteLeave } from 'vue-router'
 	import { VueFlow, Panel, useVueFlow } from '@vue-flow/core'
 	import { Background } from '@vue-flow/background'
 	import { Controls } from '@vue-flow/controls'
@@ -376,6 +377,29 @@
 		},
 	])
 	const edges = ref<DAGEdge[]>([])
+
+	// Compared by content, not a watcher flag: Vue Flow rewrites node dimensions and
+	// selection after mount and on load, and those must not count as edits.
+	const contentKey = () =>
+		JSON.stringify([
+			workflowName.value,
+			nodes.value.map((n) => n.data.taskDef),
+			edges.value.map((e) => [e.source, e.target]),
+		])
+	let cleanKey = contentKey()
+	const markClean = () => {
+		cleanKey = contentKey()
+	}
+	const isDirty = () => contentKey() !== cleanKey
+
+	onBeforeRouteLeave(
+		() => !isDirty() || window.confirm('Discard unsaved changes to this workflow?'),
+	)
+	const warnOnUnload = (e: BeforeUnloadEvent) => {
+		if (isDirty()) e.preventDefault()
+	}
+	onMounted(() => window.addEventListener('beforeunload', warnOnUnload))
+	onBeforeUnmount(() => window.removeEventListener('beforeunload', warnOnUnload))
 
 	// ── Helpers ────────────────────────────────────────────────────
 	function nodeLabel(id: string) {
@@ -666,6 +690,7 @@
 				result = await store.createDefinition(def)
 				savedWorkflowId.value = result.id
 			}
+			markClean()
 			showBanner('success', `✓ Saved "${result.name}"`)
 		} catch {
 			showBanner('error', 'Save failed — check backend connection')
@@ -707,6 +732,7 @@
 					animated: false,
 				})),
 			)
+			markClean()
 			nextTick(() => fitView({ padding: 0.2 }))
 		},
 		resetToEmpty() {
@@ -740,6 +766,7 @@
 			savedWorkflowId.value = null
 			loadedDef.value = null
 			selectedNode.value = null
+			markClean()
 		},
 	})
 </script>
