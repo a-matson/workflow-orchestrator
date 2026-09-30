@@ -153,10 +153,12 @@ type TaskExecution struct {
 
 // LogEntry represents a single log line from a task execution
 type LogEntry struct {
-	Timestamp time.Time      `json:"timestamp"`
-	Level     string         `json:"level"`
-	Message   string         `json:"message"`
-	Fields    map[string]any `json:"fields,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"`
+	// Attempt is the retry_count that produced the entry: the row's logs span every attempt.
+	Attempt int            `json:"attempt"`
+	Message string         `json:"message"`
+	Fields  map[string]any `json:"fields,omitempty"`
 }
 
 // TaskMessage is what gets enqueued in Redis for workers

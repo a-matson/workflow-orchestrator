@@ -26,10 +26,6 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 )
 
-// maxNotifyResponse bounds a notification endpoint's reply, which is only used
-// in an error message; a hostile webhook could otherwise stream until timeout.
-const maxNotifyResponse = 64 << 10
-
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
 // Using an interface avoids a circular import.
 type TaskNotifier interface {
@@ -48,6 +44,7 @@ type Worker struct {
 	concurrency int
 	semaphore   chan struct{}
 	guard       *egress.Guard
+	limits      Limits
 	httpClient  *http.Client // guarded: every task-initiated request goes through the egress guard
 }
 
@@ -84,6 +81,14 @@ func NewPool(
 		log.Warn().Err(execErr).Msg("container runtime unavailable: data_transform, generic and ml_inference tasks will fail; restart the backend once Docker and MinIO are reachable")
 	}
 
+	limits, err := LimitsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if executor != nil {
+		executor.limits = limits
+	}
+
 	httpClient := guard.HTTPClient(60 * time.Second)
 	workers := make([]*Worker, workerCount)
 	for i := 0; i < workerCount; i++ {
@@ -95,6 +100,7 @@ func NewPool(
 			concurrency: concurrencyPerWorker,
 			semaphore:   make(chan struct{}, concurrencyPerWorker),
 			guard:       guard,
+			limits:      limits,
 			httpClient:  httpClient,
 		}
 	}
@@ -204,19 +210,21 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 
 	taskLogger.Info().Msg("executing task")
 
-	var logs []models.LogEntry
+	logs := newBoundedLogs(w.limits.logs())
 	addLog := func(level, message string, fields map[string]any) {
 		entry := models.LogEntry{
 			Timestamp: time.Now(),
 			Level:     level,
+			Attempt:   msg.RetryCount,
 			Message:   message,
 			Fields:    fields,
 		}
-		logs = append(logs, entry)
 
 		// Broadcast immediately so the UI streams output in real time
-		if w.notifier != nil {
-			w.notifier.StreamLog(msg.WorkflowExecID, msg.TaskExecID, msg.TaskName, entry)
+		for _, e := range logs.add(entry) {
+			if w.notifier != nil {
+				w.notifier.StreamLog(msg.WorkflowExecID, msg.TaskExecID, msg.TaskName, e)
+			}
 		}
 	}
 
@@ -267,7 +275,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 			"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
 		})
 	}
-	result.Logs = logs
+	result.Logs = logs.entries
 
 	if err := w.redis.PublishResult(ctx, result); err != nil {
 		log.Error().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to publish result")
@@ -433,11 +441,15 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 		}
 	}()
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, truncated, err := readCapped(resp.Body, w.limits.output())
+	if err != nil {
+		return nil, fmt.Errorf("http_request: read response: %w", withoutURL(err))
+	}
 
 	addLog("info", fmt.Sprintf("← %d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), map[string]any{
 		"status":         resp.StatusCode,
 		"response_bytes": len(respBody),
+		"truncated":      truncated,
 	})
 
 	if resp.StatusCode >= 400 {
@@ -452,6 +464,7 @@ func (w *Worker) execHTTP(ctx context.Context, msg *models.TaskMessage, addLog l
 		"status":         resp.StatusCode,
 		"response_bytes": len(respBody),
 		"body":           parsedBody,
+		"truncated":      truncated,
 	}, nil
 }
 
@@ -550,9 +563,11 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 
 	cols, _ := rows.Columns()
 	var results []map[string]any
+	truncated := false
 	for rows.Next() {
 		if len(results) >= maxRows {
-			addLog("warn", fmt.Sprintf("max_rows limit (%d) reached", maxRows), nil)
+			truncated = true
+			addLog("warn", fmt.Sprintf("max_rows limit (%d) reached; more rows exist", maxRows), nil)
 			break
 		}
 		vals := make([]any, len(cols))
@@ -578,7 +593,7 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 	}
 
 	addLog("info", "Query complete", map[string]any{"rows": len(results), "columns": cols})
-	return map[string]any{"rows": results, "columns": cols, "row_count": len(results)}, nil
+	return map[string]any{"rows": results, "columns": cols, "row_count": len(results), "truncated": truncated}, nil
 }
 
 // ─── Notification ─────────────────────────────────────────────────────────────
@@ -629,9 +644,9 @@ func (w *Worker) notifySlack(ctx context.Context, webhookURL, message string, ad
 			log.Warn().Err(closeErr).Msg("failed to close response body")
 		}
 	}()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxNotifyResponse))
+	raw := remoteBody(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("slack: %d %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("slack: %d %s", resp.StatusCode, raw)
 	}
 	addLog("info", "Slack delivered", nil)
 	return map[string]any{"delivered": true}, nil
@@ -677,9 +692,9 @@ func (w *Worker) notifyPagerDuty(ctx context.Context, routingKey, message string
 			log.Warn().Err(closeErr).Msg("failed to close response body")
 		}
 	}()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxNotifyResponse))
+	raw := remoteBody(resp.Body)
 	if resp.StatusCode != http.StatusAccepted {
-		return nil, fmt.Errorf("pagerduty: %d %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("pagerduty: %d %s", resp.StatusCode, raw)
 	}
 	addLog("info", "PagerDuty triggered", nil)
 	return map[string]any{"delivered": true}, nil
@@ -705,9 +720,9 @@ func (w *Worker) notifyWebhook(ctx context.Context, url, message string, addLog 
 			log.Warn().Err(closeErr).Msg("failed to close response body")
 		}
 	}()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxNotifyResponse))
+	raw := remoteBody(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("webhook: %d %s", resp.StatusCode, truncate(string(raw), 200))
+		return nil, fmt.Errorf("webhook: %d %s", resp.StatusCode, truncate(raw, 200))
 	}
 	addLog("info", "Webhook delivered", map[string]any{"status": resp.StatusCode})
 	return map[string]any{"delivered": true, "status": resp.StatusCode}, nil

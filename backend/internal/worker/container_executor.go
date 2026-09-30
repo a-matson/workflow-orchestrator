@@ -19,7 +19,6 @@ package worker
 //                 to MinIO. Keys are: artifacts/{execID}/{taskDefID}/{path}
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,7 +31,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	dockerclient "github.com/moby/moby/client"
@@ -81,6 +79,7 @@ type ContainerExecutor struct {
 	storage          artifactStore
 	workspace        Workspace
 	maxArtifactBytes int64
+	limits           Limits
 }
 
 // DefaultMaxArtifactBytes caps one artifact when FLUXOR_MAX_ARTIFACT_BYTES is unset.
@@ -409,23 +408,7 @@ func (ce *ContainerExecutor) collectLogs(ctx context.Context, containerID string
 	}
 	defer func() { _ = reader.Close() }()
 
-	// Docker log stream is multiplexed: stdout and stderr share one TCP
-	// connection with 8-byte frame headers (stream type + payload length).
-	// stdcopy.StdCopy strips the headers and writes clean text to the buffers.
-	var outBuf, errBuf bytes.Buffer
-	if _, err := stdcopy.StdCopy(&outBuf, &errBuf, reader); err != nil {
-		// Fall back to raw copy if StdCopy fails (e.g., TTY mode)
-		_ = reader.Close()
-		return outBuf.String() + errBuf.String(), nil
-	}
-	combined := outBuf.String()
-	if errBuf.Len() > 0 {
-		if combined != "" {
-			combined += "\n"
-		}
-		combined += errBuf.String()
-	}
-	return combined, nil
+	return readContainerLogs(reader, ce.limits.output())
 }
 
 // ── Artifact download ─────────────────────────────────────────────────────────
