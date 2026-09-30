@@ -30,42 +30,48 @@ func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *
 	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc}
 }
 
+// Routes registers every endpoint on a fresh mux, without the middleware chain.
 func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
-
-	// Workflow definitions
-	mux.HandleFunc("POST /api/workflows", h.CreateWorkflow)
-	mux.HandleFunc("GET /api/workflows", h.ListWorkflows)
-	mux.HandleFunc("GET /api/workflows/{id}", h.GetWorkflow)
-	mux.HandleFunc("PUT /api/workflows/{id}", h.UpdateWorkflow)
-
-	// Workflow executions
-	mux.HandleFunc("POST /api/workflows/{id}/trigger", h.TriggerWorkflow)
-	mux.HandleFunc("GET /api/executions", h.ListExecutions)
-	mux.HandleFunc("GET /api/executions/{id}", h.GetExecution)
-	mux.HandleFunc("POST /api/executions/{id}/cancel", h.CancelExecution)
-	mux.HandleFunc("POST /api/executions/{id}/retry", h.RetryExecution)
-
-	// Task executions
-	mux.HandleFunc("GET /api/executions/{execID}/tasks", h.ListTasks)
-	mux.HandleFunc("GET /api/tasks/{id}", h.GetTask)
-	mux.HandleFunc("GET /api/tasks/{id}/logs", h.GetTaskLogs)
-
-	// System
-	mux.HandleFunc("GET /api/metrics", h.GetMetrics)
-	mux.HandleFunc("GET /api/health", h.Health)
-	mux.HandleFunc("GET /api/ready", h.Ready)
-
-	// Artifacts
-	mux.HandleFunc("GET /api/tasks/{id}/artifacts", h.ListTaskArtifacts)
-	mux.HandleFunc("GET /api/artifacts/url", h.GetArtifactURL)
-
-	// WebSocket
-	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		h.hub.ServeWS(w, r)
-	})
-
+	for pattern, fn := range h.routes() {
+		mux.HandleFunc(pattern, fn)
+	}
 	return mux
+}
+
+// routes is the single list of endpoints, so the auth policy test can check
+// every pattern against routePolicy.
+func (h *Handler) routes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		// Workflow definitions
+		"POST /api/workflows":     h.CreateWorkflow,
+		"GET /api/workflows":      h.ListWorkflows,
+		"GET /api/workflows/{id}": h.GetWorkflow,
+		"PUT /api/workflows/{id}": h.UpdateWorkflow,
+
+		// Workflow executions
+		"POST /api/workflows/{id}/trigger": h.TriggerWorkflow,
+		"GET /api/executions":              h.ListExecutions,
+		"GET /api/executions/{id}":         h.GetExecution,
+		"POST /api/executions/{id}/cancel": h.CancelExecution,
+		"POST /api/executions/{id}/retry":  h.RetryExecution,
+
+		// Task executions
+		"GET /api/executions/{execID}/tasks": h.ListTasks,
+		"GET /api/tasks/{id}":                h.GetTask,
+		"GET /api/tasks/{id}/logs":           h.GetTaskLogs,
+
+		// System
+		"GET /api/metrics": h.GetMetrics,
+		"GET /api/health":  h.Health,
+		"GET /api/ready":   h.Ready,
+
+		// Artifacts
+		"GET /api/tasks/{id}/artifacts": h.ListTaskArtifacts,
+		"GET /api/artifacts/url":        h.GetArtifactURL,
+
+		"GET /ws": func(w http.ResponseWriter, r *http.Request) { h.hub.ServeWS(w, r) },
+	}
 }
 
 // ==================== Workflow Definitions ====================
