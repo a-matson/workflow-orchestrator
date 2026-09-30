@@ -97,8 +97,8 @@
 						placeholder="SELECT *&#10;FROM events&#10;WHERE created_at >= NOW() - INTERVAL '1 day'"
 						rows="6"
 						spellcheck="false"
-						@input="patch('query', ($event.target as HTMLTextAreaElement).value)"
 						data-testid="cfg-query"
+						@input="patch('query', ($event.target as HTMLTextAreaElement).value)"
 					/>
 				</div>
 			</div>
@@ -113,66 +113,6 @@
 						:value="(cfg.max_rows as number) ?? 10000"
 						@change="patch('max_rows', +($event.target as HTMLInputElement).value)"
 					/>
-				</div>
-			</div>
-		</template>
-
-		<!-- ── Data Transform ────────────────────────────────────────── -->
-		<template v-else-if="type === 'data_transform'">
-			<div class="field-row">
-				<div class="field" style="flex: 1">
-					<label>Input Format</label>
-					<select
-						data-testid="cfg-input_format"
-						class="cf-input"
-						:value="(cfg.input_format as string) ?? 'json'"
-						@change="patch('input_format', ($event.target as HTMLSelectElement).value)"
-					>
-						<option v-for="f in ['json', 'csv', 'parquet', 'avro', 'text']" :key="f" :value="f">
-							{{ f }}
-						</option>
-					</select>
-				</div>
-				<div class="field" style="flex: 1">
-					<label>Output Format</label>
-					<select
-						data-testid="cfg-output_format"
-						class="cf-input"
-						:value="(cfg.output_format as string) ?? 'json'"
-						@change="patch('output_format', ($event.target as HTMLSelectElement).value)"
-					>
-						<option v-for="f in ['json', 'csv', 'parquet', 'avro', 'text']" :key="f" :value="f">
-							{{ f }}
-						</option>
-					</select>
-				</div>
-			</div>
-			<div class="field">
-				<div class="code-editor-header">
-					<label>Transform Script</label>
-					<div class="editor-actions">
-						<span class="editor-hint">shell command — reads stdin, writes stdout</span>
-					</div>
-				</div>
-				<div class="code-editor-wrap">
-					<div class="code-line-numbers" aria-hidden="true">
-						<span v-for="n in scriptLines" :key="n">{{ n }}</span>
-					</div>
-					<textarea
-						class="cf-input cf-textarea cf-code code-editor-ta"
-						:value="cfg.script as string"
-						placeholder="jq '. | map(select(.active))' /workspace/input.json > /workspace/output.json"
-						rows="7"
-						spellcheck="false"
-						@input="patch('script', ($event.target as HTMLTextAreaElement).value)"
-						data-testid="cfg-script"
-					/>
-				</div>
-				<div class="editor-footer">
-					<span class="footer-hint"
-						>💡 Files from artifact inputs are available at
-						<code>/workspace/&lt;path&gt;</code></span
-					>
 				</div>
 			</div>
 		</template>
@@ -271,7 +211,7 @@
 		</template>
 
 		<!-- ── Generic / Shell ───────────────────────────────────────── -->
-		<template v-else>
+		<template v-else-if="type !== 'data_transform'">
 			<div class="field">
 				<div class="code-editor-header">
 					<label>Command</label>
@@ -306,6 +246,45 @@
 					/>
 				</div>
 			</div>
+			<div class="editor-footer">
+				<span class="footer-hint"
+					>💡 Workspace artifacts available at <code>/workspace/&lt;path&gt;</code></span
+				>
+			</div>
+		</template>
+
+		<!-- Code tasks always run in a container; env is read by every one of them. -->
+		<template v-if="type === 'generic' || type === 'data_transform'">
+			<div class="field">
+				<div class="code-editor-header">
+					<label>Script</label>
+					<div class="editor-actions">
+						<span class="editor-hint">shell command — reads stdin, writes stdout</span>
+					</div>
+				</div>
+				<div class="code-editor-wrap">
+					<div class="code-line-numbers" aria-hidden="true">
+						<span v-for="n in scriptLines" :key="n">{{ n }}</span>
+					</div>
+					<textarea
+						class="cf-input cf-textarea cf-code code-editor-ta"
+						:value="cfg.script as string"
+						placeholder="jq '. | map(select(.active))' /workspace/input.json > /workspace/output.json"
+						rows="7"
+						spellcheck="false"
+						data-testid="cfg-script"
+						@input="patch('script', ($event.target as HTMLTextAreaElement).value)"
+					/>
+				</div>
+				<div class="editor-footer">
+					<span class="footer-hint"
+						>💡 Files from artifact inputs are available at
+						<code>/workspace/&lt;path&gt;</code></span
+					>
+				</div>
+			</div>
+		</template>
+		<template v-if="isCode">
 			<div class="field">
 				<div class="code-editor-header">
 					<label>Environment Variables</label>
@@ -326,17 +305,13 @@
 					/>
 				</div>
 			</div>
-			<div class="editor-footer">
-				<span class="footer-hint"
-					>💡 Workspace artifacts available at <code>/workspace/&lt;path&gt;</code></span
-				>
-			</div>
 		</template>
 	</div>
 </template>
 
 <script setup lang="ts">
 	import { computed } from 'vue'
+	import { runsUserCode } from '../../types'
 
 	const props = defineProps<{
 		type: string
@@ -348,6 +323,7 @@
 	}>()
 
 	const cfg = computed(() => props.config)
+	const isCode = computed(() => runsUserCode(props.type))
 
 	function patch(key: string, value: unknown) {
 		emit('update', { ...props.config, [key]: value })

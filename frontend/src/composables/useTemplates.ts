@@ -20,7 +20,11 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Ingest Raw Data',
 				type: 'database_query',
 				dependencies: [],
-				config: { table: 'raw_events', limit: 100000 },
+				config: {
+					connection_string: 'postgres://user:pass@host:5432/db',
+					query: 'SELECT * FROM raw_events',
+					max_rows: 100000,
+				},
 				retry_policy: {
 					max_retries: 3,
 					initial_delay: 2e9,
@@ -35,7 +39,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Validate Schema',
 				type: 'data_transform',
 				dependencies: ['ingest-raw'],
-				config: { schema: 'events_v2', strict: true },
+				config: { script: 'echo validating against events_v2' },
 				retry_policy: {
 					max_retries: 2,
 					initial_delay: 1e9,
@@ -50,7 +54,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Clean & Deduplicate',
 				type: 'data_transform',
 				dependencies: ['validate-schema'],
-				config: { dedup_key: 'event_id', drop_nulls: true },
+				config: { script: 'echo deduplicating on event_id' },
 				timeout: 180e9,
 			},
 			{
@@ -73,7 +77,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Apply Business Rules',
 				type: 'data_transform',
 				dependencies: ['clean-dedupe', 'enrich-geo'],
-				config: { rules_version: 'v4' },
+				config: { script: 'echo applying business rules v4' },
 				timeout: 300e9,
 			},
 			{
@@ -81,7 +85,10 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Load to Warehouse',
 				type: 'database_query',
 				dependencies: ['apply-transform'],
-				config: { target: 'analytics.events', mode: 'upsert' },
+				config: {
+					connection_string: 'postgres://user:pass@host:5432/db',
+					query: 'INSERT INTO analytics.events SELECT * FROM staging_events',
+				},
 				retry_policy: {
 					max_retries: 3,
 					initial_delay: 5e9,
@@ -96,7 +103,11 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Send Completion Report',
 				type: 'notification',
 				dependencies: ['apply-transform'],
-				config: { channel: '#data-team', template: 'etl_complete' },
+				config: {
+					notify_type: 'slack',
+					channel: 'https://hooks.slack.com/services/REPLACE_ME',
+					message: 'ETL pipeline complete',
+				},
 				timeout: 30e9,
 			},
 		],
@@ -115,7 +126,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Fetch Dataset',
 				type: 'http_request',
 				dependencies: [],
-				config: { url: 'https://data.internal/datasets/latest', format: 'parquet' },
+				config: { url: 'https://data.internal/datasets/latest', method: 'GET' },
 				timeout: 600e9,
 			},
 			{
@@ -123,7 +134,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Feature Engineering',
 				type: 'data_transform',
 				dependencies: ['fetch-dataset'],
-				config: { normalize: true, fill_strategy: 'median' },
+				config: { script: 'echo normalising features' },
 				timeout: 900e9,
 			},
 			{
@@ -131,7 +142,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Train / Val Split',
 				type: 'generic',
 				dependencies: ['preprocess'],
-				config: { train_ratio: 0.8, seed: 42, stratified: true },
+				config: { script: 'echo splitting 80/20' },
 				timeout: 120e9,
 			},
 			{
@@ -139,7 +150,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Train Model',
 				type: 'ml_inference',
 				dependencies: ['train-val-split'],
-				config: { model: 'xgboost', epochs: 100, early_stopping: 10 },
+				config: { model_name: 'train-xgboost', batch_size: 100 },
 				retry_policy: {
 					max_retries: 2,
 					initial_delay: 30e9,
@@ -154,7 +165,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Evaluate on Val Set',
 				type: 'ml_inference',
 				dependencies: ['train-model'],
-				config: { metrics: ['auc', 'f1', 'precision', 'recall'] },
+				config: { model_name: 'evaluate-model', output_path: '/workspace/metrics.json' },
 				timeout: 600e9,
 			},
 			{
@@ -162,7 +173,11 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Register in Model Registry',
 				type: 'http_request',
 				dependencies: ['evaluate'],
-				config: { registry: 'mlflow', stage: 'staging' },
+				config: {
+					url: 'https://mlflow.internal/api/2.0/mlflow/model-versions/create',
+					method: 'POST',
+					body: '{"name": "model"}',
+				},
 				timeout: 120e9,
 			},
 			{
@@ -170,7 +185,11 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Deploy Canary (5%)',
 				type: 'http_request',
 				dependencies: ['register-model'],
-				config: { traffic_split: 5, env: 'production' },
+				config: {
+					url: 'https://deploy.internal/canary',
+					method: 'POST',
+					body: '{"traffic_split": 5}',
+				},
 				timeout: 300e9,
 			},
 			{
@@ -178,7 +197,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Configure Drift Monitoring',
 				type: 'generic',
 				dependencies: ['deploy-canary'],
-				config: { alert_threshold: 0.05, window: '1h' },
+				config: { script: 'echo configuring drift monitoring' },
 				timeout: 60e9,
 			},
 		],
@@ -197,7 +216,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Checkout & Dependencies',
 				type: 'generic',
 				dependencies: [],
-				config: { ref: 'main', install: true },
+				config: { script: 'git checkout main && npm ci' },
 				timeout: 120e9,
 			},
 			{
@@ -213,7 +232,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Unit Tests',
 				type: 'generic',
 				dependencies: ['checkout'],
-				config: { coverage_threshold: 80 },
+				config: { script: 'npm test -- --coverage' },
 				timeout: 180e9,
 			},
 			{
@@ -221,7 +240,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Build Docker Image',
 				type: 'generic',
 				dependencies: ['lint', 'unit-tests'],
-				config: { dockerfile: 'Dockerfile', platform: 'linux/amd64' },
+				config: { script: 'docker build -t app .' },
 				timeout: 300e9,
 			},
 			{
@@ -229,7 +248,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Security Scan (Trivy)',
 				type: 'http_request',
 				dependencies: ['build-image'],
-				config: { scanner: 'trivy', severity: 'HIGH,CRITICAL' },
+				config: { url: 'https://scanner.internal/scan', method: 'POST' },
 				timeout: 180e9,
 			},
 			{
@@ -237,7 +256,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Push to Registry',
 				type: 'http_request',
 				dependencies: ['security-scan'],
-				config: { registry: 'ghcr.io', tag_latest: true },
+				config: { url: 'https://registry.internal/push', method: 'POST' },
 				timeout: 120e9,
 			},
 			{
@@ -245,7 +264,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Deploy to Staging',
 				type: 'http_request',
 				dependencies: ['push-registry'],
-				config: { env: 'staging', strategy: 'rolling', max_surge: 1 },
+				config: { url: 'https://deploy.internal/staging', method: 'POST' },
 				timeout: 300e9,
 			},
 			{
@@ -253,7 +272,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Integration Tests',
 				type: 'generic',
 				dependencies: ['deploy-staging'],
-				config: { suite: 'smoke', parallel: 4 },
+				config: { script: 'echo running smoke suite' },
 				timeout: 600e9,
 			},
 			{
@@ -261,7 +280,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Deploy to Production',
 				type: 'http_request',
 				dependencies: ['integration-tests'],
-				config: { env: 'production', strategy: 'blue-green' },
+				config: { url: 'https://deploy.internal/production', method: 'POST' },
 				timeout: 600e9,
 			},
 			{
@@ -269,7 +288,11 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Notify Engineering Team',
 				type: 'notification',
 				dependencies: ['deploy-prod'],
-				config: { channel: '#deployments', include_diff: true },
+				config: {
+					notify_type: 'slack',
+					channel: 'https://hooks.slack.com/services/REPLACE_ME',
+					message: 'Deployed to production',
+				},
 				timeout: 30e9,
 			},
 		],
@@ -312,7 +335,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Aggregate KPIs',
 				type: 'data_transform',
 				dependencies: ['fetch-revenue', 'fetch-users', 'fetch-infra'],
-				config: { output_format: 'json' },
+				config: { script: 'echo summarising' },
 				timeout: 60e9,
 			},
 			{
@@ -320,7 +343,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Generate Charts',
 				type: 'ml_inference',
 				dependencies: ['aggregate-kpis'],
-				config: { renderer: 'matplotlib', format: 'png', dpi: 150 },
+				config: { model_name: 'render-charts', output_path: '/workspace/charts.png' },
 				timeout: 120e9,
 			},
 			{
@@ -328,7 +351,7 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Compile PDF Report',
 				type: 'data_transform',
 				dependencies: ['generate-charts'],
-				config: { template: 'executive_summary_v2', pages: 8 },
+				config: { script: 'echo building executive summary' },
 				timeout: 60e9,
 			},
 			{
@@ -336,7 +359,11 @@ export const WORKFLOW_TEMPLATES: Array<
 				name: 'Email Stakeholders',
 				type: 'notification',
 				dependencies: ['compile-report'],
-				config: { recipients: ['ceo@acme.com', 'cto@acme.com'], subject: 'Daily KPI Report' },
+				config: {
+					notify_type: 'email',
+					channel: 'ceo@acme.com',
+					message: 'Daily KPI report is ready',
+				},
 				timeout: 30e9,
 			},
 		],
