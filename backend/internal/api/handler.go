@@ -111,6 +111,8 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST /api/keys":        h.CreateAPIKey,
 		"DELETE /api/keys/{id}": h.RevokeAPIKey,
 
+		"GET /api/audit": h.ListAudit,
+
 		// Browser session
 		"POST /api/session":   h.CreateSession,
 		"GET /api/session":    h.GetSession,
