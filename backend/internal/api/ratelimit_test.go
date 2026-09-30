@@ -148,3 +148,31 @@ func TestRateLimit_GatewayIsNotAProxy(t *testing.T) {
 		t.Fatalf("keyed on %s, want the gateway hop nginx observed", got)
 	}
 }
+
+func TestRateLimit_IPv6SharesBucketPer64(t *testing.T) {
+	h := NewRateLimiter(3, time.Minute).Middleware(okHandler)
+	var last int
+	for _, r := range []string{"[2001:db8:1:2::1]:1", "[2001:db8:1:2::2]:1", "[2001:db8:1:2::3]:1", "[2001:db8:1:2:ffff::4]:1"} {
+		last = send(h, "GET", "/api/x", r, "").Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("hosts in one /64 must share a bucket, got %d", last)
+	}
+}
+
+// Guards the Server() wiring: the configured budgets must reach the limiters.
+func TestServer_UsesConfiguredRateLimits(t *testing.T) {
+	srv := NewHandler(nil, nil, nil, NewHub(), nil).WithRateLimits(100, 2).Server(nil)
+	var codes []int
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "http://localhost/api/session", nil)
+		req.RemoteAddr = "192.0.2.1:1"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		codes = append(codes, rec.Code)
+	}
+	if codes[2] != http.StatusTooManyRequests || codes[1] == http.StatusTooManyRequests {
+		t.Fatalf("login codes %v: want the 3rd request, and only it, limited", codes)
+	}
+}

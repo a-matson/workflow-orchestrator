@@ -314,20 +314,29 @@ func (rl *RateLimiter) clientIP(r *http.Request) string {
 	}
 	client := peer.Addr().Unmap()
 	if !rl.trusts(client) {
-		return client.String()
+		return bucketKey(client)
 	}
 	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
 	for i := len(hops) - 1; i >= 0; i-- {
 		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
 		if err != nil {
-			break // a malformed hop cannot be attributed; fall back to the proxy
+			break // a malformed hop cannot be attributed; keep the nearest trusted hop seen so far
 		}
 		client = a.Unmap()
 		if !rl.trusts(client) {
 			break
 		}
 	}
-	return client.String()
+	return bucketKey(client)
+}
+
+// bucketKey collapses IPv6 to its /64, the smallest unit an ISP hands a
+// subscriber; per-/128 keys would give one host 2^64 budgets.
+func bucketKey(a netip.Addr) string {
+	if a.Is6() {
+		return netip.PrefixFrom(a, 64).Masked().String()
+	}
+	return a.String()
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {

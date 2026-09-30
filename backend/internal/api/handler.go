@@ -27,13 +27,16 @@ type Handler struct {
 	storage      *storage.Client
 	session      SessionConfig
 	trusted      []netip.Prefix
+	generalLimit int // requests per minute per client IP
+	loginLimit   int // POST /api/session per minute per client IP
 }
 
 // NewHandler returns a Handler whose session secret is random, so sessions
 // last only as long as the process; production sets one with WithSession.
 func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub, sc *storage.Client) *Handler {
 	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc,
-		session: SessionConfig{Secret: RandomSessionSecret()}}
+		session:      SessionConfig{Secret: RandomSessionSecret()},
+		generalLimit: 200, loginLimit: 10}
 }
 
 // WithSession replaces the session cookie configuration.
@@ -46,6 +49,12 @@ func (h *Handler) WithSession(cfg SessionConfig) *Handler {
 // limiter believes.
 func (h *Handler) WithTrustedProxies(p []netip.Prefix) *Handler {
 	h.trusted = p
+	return h
+}
+
+// WithRateLimits sets the per-minute budgets of the general API and of login.
+func (h *Handler) WithRateLimits(general, login int) *Handler {
+	h.generalLimit, h.loginLimit = general, login
 	return h
 }
 
