@@ -264,7 +264,13 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		// Back to pending, retries included: queued -> retrying is not a
 		// transition, and a pending row whose dependencies completed is
 		// ready again at the next dispatch with its retry_count kept.
-		back, err := o.store.TransitionTask(ctx, taskExec.ID, taskExec.RetryCount, models.TaskStatusPending, persistence.TaskPatch{})
+		// Detached: DispatchDue passes the poller's context, and a shutdown
+		// that cancels it between the queued write and the push would
+		// otherwise fail the rollback too and strand the row across the
+		// restart.
+		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		back, err := o.store.TransitionTask(rbCtx, taskExec.ID, taskExec.RetryCount, models.TaskStatusPending, persistence.TaskPatch{})
 		if err != nil {
 			// Shortcut: the row stays queued with no message, and nothing
 			// re-drives it until the timeout reaper (plan row R17) exists.
