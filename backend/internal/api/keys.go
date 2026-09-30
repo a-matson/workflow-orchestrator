@@ -30,8 +30,9 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || !ValidRole(req.Role) {
-		writeError(w, r, http.StatusBadRequest, "name is required and role must be admin, operator or viewer", nil)
+	// The name is logged on every request as key_name, so keep it short.
+	if req.Name == "" || len(req.Name) > 100 || !ValidRole(req.Role) {
+		writeError(w, r, http.StatusBadRequest, "name must be 1-100 bytes and role admin, operator or viewer", nil)
 		return
 	}
 	plaintext, key, err := h.store.CreateAPIKey(r.Context(), req.Name, req.Role)
