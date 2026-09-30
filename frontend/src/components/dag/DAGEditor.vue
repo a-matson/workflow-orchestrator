@@ -392,9 +392,9 @@
 	}
 	const isDirty = () => contentKey() !== cleanKey
 
-	onBeforeRouteLeave(
-		() => !isDirty() || window.confirm('Discard unsaved changes to this workflow?'),
-	)
+	const confirmDiscard = () =>
+		!isDirty() || window.confirm('Discard unsaved changes to this workflow?')
+	onBeforeRouteLeave(confirmDiscard)
 	const warnOnUnload = (e: BeforeUnloadEvent) => {
 		if (isDirty()) e.preventDefault()
 	}
@@ -712,6 +712,7 @@
 
 	// ── Expose for parent (e.g. BuilderPage loading an existing wf) ─
 	defineExpose({
+		confirmDiscard,
 		loadWorkflow(wf: WorkflowDefinition) {
 			const { name, tasks, id } = wf
 			loadedDef.value = wf
