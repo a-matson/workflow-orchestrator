@@ -8,6 +8,11 @@
 networks:
   fluxor-internal:
     driver: bridge
+    # Fixed so FLUXOR_TRUSTED_PROXIES can name it: nginx (frontend) reaches the
+    # backend over this network, and without trust every client shares its IP.
+    ipam:
+      config:
+        - subnet: 172.29.250.0/24
   fluxor-tasks:
     driver: bridge
     internal: true   # task containers have no external routing
@@ -111,6 +116,8 @@ services:
       FLUXOR_SESSION_SECRET: ${FLUXOR_SESSION_SECRET:-}
       # "true" behind a TLS-terminating proxy, so the cookie is marked Secure.
       FLUXOR_COOKIE_SECURE: ${FLUXOR_COOKIE_SECURE:-false}
+      # The frontend's nginx sets X-Forwarded-For; trust it from the compose network only.
+      FLUXOR_TRUSTED_PROXIES: ${FLUXOR_TRUSTED_PROXIES:-172.29.250.0/24}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker-out-of-Docker
       - task_workspaces:/workspaces

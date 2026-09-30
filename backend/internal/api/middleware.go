@@ -3,12 +3,15 @@ package api
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"math"
 	"mime"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -226,6 +229,7 @@ type RateLimiter struct {
 	rate    int           // requests per window
 	window  time.Duration // time window
 	cleanup time.Duration
+	trusted []netip.Prefix
 }
 
 type tokenBucket struct {
@@ -244,14 +248,16 @@ func NewRateLimiter(rate int, window time.Duration) *RateLimiter {
 	return rl
 }
 
-func (rl *RateLimiter) Allow(ip string) bool {
+// Allow reports whether ip may proceed; when it may not, wait is how long
+// until its window resets.
+func (rl *RateLimiter) Allow(ip string) (ok bool, wait time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	bucket, ok := rl.clients[ip]
-	if !ok {
+	bucket, found := rl.clients[ip]
+	if !found {
 		rl.clients[ip] = &tokenBucket{tokens: rl.rate - 1, lastReset: time.Now()}
-		return true
+		return true, 0
 	}
 
 	if time.Since(bucket.lastReset) >= rl.window {
@@ -260,21 +266,74 @@ func (rl *RateLimiter) Allow(ip string) bool {
 	}
 
 	if bucket.tokens <= 0 {
-		return false
+		return false, rl.window - time.Since(bucket.lastReset)
 	}
 	bucket.tokens--
-	return true
+	return true, 0
+}
+
+// WithTrustedProxies makes the limiter believe X-Forwarded-For from peers
+// inside these prefixes; from anyone else the header is client-controlled.
+func (rl *RateLimiter) WithTrustedProxies(p []netip.Prefix) *RateLimiter {
+	rl.trusted = p
+	return rl
+}
+
+// ParseTrustedProxies parses a comma-separated CIDR list; empty means none.
+func ParseTrustedProxies(s string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(f)
+		if err != nil {
+			return nil, fmt.Errorf("trusted proxy %q: %w", f, err)
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
+}
+
+func (rl *RateLimiter) trusts(a netip.Addr) bool {
+	for _, p := range rl.trusted {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP keys on the peer's IP, never ip:port, or every new connection
+// would get a fresh budget. XFF is walked right to left past trusted proxies:
+// entries left of the first untrusted hop are supplied by the client.
+func (rl *RateLimiter) clientIP(r *http.Request) string {
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	client := peer.Addr().Unmap()
+	if !rl.trusts(client) {
+		return client.String()
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break // a malformed hop cannot be attributed; fall back to the proxy
+		}
+		client = a.Unmap()
+		if !rl.trusts(client) {
+			break
+		}
+	}
+	return client.String()
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			ip = xff
-		}
-
-		if !rl.Allow(ip) {
-			w.Header().Set("Retry-After", "1")
+		if ok, wait := rl.Allow(rl.clientIP(r)); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 			return
 		}
@@ -282,12 +341,19 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// WithTrustedProxies stub.
-func (rl *RateLimiter) WithTrustedProxies(_ []netip.Prefix) *RateLimiter { return rl }
-
-// LoginLimit stub.
-func LoginLimit(_ *RateLimiter) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler { return next }
+// LoginLimit applies rl to POST /api/session only, which is public and the
+// password-guessing surface, so it gets a tighter budget than the general API.
+func LoginLimit(rl *RateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		limited := rl.Middleware(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && r.URL.Path == "/api/session" {
+				limited.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func (rl *RateLimiter) cleanupLoop() {
