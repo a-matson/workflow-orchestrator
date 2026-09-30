@@ -484,12 +484,16 @@ func TestStaleAttemptIsDropped(t *testing.T) {
 	// Stands in for the retry poller's tick.
 	orch.DispatchDue(ctx)
 	attempt1 := testutil.Drain(t, redis, 1)[0]
-	if err := orch.MarkTaskRunning(ctx, attempt1.TaskExecID, "testutil", attempt1.RetryCount); err != nil {
-		t.Fatalf("MarkTaskRunning: %v", err)
-	}
-	// A redelivered attempt-0 message must not be picked up again.
+	// A redelivered attempt-0 message arrives while attempt 1 is queued. Only
+	// the attempt guard rejects it: the status alone would match.
 	if err := orch.MarkTaskRunning(ctx, attempt0.TaskExecID, "testutil", attempt0.RetryCount); !errors.Is(err, persistence.ErrConflict) {
 		t.Fatalf("MarkTaskRunning for attempt 0 = %v, want ErrConflict", err)
+	}
+	if row := testutil.TaskRow(t, store, exec.ID, "t"); row.Status != models.TaskStatusQueued || row.RetryCount != 1 {
+		t.Fatalf("task is %s on attempt %d after a stale pickup; want queued on attempt 1", row.Status, row.RetryCount)
+	}
+	if err := orch.MarkTaskRunning(ctx, attempt1.TaskExecID, "testutil", attempt1.RetryCount); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
 	}
 
 	// Attempt 0's failure arrives again while attempt 1 runs.
