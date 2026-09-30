@@ -21,6 +21,15 @@ if [ -n "$open" ]; then
   fail=1
 fi
 
+# The raw socket is the whole Docker API, root on the host; the backend gets a filtered proxy.
+sock=$(printf '%s' "$cfg" |
+  jq -r '(.services.backend.volumes // [])[] | select((.source // "") + (.target // "") | test("docker\\.sock"))
+         | "\(.source):\(.target)"')
+if [ -n "$sock" ]; then
+  echo "FAIL: backend mounts the Docker socket: $sock" >&2
+  fail=1
+fi
+
 for s in 'minioadmin' 'POSTGRES_PASSWORD: workflow' 'workflow:workflow@'; do
   if grep -nF -- "$s" docker-compose.yml >&2; then
     echo "FAIL: literal credential '$s' in docker-compose.yml" >&2
