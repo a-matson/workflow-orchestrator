@@ -1,0 +1,3 @@
+# Internal tool: nothing here should be indexed.
+User-agent: *
+Disallow: /

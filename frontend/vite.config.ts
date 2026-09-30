@@ -25,7 +25,8 @@ export default defineConfig({
 	},
 	build: {
 		outDir: 'dist',
-		sourcemap: true,
+		// Maps would expose original sources to anyone who can reach the UI; nothing consumes them in production.
+		sourcemap: false,
 		rollupOptions: {
 			output: {
 				manualChunks: (id) => {
