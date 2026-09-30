@@ -62,7 +62,7 @@ func uploadOne(t *testing.T, ce *ContainerExecutor, ws, path string) error {
 func TestUploadArtifacts_RejectsParentPath(t *testing.T) {
 	ws, _ := workspaceWithSecret(t)
 	store := &fakeStore{}
-	ce := &ContainerExecutor{storage: store}
+	ce := &ContainerExecutor{storage: store, maxArtifactBytes: DefaultMaxArtifactBytes}
 	if err := uploadOne(t, ce, ws, "../secret.txt"); err == nil {
 		t.Error("upload of ../secret.txt succeeded, want error")
 	}
@@ -77,7 +77,7 @@ func TestUploadArtifacts_RejectsSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &fakeStore{}
-	ce := &ContainerExecutor{storage: store}
+	ce := &ContainerExecutor{storage: store, maxArtifactBytes: DefaultMaxArtifactBytes}
 	if err := uploadOne(t, ce, ws, "link"); err == nil {
 		t.Error("upload through a symlink succeeded, want error")
 	}
@@ -88,7 +88,7 @@ func TestUploadArtifacts_RejectsSymlink(t *testing.T) {
 
 func TestDownloadArtifacts_RejectsParentPath(t *testing.T) {
 	ws, parent := workspaceWithSecret(t)
-	ce := &ContainerExecutor{storage: &fakeStore{objects: map[string]string{"k": "pwned"}}}
+	ce := &ContainerExecutor{storage: &fakeStore{objects: map[string]string{"k": "pwned"}}, maxArtifactBytes: DefaultMaxArtifactBytes}
 	err := ce.downloadArtifacts(context.Background(),
 		[]models.ResolvedArtifact{{Path: "../pwned", MinioKey: "k"}}, ws, noLog)
 	if err == nil {
@@ -118,5 +118,30 @@ func TestUploadArtifacts_EnforcesSizeCap(t *testing.T) {
 		if bytes.Equal(v, []byte("12345")) {
 			t.Errorf("%s uploaded in full past the cap", k)
 		}
+	}
+}
+
+func TestArtifacts_RoundTripInSubdirectory(t *testing.T) {
+	ws := t.TempDir()
+	store := &fakeStore{objects: map[string]string{"k": "data"}}
+	ce := &ContainerExecutor{storage: store, maxArtifactBytes: DefaultMaxArtifactBytes}
+	if err := ce.downloadArtifacts(context.Background(),
+		[]models.ResolvedArtifact{{Path: "in/data.txt", MinioKey: "k"}}, ws, noLog); err != nil {
+		t.Fatal(err)
+	}
+	if err := uploadOne(t, ce, ws, "in/data.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(store.uploaded["artifacts/wf/t/in/data.txt"]); got != "data" {
+		t.Errorf("uploaded %q, want %q", got, "data")
+	}
+}
+
+func TestDownloadArtifacts_EnforcesSizeCap(t *testing.T) {
+	ws := t.TempDir()
+	ce := &ContainerExecutor{storage: &fakeStore{objects: map[string]string{"k": "12345"}}, maxArtifactBytes: 4}
+	if err := ce.downloadArtifacts(context.Background(),
+		[]models.ResolvedArtifact{{Path: "big", MinioKey: "k"}}, ws, noLog); err == nil {
+		t.Error("5-byte download under a 4-byte cap succeeded, want error")
 	}
 }
