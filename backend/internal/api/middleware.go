@@ -7,29 +7,51 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
 type contextKey string
 
+// logFrom returns the request-scoped logger; outside the middleware chain it
+// falls back to the global logger rather than zerolog's disabled default.
+func logFrom(r *http.Request) *zerolog.Logger {
+	if l := zerolog.Ctx(r.Context()); l.GetLevel() != zerolog.Disabled {
+		return l
+	}
+	return &log.Logger
+}
+
 const RequestIDKey contextKey = "request_id"
 
-// RequestIDMiddleware injects a unique request ID into every request context
-// and sets it in the response header for distributed tracing.
+// validRequestID keeps client-supplied ids to a short, log-safe charset so a
+// caller cannot forge log fields or bloat log lines through the header.
+var validRequestID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// RequestIDMiddleware injects a request ID into every request context, sets it
+// in the response header, and attaches a logger carrying it. A well-formed
+// inbound X-Request-ID is kept for cross-service correlation; anything else is
+// replaced. Must be outermost so every later layer logs with the ID.
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
-		if id == "" {
+		if !validRequestID.MatchString(id) {
 			id = uuid.New().String()
 		}
 		w.Header().Set("X-Request-ID", id)
+		logger := log.Logger.With().
+			Str("request_id", id).
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Logger()
 		ctx := context.WithValue(r.Context(), RequestIDKey, id)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(logger.WithContext(ctx)))
 	})
 }
 
@@ -83,15 +105,10 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, r)
 
-		requestID, _ := r.Context().Value(RequestIDKey).(string)
-
-		log.Info().
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
+		logFrom(r).Info().
 			Int("status", rec.status).
 			Int("bytes", rec.bytes).
 			Dur("latency", time.Since(start)).
-			Str("request_id", requestID).
 			Str("remote", r.RemoteAddr).
 			Msg("http")
 	})
@@ -102,11 +119,8 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				requestID, _ := r.Context().Value(RequestIDKey).(string)
-				log.Error().
+				logFrom(r).Error().
 					Interface("panic", err).
-					Str("path", r.URL.Path).
-					Str("request_id", requestID).
 					Msg("handler panic recovered")
 				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 			}

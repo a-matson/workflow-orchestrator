@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
@@ -88,7 +87,7 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	def.UpdatedAt = now
 
 	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
-		log.Error().Err(err).Msg("failed to save workflow definition")
+		logFrom(r).Error().Err(err).Msg("failed to save workflow definition")
 		writeError(w, r, http.StatusInternalServerError, "failed to save workflow", err)
 		return
 	}
@@ -130,7 +129,7 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	def.UpdatedAt = now
 	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
-		log.Error().Err(err).Str("id", id).Msg("failed to update workflow definition")
+		logFrom(r).Error().Err(err).Str("id", id).Msg("failed to update workflow definition")
 		writeError(w, r, http.StatusInternalServerError, "failed to update workflow", err)
 		return
 	}
@@ -171,6 +170,10 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logFrom(r).Info().
+		Str("workflow_exec_id", exec.ID).
+		Str("workflow_id", def.ID).
+		Msg("workflow execution started")
 	writeJSON(w, http.StatusAccepted, exec)
 }
 
@@ -339,7 +342,7 @@ func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
 	}
 	url, err := h.storage.PresignURL(r.Context(), key, time.Duration(expiresMins)*time.Minute)
 	if err != nil {
-		log.Error().Err(err).Str("key", key).Msg("presign failed")
+		logFrom(r).Error().Err(err).Str("key", key).Msg("presign failed")
 		writeError(w, r, http.StatusInternalServerError, "could not generate download URL", err)
 		return
 	}
@@ -357,9 +360,8 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, publicMsg st
 
 	if internalErr != nil {
 		// Securely log the real error on the backend, tied to the Request ID
-		log.Error().
+		logFrom(r).Error().
 			Err(internalErr).
-			Str("request_id", reqID).
 			Int("status", status).
 			Msg("api error")
 	}
