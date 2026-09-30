@@ -1,4 +1,4 @@
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 
 # nginx.conf is bind-mounted by docker-compose.yml from repo root (outside this build context)
 COPY --from=build /app/dist /usr/share/nginx/html

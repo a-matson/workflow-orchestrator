@@ -1,5 +1,5 @@
 # ── Stage 1: Build ────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
 ARG TARGETOS TARGETARCH
 WORKDIR /app
 RUN apk add --no-cache git ca-certificates tzdata
@@ -19,7 +19,7 @@ FROM scratch AS binaries
 COPY --from=builder /workflow-server /workflow-server
 
 # ── Stage 2: Minimal runtime ──────────────────────────────────
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk --no-cache add ca-certificates tzdata wget
 WORKDIR /app
 COPY --from=builder /workflow-server .
