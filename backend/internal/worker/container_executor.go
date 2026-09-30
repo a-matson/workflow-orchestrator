@@ -252,7 +252,7 @@ func (ce *ContainerExecutor) Run(
 	// ── 2. Prepare workspace: download artifact inputs ────────────────────────
 	workspaceDir, err := os.MkdirTemp(ce.workspace.Root, "ws-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("container: create workspace: %w", err)
+		return "", nil, fmt.Errorf("container: create workspace: %w", withoutHostPath(err))
 	}
 	// MkdirTemp creates it 0700; the task container runs as this process's uid
 	// so it can still write here.
@@ -471,17 +471,20 @@ func (ce *ContainerExecutor) collectLogs(ctx context.Context, containerID string
 // come from the task, so both are untrusted: every file is opened through an
 // os.Root on the workspace, and errors name the artifact path, never a host path.
 
-// openWorkspaceRoot drops the host path from the error; task errors reach the UI.
 func openWorkspaceRoot(dir string) (*os.Root, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		var pe *fs.PathError
-		if errors.As(err, &pe) {
-			err = pe.Err
-		}
-		return nil, fmt.Errorf("open task workspace: %w", err)
+		return nil, fmt.Errorf("open task workspace: %w", withoutHostPath(err))
 	}
 	return root, nil
+}
+
+// withoutHostPath drops the path from a PathError; task errors reach the UI.
+func withoutHostPath(err error) error {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
+		return pe.Err
+	}
+	return err
 }
 
 func (ce *ContainerExecutor) downloadArtifacts(
@@ -594,9 +597,10 @@ func (ce *ContainerExecutor) uploadArtifact(
 	if err != nil {
 		return models.ResolvedArtifact{}, false, fmt.Errorf("stat artifact %q: %w", path, err)
 	}
-	// Regular files only. os.Root already stops a symlink escaping the workspace,
-	// but even one resolving inside lets the task publish a file other than the
-	// declared path, and a FIFO or device would block or stream forever.
+	// Regular files only: a FIFO or device would block or stream forever, and
+	// one rule for every non-regular file is simpler than resolving symlinks
+	// (os.Root already stops those escaping). A symlinked output such as
+	// latest -> run-3.csv therefore fails the task.
 	// The container has exited, so nothing can swap the file after this check.
 	if !fi.Mode().IsRegular() {
 		return models.ResolvedArtifact{}, false, fmt.Errorf("artifact %q is not a regular file (%s)", path, fi.Mode().Type())
