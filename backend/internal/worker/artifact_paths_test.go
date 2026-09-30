@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
@@ -143,5 +144,75 @@ func TestDownloadArtifacts_EnforcesSizeCap(t *testing.T) {
 	if err := ce.downloadArtifacts(context.Background(),
 		[]models.ResolvedArtifact{{Path: "big", MinioKey: "k"}}, ws, noLog); err == nil {
 		t.Error("5-byte download under a 4-byte cap succeeded, want error")
+	}
+}
+
+// Only os.Root stops these: the path is local and its last element is not a
+// symlink, but a parent directory is.
+func TestUploadArtifacts_RejectsSymlinkedParent(t *testing.T) {
+	ws, _ := workspaceWithSecret(t)
+	if err := os.Symlink("..", filepath.Join(ws, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{}
+	ce := &ContainerExecutor{storage: store, maxArtifactBytes: DefaultMaxArtifactBytes}
+	if err := uploadOne(t, ce, ws, "sub/secret.txt"); err == nil || len(store.uploaded) != 0 {
+		t.Errorf("upload via symlinked parent: err=%v uploaded=%v", err, store.uploaded)
+	}
+}
+
+func TestDownloadArtifacts_RejectsSymlinkedParent(t *testing.T) {
+	ws, parent := workspaceWithSecret(t)
+	if err := os.Symlink("..", filepath.Join(ws, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	ce := &ContainerExecutor{storage: &fakeStore{objects: map[string]string{"k": "pwned"}}, maxArtifactBytes: DefaultMaxArtifactBytes}
+	if err := ce.downloadArtifacts(context.Background(),
+		[]models.ResolvedArtifact{{Path: "sub/pwned", MinioKey: "k"}}, ws, noLog); err == nil {
+		t.Error("download via symlinked parent succeeded, want error")
+	}
+	if _, err := os.Lstat(filepath.Join(parent, "pwned")); !os.IsNotExist(err) {
+		t.Errorf("file created outside the workspace: %v", err)
+	}
+}
+
+// unknownSizeStore reports an unknown size, so only the streaming limit can
+// catch an oversized object.
+type unknownSizeStore struct{ body *strings.Reader }
+
+func (u *unknownSizeStore) Upload(context.Context, string, io.Reader, int64, string) (models.ResolvedArtifact, error) {
+	return models.ResolvedArtifact{}, nil
+}
+
+func (u *unknownSizeStore) Download(context.Context, string) (io.ReadCloser, int64, error) {
+	return io.NopCloser(u.body), -1, nil
+}
+
+func TestDownloadArtifacts_EnforcesSizeCapWhileStreaming(t *testing.T) {
+	ws := t.TempDir()
+	store := &unknownSizeStore{body: strings.NewReader(strings.Repeat("x", 1<<20))}
+	ce := &ContainerExecutor{storage: store, maxArtifactBytes: 4}
+	if err := ce.downloadArtifacts(context.Background(),
+		[]models.ResolvedArtifact{{Path: "big", MinioKey: "k"}}, ws, noLog); err == nil {
+		t.Error("1 MiB stream under a 4-byte cap succeeded, want error")
+	}
+	if store.body.Len() == 0 {
+		t.Error("the whole stream was read; the cap must stop the copy early")
+	}
+	if _, err := os.Lstat(filepath.Join(ws, "big")); !os.IsNotExist(err) {
+		t.Errorf("oversized artifact left in the workspace: %v", err)
+	}
+}
+
+// A FIFO would block the worker on open or read.
+func TestUploadArtifacts_RejectsFIFO(t *testing.T) {
+	ws := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(ws, "p"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{}
+	ce := &ContainerExecutor{storage: store, maxArtifactBytes: DefaultMaxArtifactBytes}
+	if err := uploadOne(t, ce, ws, "p"); err == nil || len(store.uploaded) != 0 {
+		t.Errorf("upload of a FIFO: err=%v uploaded=%v", err, store.uploaded)
 	}
 }
