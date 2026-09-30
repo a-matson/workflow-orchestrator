@@ -72,7 +72,7 @@ func NewPool(
 	if execErr != nil {
 		// http_request, database_query and notification tasks still work, so the
 		// backend starts; code tasks fail closed in dispatch.
-		log.Warn().Err(execErr).Msg("container runtime unavailable: data_transform, generic and ml_inference tasks will fail until it is restored")
+		log.Warn().Err(execErr).Msg("container runtime unavailable: data_transform, generic and ml_inference tasks will fail; restart the backend once Docker and MinIO are reachable")
 	}
 
 	workers := make([]*Worker, workerCount)
@@ -315,7 +315,7 @@ func (w *Worker) dispatch(ctx context.Context, msg *models.TaskMessage, addLog l
 		return map[string]any{"status": "no-op"}, nil, nil
 	}
 	if w.executor == nil {
-		return nil, nil, fmt.Errorf("container runtime unavailable: %s tasks run only in containers", msg.TaskType)
+		return nil, nil, fmt.Errorf("container runtime unavailable: %s tasks run only in containers (restart the backend once Docker and MinIO are reachable)", msg.TaskType)
 	}
 
 	stdout, arts, err := w.executor.Run(ctx, msg, addLog)
