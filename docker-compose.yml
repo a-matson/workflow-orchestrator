@@ -1,10 +1,6 @@
 # ── Networks ──────────────────────────────────────────────────────────────────
 # fluxor-internal: backend services (postgres, redis, minio, backend)
-#                  NOT accessible from task containers.
-# fluxor-tasks:    isolated network for ephemeral task containers.
-#                  Internal=true → no internet, no route to postgres/redis.
-#                  Created by the worker at startup; defined here so Compose
-#                  knows about it.
+#                  NOT accessible from task containers, which run with no network.
 networks:
   fluxor-internal:
     driver: bridge
@@ -15,9 +11,6 @@ networks:
     ipam:
       config:
         - subnet: ${FLUXOR_INTERNAL_SUBNET:-172.29.250.0/24}
-  fluxor-tasks:
-    driver: bridge
-    internal: true   # task containers have no external routing
 
 volumes:
   postgres_data:

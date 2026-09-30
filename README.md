@@ -80,7 +80,7 @@ Code tasks (`data_transform`, `generic`, `ml_inference`) always run in their own
 - `--cap-drop ALL` — drops every Linux capability
 - `no-new-privileges:true` — blocks privilege escalation
 - Read-only root filesystem with a tmpfs `/tmp`
-- Connected to the `fluxor-tasks` internal network — **no internet, no access to Postgres or Redis**
+- No network (`NetworkMode: none`) — **no internet, no access to Postgres, Redis or other task containers**; use `http_request` or `notification` tasks for outbound calls
 - CPU and memory hard limits from `ContainerSpec`
 - Max 256 PIDs per container
 
