@@ -143,7 +143,7 @@ npm run format
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `POSTGRES_URL` | `postgres://workflow:<POSTGRES_PASSWORD>@localhost:5432/workflow` | PostgreSQL DSN (password from `.env` with compose) |
+| `POSTGRES_URL` | `postgres://workflow@localhost:5432/workflow` | PostgreSQL DSN (compose builds it with the password from `.env`; the default takes the password from `PGPASSWORD`) |
 | `REDIS_ADDR` | `localhost:6379` | Redis address |
 | `MINIO_ENDPOINT` | `localhost:9000` | MinIO S3 endpoint |
 | `REDIS_PASSWORD` | _(none)_ | Redis password (from `.env` with compose) |

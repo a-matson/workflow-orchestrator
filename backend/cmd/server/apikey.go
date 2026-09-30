@@ -17,9 +17,12 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/migrations"
 )
 
-const defaultPostgresURL = "postgres://workflow:workflow@localhost:5432/workflow?sslmode=disable"
+// defaultPostgresURL names no password: pgx then reads PGPASSWORD or
+// ~/.pgpass, so no credential lives in the binary. Compose, the Makefile and
+// CI all set POSTGRES_URL.
+const defaultPostgresURL = "postgres://workflow@localhost:5432/workflow?sslmode=disable"
 
-const apiKeyUsage = `usage:
+const keyCommandUsage = `usage:
   workflow-server apikey create --name NAME --role admin|operator|viewer
   workflow-server apikey list
   workflow-server apikey revoke ID`
@@ -51,7 +54,7 @@ func runAPIKey(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	if len(args) == 0 {
-		return fail(2, apiKeyUsage)
+		return fail(2, keyCommandUsage)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -67,7 +70,7 @@ func runAPIKey(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		if *name == "" || !api.ValidRole(*role) {
-			return fail(2, apiKeyUsage)
+			return fail(2, keyCommandUsage)
 		}
 		run = func(s *persistence.Store) error {
 			plaintext, key, err := s.CreateAPIKey(ctx, *name, *role)
@@ -97,7 +100,7 @@ func runAPIKey(args []string, stdout, stderr io.Writer) int {
 		}
 	case "revoke":
 		if len(args) != 2 {
-			return fail(2, apiKeyUsage)
+			return fail(2, keyCommandUsage)
 		}
 		run = func(s *persistence.Store) error {
 			if err := s.RevokeAPIKey(ctx, args[1]); err != nil {
@@ -110,7 +113,7 @@ func runAPIKey(args []string, stdout, stderr io.Writer) int {
 			return err
 		}
 	default:
-		return fail(2, apiKeyUsage)
+		return fail(2, keyCommandUsage)
 	}
 
 	store, err := persistence.NewStore(ctx, getEnv("POSTGRES_URL", defaultPostgresURL))

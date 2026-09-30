@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -52,5 +53,22 @@ func TestStillValid_ExpiredSession(t *testing.T) {
 	ok, err := a.StillValid(t.Context(), &Principal{KeyID: "k", Expires: time.Now().Add(-time.Second)})
 	if ok || err != nil {
 		t.Errorf("expired session: StillValid = %v, %v; want false, nil", ok, err)
+	}
+}
+
+// The expiry crosses int64/uint64 in both directions; out-of-range values must
+// come out expired or rejected, never wrapped into the far future.
+func TestSessionCookie_ExpiryBounds(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	now := time.Unix(1_700_000_000, 0)
+	if id, _, err := verifySession(secret, signSession(secret, "k", time.Unix(-5, 0)), now); err == nil {
+		t.Errorf("pre-1970 expiry: verify = %q, nil; want an error", id)
+	}
+
+	payload := append([]byte{sessionVersion, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, 'k')
+	forged := base64.RawURLEncoding.EncodeToString(payload) + "." +
+		base64.RawURLEncoding.EncodeToString(sessionMAC(secret, payload))
+	if id, _, err := verifySession(secret, forged, now); err == nil {
+		t.Errorf("expiry above MaxInt64: verify = %q, nil; want an error", id)
 	}
 }

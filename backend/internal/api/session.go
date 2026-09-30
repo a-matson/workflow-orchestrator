@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -54,7 +55,11 @@ func RandomSessionSecret() []byte {
 func signSession(secret []byte, keyID string, expires time.Time) string {
 	payload := make([]byte, 9, 9+len(keyID))
 	payload[0] = sessionVersion
-	binary.BigEndian.PutUint64(payload[1:9], uint64(expires.Unix()))
+	exp := expires.Unix()
+	if exp < 0 {
+		exp = 0 // a pre-1970 expiry is already expired; 0 keeps it so
+	}
+	binary.BigEndian.PutUint64(payload[1:9], uint64(exp))
 	payload = append(payload, keyID...)
 	return base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(sessionMAC(secret, payload))
@@ -77,7 +82,11 @@ func verifySession(secret []byte, value string, now time.Time) (string, time.Tim
 	if len(payload) <= 9 || payload[0] != sessionVersion {
 		return "", time.Time{}, errBadSession
 	}
-	expires := time.Unix(int64(binary.BigEndian.Uint64(payload[1:9])), 0)
+	raw := binary.BigEndian.Uint64(payload[1:9])
+	if raw > math.MaxInt64 {
+		return "", time.Time{}, errBadSession
+	}
+	expires := time.Unix(int64(raw), 0)
 	if !now.Before(expires) {
 		return "", time.Time{}, errBadSession
 	}
@@ -95,8 +104,10 @@ func noStore(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 }
 
+// setSessionCookie is the only place the session cookie is written, for login
+// and for clearing alike, so both always carry HttpOnly and SameSite=Strict.
 func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is conditional on purpose: a plain-HTTP localhost dev setup would drop a Secure cookie
 		Name:     sessionCookie,
 		Value:    value,
 		Path:     "/",
