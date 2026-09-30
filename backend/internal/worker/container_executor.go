@@ -20,8 +20,10 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +34,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/versions"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/rs/zerolog/log"
@@ -87,11 +90,76 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 		return nil, fmt.Errorf("docker: connect: %w", err)
 	}
 
+	ctx := context.Background()
+	if ws.Volume != "" {
+		// Daemons older than API 1.45 drop VolumeOptions.Subpath without an
+		// error and mount the whole volume, exposing every task's workspace.
+		dc.NegotiateAPIVersion(ctx)
+		if !subpathSupported(dc.ClientVersion()) {
+			return nil, fmt.Errorf("docker: API %s lacks volume subpaths (need >= %s); task workspaces would not be isolated",
+				dc.ClientVersion(), minSubpathAPI)
+		}
+	}
+	if err := prepareWorkspaceRoot(ws); err != nil {
+		return nil, err
+	}
+
 	ce := &ContainerExecutor{docker: dc, storage: storageClient, workspace: ws}
-	if err := ce.ensureNetwork(context.Background()); err != nil {
+	if err := ce.ensureNetwork(ctx); err != nil {
 		return nil, err
 	}
 	return ce, nil
+}
+
+const minSubpathAPI = "1.45"
+
+func subpathSupported(apiVersion string) bool {
+	return !versions.LessThan(apiVersion, minSubpathAPI)
+}
+
+// prepareWorkspaceRoot checks the root is usable and removes workspaces left by
+// a previous process. Workers run in-process, so at startup none is in use.
+func prepareWorkspaceRoot(ws Workspace) error {
+	if ws.Volume != "" && ws.Root == "" {
+		return fmt.Errorf("workspace: a volume (%q) needs a root where it is mounted", ws.Volume)
+	}
+	if ws.Root == "" {
+		// The shared temp dir may hold other programs' ws-* directories.
+		return nil
+	}
+	leftovers, err := filepath.Glob(filepath.Join(ws.Root, "ws-*"))
+	if err != nil {
+		return fmt.Errorf("workspace: list leftovers: %w", err)
+	}
+	for _, dir := range leftovers {
+		if err := removeWorkspace(dir); err != nil {
+			return err
+		}
+	}
+	probe, err := os.MkdirTemp(ws.Root, "ws-*")
+	if err != nil {
+		return fmt.Errorf("workspace: root %q is not writable: %w", ws.Root, err)
+	}
+	return removeWorkspace(probe)
+}
+
+// removeWorkspace deletes dir even when the task, which runs as our uid, has
+// removed permissions from directories inside it.
+func removeWorkspace(dir string) error {
+	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// Unreadable despite the chmod; RemoveAll reports it below.
+			return nil
+		}
+		if d.IsDir() {
+			return os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("workspace: remove %q: %w", dir, errors.Join(err, walkErr))
+	}
+	return nil
 }
 
 // ensureNetwork creates the isolated task network if it does not exist.
@@ -143,13 +211,13 @@ func (ce *ContainerExecutor) Run(
 	if err != nil {
 		return "", nil, fmt.Errorf("container: create workspace: %w", err)
 	}
-	// Mode 0700: only the worker process can read/write this directory.
-	// The task container runs as this process's uid so it can still write here.
-	if err := os.Chmod(workspaceDir, 0o700); err != nil {
-		defer func() { _ = os.RemoveAll(workspaceDir) }()
-		return "", nil, fmt.Errorf("container: chmod workspace: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(workspaceDir) }()
+	// MkdirTemp creates it 0700; the task container runs as this process's uid
+	// so it can still write here.
+	defer func() {
+		if err := removeWorkspace(workspaceDir); err != nil {
+			log.Error().Err(err).Str("path", workspaceDir).Msg("task workspace not removed")
+		}
+	}()
 
 	if downloadErr := ce.downloadArtifacts(ctx, msg.ArtifactsIn, workspaceDir, addLog); downloadErr != nil {
 		return "", nil, fmt.Errorf("container: download artifacts: %w", downloadErr)
@@ -171,7 +239,8 @@ func (ce *ContainerExecutor) Run(
 		Env:        envVars,
 		WorkingDir: spec.WorkDir,
 		// With every capability dropped, even root cannot write the 0700
-		// workspace unless it owns it.
+		// workspace unless it owns it. A backend started as root (not the
+		// compose image, which runs as 10001) therefore runs tasks as root too.
 		User: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		// Security: prevent writing to root FS; only /workspace and /tmp are writable
 		Labels: map[string]string{

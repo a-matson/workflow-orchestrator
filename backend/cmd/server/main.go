@@ -131,10 +131,13 @@ func main() {
 	// Background services
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
 	retryPoller := scheduler.NewRetryPoller(redisClient, orch)
-	workerPool := worker.NewPool(redisClient, workerCount, workerConc, orch, minioClient, worker.Workspace{
+	workerPool, err := worker.NewPool(redisClient, workerCount, workerConc, orch, minioClient, worker.Workspace{
 		Root:   os.Getenv("FLUXOR_WORKSPACE_ROOT"),
 		Volume: os.Getenv("FLUXOR_WORKSPACE_VOLUME"),
 	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("worker pool: task workspace setup failed")
+	}
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
