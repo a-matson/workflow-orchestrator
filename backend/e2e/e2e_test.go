@@ -76,6 +76,7 @@ func do(t *testing.T, method, url string, body any, wantStatus int, out any) {
 
 func TestE2E_Health(t *testing.T) {
 	do(t, http.MethodGet, baseURL+"/api/health", nil, http.StatusOK, nil)
+	do(t, http.MethodGet, baseURL+"/api/ready", nil, http.StatusOK, nil)
 }
 
 // A generic task without a command is a no-op in the worker, so this workflow

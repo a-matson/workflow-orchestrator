@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -303,9 +304,49 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Ready is a stub until dependency checks land.
-func (h *Handler) Ready(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "checks": map[string]string{}})
+// readyTimeout bounds each dependency probe so a hung one cannot stall the
+// orchestrator's readiness poll.
+const readyTimeout = 2 * time.Second
+
+// Ready reports whether dependencies answer, unlike Health, which only says the
+// process is up. Probe errors are logged, never returned: they can carry
+// hostnames or DSN fragments.
+// GET /api/ready
+func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
+	probes := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"postgres", h.store.Pool().Ping},
+		{"redis", h.redis.Ping},
+	}
+	if h.storage != nil {
+		probes = append(probes, struct {
+			name string
+			fn   func(context.Context) error
+		}{"minio", h.storage.Ping})
+	}
+
+	checks := make(map[string]string, len(probes))
+	ready := true
+	for _, p := range probes {
+		ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
+		err := p.fn(ctx)
+		cancel()
+		if err != nil {
+			ready = false
+			checks[p.name] = "unavailable"
+			logFrom(r).Warn().Err(err).Str("dependency", p.name).Msg("readiness check failed")
+			continue
+		}
+		checks[p.name] = "ok"
+	}
+
+	if !ready {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "checks": checks})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "checks": checks})
 }
 
 // ==================== Helpers ====================
