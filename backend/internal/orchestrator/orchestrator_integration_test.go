@@ -436,3 +436,62 @@ func TestResultForQueuedRowIsApplied(t *testing.T) {
 		t.Errorf("dispatched %s again, want the other task", second.TaskDefinitionID)
 	}
 }
+
+// A dropped result must not free a slot. The spare slot only shows once a
+// later completion dispatches, so two slots are needed: with one, the next
+// release is a no-op and absorbs it.
+func TestDroppedResultKeepsItsSlot(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+
+	var tasks []models.TaskDefinition
+	for _, id := range []string{"t1", "t2", "t3", "t4", "t5"} {
+		tasks = append(tasks, models.TaskDefinition{ID: id, Name: id, Type: "generic", Dependencies: []string{}})
+	}
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Slot Accounting", Tasks: tasks, MaxParallel: 2,
+	})
+
+	running := testutil.Drain(t, redis, 2)
+	first, second := running[0], running[1]
+	runTask(t, orch, store, first, testutil.Ok(first))
+	testutil.Drain(t, redis, 1) // takes first's slot
+
+	if err := orch.ProcessResult(context.Background(), testutil.Ok(first)); err != nil {
+		t.Fatalf("redelivered result: ProcessResult = %v, want nil", err)
+	}
+
+	// Both slots are held, so second's completion frees exactly one.
+	runTask(t, orch, store, second, testutil.Ok(second))
+	testutil.Drain(t, redis, 1)
+	testutil.Never(t, 300*time.Millisecond, func() bool { return testutil.Queued(t, redis, exec.ID) > 0 })
+}
+
+func TestStaleAttemptIsDropped(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID:   uuid.NewString(),
+		Name: "Stale Attempt",
+		Tasks: []models.TaskDefinition{{
+			ID: "t", Name: "T", Type: "generic", Dependencies: []string{},
+			RetryPolicy: &models.RetryPolicy{MaxRetries: 3, InitialDelay: time.Hour, MaxDelay: time.Hour, BackoffMultiple: 1},
+		}},
+		MaxParallel: 10,
+	})
+
+	attempt0 := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, store, attempt0, testutil.Fail(attempt0, "transient"))
+	if err := orch.MarkTaskRunning(ctx, attempt0.TaskExecID, "testutil"); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+
+	// Attempt 0's failure arrives again while attempt 1 runs.
+	if err := orch.ProcessResult(ctx, testutil.Fail(attempt0, "late duplicate")); err != nil {
+		t.Fatalf("ProcessResult: %v", err)
+	}
+	row := testutil.TaskRow(t, store, exec.ID, "t")
+	if row.Status != models.TaskStatusRunning || row.RetryCount != 1 {
+		t.Errorf("task is %s on attempt %d after a stale attempt-0 result; want running on attempt 1", row.Status, row.RetryCount)
+	}
+}
