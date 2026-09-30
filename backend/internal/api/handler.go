@@ -75,6 +75,11 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"POST /api/keys":        h.CreateAPIKey,
 		"DELETE /api/keys/{id}": h.RevokeAPIKey,
 
+		// Browser session
+		"POST /api/session":   h.CreateSession,
+		"GET /api/session":    h.GetSession,
+		"DELETE /api/session": h.DeleteSession,
+
 		"GET /ws": func(w http.ResponseWriter, r *http.Request) { h.hub.ServeWS(w, r) },
 	}
 }

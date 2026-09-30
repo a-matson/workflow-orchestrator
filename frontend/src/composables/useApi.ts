@@ -1,5 +1,8 @@
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
+// Stub: the expired-session hook lands in the next commit.
+export function setUnauthorizedHandler(_fn: () => void) {}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const res = await fetch(`${BASE_URL}${path}`, {
 		method,

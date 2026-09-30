@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type Router } from 'vue-router'
 import BuilderPage from '../pages/Builder.vue'
 import ExecutionsPage from '../pages/Executions.vue'
 import LogsPage from '../pages/Logs.vue'
@@ -51,3 +51,11 @@ export const router = createRouter({
 		},
 	],
 })
+
+// Stubs: the session guard lands in the next commit.
+export async function requireSession(): Promise<true> {
+	return true
+}
+export function handleExpiredSession(_router: Router): () => void {
+	return () => {}
+}
