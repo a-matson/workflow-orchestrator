@@ -135,8 +135,26 @@ func (g *Guard) control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// CheckHostPort stub.
-func (g *Guard) CheckHostPort(ctx context.Context, host string, port uint16) error { return nil }
+// CheckHostPort applies the dial-time rules to a destination before any
+// connection is made, for callers whose driver dials internally. Names are
+// resolved and every address must pass. It is a pre-flight only: the
+// connection itself must still dial through DialContext, because DNS can
+// answer differently between this check and the dial.
+func (g *Guard) CheckHostPort(ctx context.Context, host string, port uint16) error {
+	if g.allowHostPorts[normaliseHostPort(host, strconv.Itoa(int(port)))] {
+		return nil
+	}
+	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", host, err)
+	}
+	for _, ip := range addrs {
+		if !g.allowed(ip) {
+			return fmt.Errorf("%w: %s", ErrEgressDenied, host)
+		}
+	}
+	return nil
+}
 
 // DialContext dials addr unless the guard denies the resolved IP. A host:port
 // on the allowlist is dialled without the IP check: the operator trusts that
