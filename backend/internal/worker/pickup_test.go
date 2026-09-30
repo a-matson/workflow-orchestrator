@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 )
@@ -34,7 +36,12 @@ func TestPickUpAndDispatch_ConflictDoesNotRun(t *testing.T) {
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
 			defer srv.Close()
-			w := &Worker{notifier: pickupNotifier{tt.pickup}, httpClient: srv.Client()}
+			// Allows exactly the test server, as FLUXOR_EGRESS_ALLOW would.
+			g, err := egress.New(srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := &Worker{notifier: pickupNotifier{tt.pickup}, httpClient: g.HTTPClient(5 * time.Second)}
 			msg := &models.TaskMessage{TaskExecID: "t", TaskType: "http_request", Config: map[string]any{"url": srv.URL}}
 			ctx := context.Background()
 
