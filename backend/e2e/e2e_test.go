@@ -129,3 +129,52 @@ func TestE2E_FrontendServesSPA(t *testing.T) {
 		}
 	}
 }
+
+// The backend drives the host daemon through its socket, so the task's
+// /workspace must be something both it and the task container can reach.
+func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
+	var wf struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows", map[string]any{
+		"name": "e2e-container-artifact",
+		"tasks": []map[string]any{{
+			"id": "write", "name": "Write", "type": "generic", "dependencies": []string{},
+			"config":        map[string]any{"command": "sh", "args": []string{"-c", "echo hello > /workspace/out.txt"}},
+			"container":     map[string]any{"image": "alpine:3.22"},
+			"artifacts_out": []map[string]any{{"path": "out.txt"}},
+		}},
+	}, http.StatusCreated, &wf)
+
+	var exec struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{}, http.StatusAccepted, &exec)
+
+	type execution struct {
+		Status string
+		Error  string
+		Tasks  []struct {
+			Status       string
+			Error        string
+			ArtifactsOut []struct{ Path string } `json:"artifacts_out"`
+		}
+	}
+	var got execution
+	// Generous: the first run may pull the image.
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		got = execution{}
+		do(t, http.MethodGet, baseURL+"/api/executions/"+exec.ID, nil, http.StatusOK, &got)
+		if got.Status == "completed" || got.Status == "failed" || got.Status == "cancelled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("execution %s still %q after 120s", exec.ID, got.Status)
+		}
+		time.Sleep(time.Second)
+	}
+	if got.Status != "completed" || len(got.Tasks) != 1 {
+		t.Fatalf("execution %s ended %q (%s), tasks = %+v", exec.ID, got.Status, got.Error, got.Tasks)
+	}
+	arts := got.Tasks[0].ArtifactsOut
+	if len(arts) != 1 || arts[0].Path != "out.txt" {
+		t.Fatalf("artifacts_out = %+v, want out.txt", arts)
+	}
+}
