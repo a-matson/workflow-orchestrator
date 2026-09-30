@@ -104,15 +104,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		}
 	}
 
-	// Rebuild semaphore
-	maxParallel := def.MaxParallel
-	if maxParallel <= 0 {
-		maxParallel = 10
-	}
-	o.semMu.Lock()
-	o.semaphores[exec.ID] = make(chan struct{}, maxParallel)
-	o.semMu.Unlock()
-
 	// Restore execution context
 	execCtx := &ExecutionContext{
 		Execution:  fullExec,

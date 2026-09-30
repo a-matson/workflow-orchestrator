@@ -44,7 +44,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 │                                                                        │
 │  ┌───────────────────────────────────────────────────────────────┐     │
 │  │  Orchestrator                                                 │     │
-│  │  Kahn topo-sort · dependency waves · concurrency semaphores   │     │
+│  │  Kahn topo-sort · dependency waves · max_parallel from rows   │     │
 │  │  exponential backoff · dead-letter · crash recovery           │     │
 │  └──────────────┬────────────────────────────┬───────────────────┘     │
 │                 │                            │                         │
@@ -273,7 +273,7 @@ make migrate
 | Retry scheduling | A retry waits in its task row (`retrying`, `next_retry_at`); a 5s poller dispatches it once due |
 | Dead-letter | After `max_retries`, task → `workflow:tasks:dead_letter` |
 | Replay | `POST /api/executions/:id/retry` resets and re-runs |
-| Concurrency control | Per-workflow Go channel semaphore (`max_parallel`) |
+| Concurrency control | `max_parallel` counted from the execution's queued and running task rows |
 | Crash recovery | State reconstructed from PostgreSQL on restart |
 | Queue durability | Redis runs with `maxmemory-policy noeviction`; the backend refuses to start on an evicting policy |
 | DAG validation | Kahn's BFS at submission time — rejects cycles & missing deps |
