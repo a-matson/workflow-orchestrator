@@ -154,12 +154,17 @@ func (a *Authenticator) StillValid(ctx context.Context, p *Principal) (bool, err
 // Middleware enforces routePolicy for requests served by mux. A registered
 // pattern absent from the policy requires admin, so it fails closed.
 func (a *Authenticator) Middleware(mux *http.ServeMux) func(http.Handler) http.Handler {
-	return requireRoles(mux, a.Authenticate)
+	return requireRoles(mux, a.Authenticate, func(r *http.Request, p *Principal, action string) {
+		recordAudit(r, a.store, p, action, "route", r.URL.Path, auditDenied)
+	})
 }
 
 // requireRoles takes the credential check as a function so the policy
 // decisions can be unit-tested without a database.
-func requireRoles(mux *http.ServeMux, authenticate func(*http.Request) (*Principal, error)) func(http.Handler) http.Handler {
+//
+// onDenied is called for a 401 or 403 on a mutating route with a known audit
+// action; GETs are skipped so a scanner cannot flood the audit log.
+func requireRoles(mux *http.ServeMux, authenticate func(*http.Request) (*Principal, error), onDenied func(r *http.Request, p *Principal, action string)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, pattern := mux.Handler(r)
@@ -177,9 +182,15 @@ func requireRoles(mux *http.ServeMux, authenticate func(*http.Request) (*Princip
 				return
 			}
 
+			denied := func(p *Principal) {
+				if action, ok := auditActions[pattern]; ok && onDenied != nil {
+					onDenied(r, p, action)
+				}
+			}
 			p, err := authenticate(r)
 			switch {
 			case errors.Is(err, errUnauthenticated):
+				denied(nil)
 				w.Header().Set("WWW-Authenticate", "Bearer")
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 				return
@@ -196,6 +207,7 @@ func requireRoles(mux *http.ServeMux, authenticate func(*http.Request) (*Princip
 				})
 			}
 			if !p.Role.allows(required) {
+				denied(p)
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient role"})
 				return
 			}

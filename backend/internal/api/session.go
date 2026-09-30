@@ -140,6 +140,9 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	key, err := h.store.LookupAPIKey(r.Context(), strings.TrimSpace(req.APIKey))
 	if errors.Is(err, persistence.ErrNotFound) {
+		// The key is unknown, so there is no actor to name and no target id
+		// that would not leak the attempted secret.
+		h.audit(r, "session.login", "session", "", auditDenied)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid API key"})
 		return
 	}
@@ -147,6 +150,7 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "internal server error", err)
 		return
 	}
+	recordAudit(r, h.store, &Principal{KeyID: key.ID, Name: key.Name}, "session.login", "session", key.ID, auditSuccess)
 	h.setSessionCookie(w, r, signSession(h.session.Secret, key.ID, time.Now().Add(sessionTTL)), int(sessionTTL.Seconds()))
 	logFrom(r).Info().Str("api_key_id", key.ID).Str("key_name", key.Name).Msg("browser session started")
 	writeJSON(w, http.StatusOK, sessionPrincipal{Name: key.Name, Role: Role(key.Role)})
@@ -163,6 +167,7 @@ func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
 // until it expires; revoke the key to end a copied cookie's life early.
 func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	h.audit(r, "session.logout", "session", PrincipalFrom(r.Context()).KeyID, auditSuccess)
 	h.setSessionCookie(w, r, "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }
