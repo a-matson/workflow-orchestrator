@@ -1,6 +1,6 @@
 .PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs migrate migrate-reset \
-	test test-dag test-orchestrator test-integration e2e e2e-ui check lint clean load-test hooks
+	test test-dag test-orchestrator test-integration e2e e2e-ui chaos check lint clean load-test hooks
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
@@ -126,6 +126,11 @@ endef
 
 e2e:
 	$(call e2e_stack,(cd backend && go test -tags e2e -count=1 -v ./e2e/) && examples/smoke-test.sh)
+
+# Kills and restarts the backend 20 times during a DAG; minutes long, so it
+# runs nightly (.github/workflows/chaos.yml) rather than on every PR.
+chaos:
+	$(call e2e_stack,(cd backend && go test -tags e2e,chaos -count=1 -v -timeout 20m -run TestChaos ./e2e/))
 
 # Installing first keeps a slow npm or browser download out of the stack's lifetime.
 # `A11Y_RECORD=1 make e2e-ui` rewrites e2e-ui/a11y-baseline.json.
