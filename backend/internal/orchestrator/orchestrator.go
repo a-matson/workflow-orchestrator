@@ -357,6 +357,9 @@ func (c *ExecutionContext) readyTasks(now time.Time) []string {
 // with time rather than on a result, so the retry poller drives them through
 // here; the same pass re-drives a task rolled back to pending after a failed
 // enqueue.
+// ReapTimedOut is a stub for the red test.
+func (o *Orchestrator) ReapTimedOut(ctx context.Context, now time.Time) {}
+
 func (o *Orchestrator) DispatchDue(ctx context.Context) {
 	o.activeMu.RLock()
 	execs := make([]*ExecutionContext, 0, len(o.active))
