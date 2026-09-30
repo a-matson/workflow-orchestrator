@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -279,6 +280,14 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// WithTrustedProxies stub.
+func (rl *RateLimiter) WithTrustedProxies(_ []netip.Prefix) *RateLimiter { return rl }
+
+// LoginLimit stub.
+func LoginLimit(_ *RateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return next }
 }
 
 func (rl *RateLimiter) cleanupLoop() {
