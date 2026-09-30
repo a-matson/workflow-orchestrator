@@ -114,20 +114,39 @@ func NewPool(
 	return &Pool{workers: workers, redis: redis, running: running}, nil
 }
 
+// Start runs the workers until ctx is done, then stops taking tasks and waits
+// up to grace for the running ones to finish and publish their results. Runs
+// still going after grace are stopped without a result: their rows stay
+// running, and the next start's recovery re-queues them without spending a
+// retry, since the shutdown was not the task's failure.
 func (p *Pool) Start(ctx context.Context, grace time.Duration) {
-	var wg sync.WaitGroup
+	taskCtx, stopTasks := context.WithCancelCause(context.WithoutCancel(ctx))
+	defer stopTasks(nil)
+	var loops, tasks sync.WaitGroup
 	for _, w := range p.workers {
-		wg.Add(1)
-		go func(worker *Worker) {
-			defer wg.Done()
-			worker.run(ctx)
-		}(w)
+		loops.Go(func() { w.run(ctx, taskCtx, &tasks) })
 	}
 	log.Info().Int("worker_count", len(p.workers)).Msg("worker pool started")
-	wg.Wait()
+	loops.Wait()
+
+	drained := make(chan struct{})
+	go func() {
+		tasks.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		log.Info().Msg("worker pool drained")
+	case <-time.After(grace):
+		log.Warn().Dur("grace", grace).Msg("worker pool: stopping tasks still running after the shutdown grace period")
+		stopTasks(errShutdown)
+		<-drained
+	}
 }
 
-func (w *Worker) run(ctx context.Context) {
+// run takes tasks until ctx is done. Each task runs on taskCtx, which
+// outlives ctx so a shutdown can drain it, and is counted in tasks.
+func (w *Worker) run(ctx, taskCtx context.Context, tasks *sync.WaitGroup) {
 	log.Info().Str("worker_id", w.id).Msg("worker started")
 	for {
 		select {
@@ -155,7 +174,9 @@ func (w *Worker) run(ctx context.Context) {
 				return
 			}
 
+			tasks.Add(1)
 			go func(ctx context.Context, taskMsg *models.TaskMessage) {
+				defer tasks.Done()
 				defer func(ctx context.Context) {
 					if r := recover(); r != nil {
 						// Log the panic on the worker
@@ -195,7 +216,7 @@ func (w *Worker) run(ctx context.Context) {
 				}(ctx)
 
 				w.executeTask(ctx, taskMsg)
-			}(ctx, msg)
+			}(taskCtx, msg)
 		}
 	}
 }
@@ -261,6 +282,10 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		taskLogger.Info().Msg("task cancelled; not publishing its result")
 		return
 	}
+	if errors.Is(context.Cause(runCtx), errShutdown) {
+		taskLogger.Warn().Msg("task stopped by shutdown; recovery re-queues it on the next start")
+		return
+	}
 
 	completedAt := time.Now()
 
@@ -293,7 +318,11 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	}
 	result.Logs = logs.entries
 
-	if err := w.redis.PublishResult(ctx, result); err != nil {
+	// Detached: the drain's grace can end the task context between the run
+	// finishing and this publish, and the result would be lost.
+	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := w.redis.PublishResult(pubCtx, result); err != nil {
 		log.Error().Err(err).Str("task_exec_id", msg.TaskExecID).Msg("failed to publish result")
 	}
 }

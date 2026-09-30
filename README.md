@@ -322,6 +322,7 @@ make migrate
 | Replay | `POST /api/executions/:id/retry` resets and re-runs |
 | Concurrency control | `max_parallel` counted from the execution's queued and running task rows |
 | Crash recovery | State reconstructed from PostgreSQL on restart |
+| Graceful shutdown | On SIGTERM workers stop taking tasks and give running ones 25 s to finish and publish their results; any still running are stopped without a result and re-queued by the next start's recovery |
 | Queue durability | Redis runs with `maxmemory-policy noeviction`; the backend refuses to start on an evicting policy |
 | DAG validation | Kahn's BFS at submission time — rejects cycles & missing deps |
 

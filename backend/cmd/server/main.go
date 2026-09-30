@@ -180,7 +180,16 @@ func main() {
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
-	go workerPool.Start(ctx, 25*time.Second)
+	// Workers stop before everything else, so the result processor is still
+	// consuming while they drain. Docker's stop timeout must exceed the grace
+	// (compose sets stop_grace_period).
+	workerCtx, stopWorkers := context.WithCancel(ctx)
+	defer stopWorkers()
+	workersDone := make(chan struct{})
+	go func() {
+		workerPool.Start(workerCtx, shutdownGrace)
+		close(workersDone)
+	}()
 
 	// HTTP server
 	session, err := sessionConfig()
@@ -210,6 +219,8 @@ func main() {
 	sig := <-quit
 
 	log.Info().Str("signal", sig.String()).Msg("shutdown signal received")
+	stopWorkers()
+	<-workersDone
 	cancel() // stop all background goroutines
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -222,6 +233,9 @@ func main() {
 
 	log.Info().Msg("shutdown complete")
 }
+
+// shutdownGrace is how long running tasks get to finish after SIGTERM.
+const shutdownGrace = 25 * time.Second
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
