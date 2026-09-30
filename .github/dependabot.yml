@@ -1,33 +1,41 @@
 version: 2
 # Cooldown: a new release waits 7 days before Dependabot proposes it, so a compromised or
 # yanked release is usually caught upstream first. Security updates are not delayed.
+# Groups take minor and patch updates only: one breaking major would otherwise hold back every
+# other update in its ecosystem. Majors arrive as separate PRs.
 updates:
   - package-ecosystem: gomod
     directory: /backend
     schedule: {interval: weekly}
     cooldown: {default-days: 7}
-    groups: {gomod: {patterns: ["*"]}}
+    groups: {gomod: {patterns: ["*"], update-types: [minor, patch]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: npm
     directories: [/frontend, /e2e-ui]
     schedule: {interval: weekly}
     cooldown: {default-days: 7}
-    groups: {npm: {patterns: ["*"]}}
+    groups: {npm: {patterns: ["*"], update-types: [minor, patch]}}
+    # typescript-eslint 8 declares a peer range that excludes TypeScript 7 (#91's npm ci fails ERESOLVE).
+    ignore: [{dependency-name: typescript, update-types: ["version-update:semver-major"]}]
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
     cooldown: {default-days: 7}
-    groups: {github-actions: {patterns: ["*"]}}
+    groups: {github-actions: {patterns: ["*"], update-types: [minor, patch]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: docker
     directories: [/backend, /frontend]
     schedule: {interval: weekly}
     cooldown: {default-days: 7}
-    groups: {docker: {patterns: ["*"]}}
+    groups: {docker: {patterns: ["*"], update-types: [minor, patch]}}
+    # CI builds and tests the frontend on Node 24 (ci.yml setup-node); the image moves with it.
+    ignore: [{dependency-name: node, update-types: ["version-update:semver-major"]}]
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: docker-compose
     directory: /
     schedule: {interval: weekly}
     cooldown: {default-days: 7}
+    # Postgres 18's image moves PGDATA, so a major needs a dump/restore plan, not a tag bump.
+    ignore: [{dependency-name: postgres, update-types: ["version-update:semver-major"]}]
     commit-message: {prefix: build, include: scope}
