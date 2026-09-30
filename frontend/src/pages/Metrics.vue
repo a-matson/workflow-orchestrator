@@ -261,7 +261,8 @@
 	const kpiCards = computed(() => {
 		const m = store.metrics
 		const total = (m?.workflows_completed ?? 0) + (m?.workflows_failed ?? 0)
-		const rate = total > 0 ? Math.round((m!.workflows_completed / total) * 100) : 100
+		// No finished workflows means no rate; 100% would misreport an idle system as healthy.
+		const rate = total > 0 ? Math.round((m!.workflows_completed / total) * 100) : null
 		return [
 			{
 				label: 'Workflows started',
@@ -272,8 +273,8 @@
 			},
 			{
 				label: 'Success rate',
-				value: `${rate}%`,
-				color: rate > 90 ? 'var(--green)' : 'var(--amber)',
+				value: rate === null ? '—' : `${rate}%`,
+				color: rate === null ? 'var(--text3)' : rate > 90 ? 'var(--green)' : 'var(--amber)',
 				sub: `${m?.workflows_failed ?? 0} failed`,
 				subColor: 'var(--red)',
 			},
