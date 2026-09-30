@@ -75,7 +75,7 @@ jobs:
               - 'docker-compose*.yml'
               - 'backend/Dockerfile'
               - 'frontend/Dockerfile'
-              - 'nginx.conf'
+              - 'nginx*.conf'
               - 'Makefile'
               - 'scripts/**'
               - 'examples/**'
