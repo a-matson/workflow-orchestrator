@@ -40,7 +40,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
                               │ REST + WebSocket
 ┌─────────────────────────────▼──────────────────────────────────────────┐
 │  Go Backend                                                            │
-│  REST /api/* │ WS Hub /ws │ Prometheus :9091                            │
+│  REST /api/* │ WS Hub /ws │ Prometheus :9091                           │
 │                                                                        │
 │  ┌───────────────────────────────────────────────────────────────┐     │
 │  │  Orchestrator                                                 │     │
@@ -48,13 +48,13 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 │  │  exponential backoff · dead-letter · crash recovery           │     │
 │  └──────────────┬────────────────────────────┬───────────────────┘     │
 │                 │                            │                         │
-│  ┌──────────────▼─────┐    ┌────────────────▼────────────────────┐     │
+│  ┌──────────────▼──────┐    ┌────────────────▼───────────────────┐     │
 │  │  PostgreSQL 16      │    │  Redis 7 Broker                    │     │
 │  │  definitions        │    │  task queue   (LIST BRPOP)         │     │
 │  │  executions/tasks   │    │  results      (LIST)               │     │
 │  │  artifacts (JSONB)  │    │  dead_letter  (LIST)               │     │
 │  └─────────────────────┘    │                                    │     │
-│                              └──────────────┬────────────────────┘     │
+│                             └───────────────┬────────────────────┘     │
 │                                             │                          │
 │  ┌──────────────────────────────────────────▼───────────────────────┐  │
 │  │  Worker Pool                                                     │  │
