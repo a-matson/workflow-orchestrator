@@ -6,7 +6,8 @@ package worker
 //   - All Linux capabilities dropped (--cap-drop=ALL)
 //   - No-new-privileges flag set
 //   - Read-only root filesystem with a tmpfs /tmp
-//   - Dedicated "fluxor-tasks" network that has NO route to postgres/redis
+//   - No network at all (NetworkMode "none"): user code cannot reach postgres,
+//     redis or sibling task containers
 //   - CPU and memory hard limits from ContainerSpec
 //   - Container removed immediately after exit (AutoRemove=false so we can
 //     read logs, then we remove manually)
@@ -34,7 +35,6 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
-	"github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 	"github.com/moby/moby/client/pkg/versions"
 	"github.com/rs/zerolog/log"
@@ -44,10 +44,6 @@ import (
 )
 
 const (
-	// TaskNetwork is the isolated Docker network for task containers.
-	// It is created on first use and has no external routes.
-	TaskNetwork = "fluxor-tasks"
-
 	// DefaultImage is used when ContainerSpec.Image is empty.
 	DefaultImage = "alpine:3.22"
 
@@ -141,9 +137,6 @@ func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*Contain
 	}
 
 	ce := &ContainerExecutor{docker: dc, storage: storageClient, workspace: ws, maxArtifactBytes: maxArtifactBytes}
-	if err := ce.ensureNetwork(ctx); err != nil {
-		return nil, err
-	}
 	return ce, nil
 }
 
@@ -203,35 +196,6 @@ func removeWorkspace(dir string) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("workspace: remove %q: %w", dir, errors.Join(err, walkErr))
 	}
-	return nil
-}
-
-// ensureNetwork creates the isolated task network if it does not exist.
-// The network is internal (no external routing) so task containers cannot
-// reach the internet, Postgres, or Redis.
-func (ce *ContainerExecutor) ensureNetwork(ctx context.Context) error {
-	nets, err := ce.docker.NetworkList(ctx, dockerclient.NetworkListOptions{
-		Filters: dockerclient.Filters{}.Add("name", TaskNetwork),
-	})
-	if err != nil {
-		return fmt.Errorf("docker: list networks: %w", err)
-	}
-	for _, n := range nets.Items {
-		if n.Name == TaskNetwork {
-			log.Debug().Str("network", TaskNetwork).Msg("task network already exists")
-			return nil
-		}
-	}
-
-	_, err = ce.docker.NetworkCreate(ctx, TaskNetwork, dockerclient.NetworkCreateOptions{
-		Driver:   "bridge",
-		Internal: true, // no external routing — tasks are isolated
-		Labels:   map[string]string{"managed-by": "fluxor"},
-	})
-	if err != nil {
-		return fmt.Errorf("docker: create network %q: %w", TaskNetwork, err)
-	}
-	log.Info().Str("network", TaskNetwork).Msg("isolated task network created")
 	return nil
 }
 
@@ -315,29 +279,26 @@ func (ce *ContainerExecutor) Run(
 
 		Mounts: []mount.Mount{ce.workspaceMount(workspaceDir)},
 
+		// Tasks that need the network are http_request or notification, which
+		// run in-process behind the egress guard. A shared bridge would let user
+		// code reach sibling containers and whatever the bridge routes to.
+		NetworkMode: "none",
+
 		// Explicit restart policy: never restart task containers
 		RestartPolicy: container.RestartPolicy{Name: "no"},
-	}
-
-	// Connect to the isolated internal network (no internet, no postgres/redis)
-	netCfg := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			TaskNetwork: {},
-		},
 	}
 
 	addLog("info", "Creating isolated container", map[string]any{
 		"image":      spec.Image,
 		"memory_mb":  spec.MemoryMB,
 		"cpu_millis": spec.CPUMillis,
-		"network":    TaskNetwork,
+		"network":    "none",
 		"cmd":        strings.Join(cmd, " "),
 	})
 
 	createResp, err := ce.docker.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
-		Config:           containerCfg,
-		HostConfig:       hostCfg,
-		NetworkingConfig: netCfg,
+		Config:     containerCfg,
+		HostConfig: hostCfg,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("container: create: %w", err)
