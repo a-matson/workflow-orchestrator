@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -110,15 +109,6 @@ func (c *Client) Download(ctx context.Context, key string) (io.ReadCloser, int64
 		return nil, 0, fmt.Errorf("minio: stat %q: %w", key, err)
 	}
 	return obj, info.Size, nil
-}
-
-// PresignURL returns a time-limited download URL for an artifact.
-func (c *Client) PresignURL(ctx context.Context, key string, expires time.Duration) (string, error) {
-	u, err := c.mc.PresignedGetObject(ctx, c.bucket, key, expires, nil)
-	if err != nil {
-		return "", fmt.Errorf("minio: presign %q: %w", key, err)
-	}
-	return u.String(), nil
 }
 
 // Exists returns true if the object key exists in the bucket.

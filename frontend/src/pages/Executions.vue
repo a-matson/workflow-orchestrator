@@ -165,9 +165,9 @@
 										v-for="art in expandedTask.artifacts_out"
 										:key="art.minio_key"
 										class="artifact-chip"
-										:href="artifactDownloadUrl(art.minio_key)"
-										target="_blank"
-										:title="art.minio_key"
+										:href="artifactDownloadUrl(expandedTask.id, art.path)"
+										download
+										:title="art.path"
 									>
 										<span class="artifact-icon">⬇</span>
 										{{ art.path }}
@@ -378,8 +378,9 @@
 		},
 	)
 
-	function artifactDownloadUrl(minioKey: string): string {
-		return `/api/artifacts/url?key=${encodeURIComponent(minioKey)}&expires=60`
+	function artifactDownloadUrl(taskId: string, path: string): string {
+		const segments = path.split('/').map(encodeURIComponent).join('/')
+		return `/api/tasks/${encodeURIComponent(taskId)}/artifacts/${segments}`
 	}
 
 	function fmtBytes(bytes: number): string {

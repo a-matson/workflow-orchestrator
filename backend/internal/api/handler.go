@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/netip"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -103,8 +107,8 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/ready":   h.Ready,
 
 		// Artifacts
-		"GET /api/tasks/{id}/artifacts": h.ListTaskArtifacts,
-		"GET /api/artifacts/url":        h.GetArtifactURL,
+		"GET /api/tasks/{id}/artifacts":           h.ListTaskArtifacts,
+		"GET /api/tasks/{id}/artifacts/{path...}": h.DownloadTaskArtifact,
 
 		// API keys
 		"GET /api/keys":         h.ListAPIKeys,
@@ -436,32 +440,50 @@ func (h *Handler) ListTaskArtifacts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetArtifactURL returns a pre-signed download URL for an artifact.
-// GET /api/artifacts/url?key=artifacts/...&expires=60
-func (h *Handler) GetArtifactURL(w http.ResponseWriter, r *http.Request) {
+// DownloadTaskArtifact streams one artifact the task produced. The object key
+// comes from the task's own row, never from the request, so a caller can reach
+// only artifacts of a task, by the path the task declared.
+// GET /api/tasks/{id}/artifacts/{path...}
+func (h *Handler) DownloadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 	if h.storage == nil {
 		writeError(w, r, http.StatusServiceUnavailable, "artifact storage not configured", nil)
 		return
 	}
-	key := r.URL.Query().Get("key")
-	if key == "" {
-		writeError(w, r, http.StatusBadRequest, "key parameter required", nil)
-		return
-	}
-	expiresStr := r.URL.Query().Get("expires")
-	expiresMins := 60
-	if expiresStr != "" {
-		if n, err := strconv.Atoi(expiresStr); err == nil && n > 0 {
-			expiresMins = n
-		}
-	}
-	url, err := h.storage.PresignURL(r.Context(), key, time.Duration(expiresMins)*time.Minute)
+	task, err := h.store.GetTaskExecution(r.Context(), r.PathValue("id"))
 	if err != nil {
-		logFrom(r).Error().Err(err).Str("key", key).Msg("presign failed")
-		writeError(w, r, http.StatusInternalServerError, "could not generate download URL", err)
+		writeError(w, r, http.StatusNotFound, "task not found", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"url": url, "key": key})
+	path := r.PathValue("path")
+	i := slices.IndexFunc(task.ArtifactsOut, func(a models.ResolvedArtifact) bool { return a.Path == path })
+	if i < 0 {
+		writeError(w, r, http.StatusNotFound, "artifact not found", nil)
+		return
+	}
+	body, size, err := h.storage.Download(r.Context(), task.ArtifactsOut[i].MinioKey)
+	if err != nil {
+		writeError(w, r, http.StatusBadGateway, "could not read artifact", err)
+		return
+	}
+	defer func() {
+		if err := body.Close(); err != nil {
+			logFrom(r).Warn().Err(err).Msg("closing artifact stream")
+		}
+	}()
+
+	// The server's 60s WriteTimeout would cut off a large artifact; a bound
+	// remains so a stalled client cannot hold the stream open forever.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+		logFrom(r).Warn().Err(err).Msg("could not extend the artifact write deadline")
+	}
+	// Served as an opaque download, never rendered: the content is task output.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(path)}))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, body); err != nil {
+		logFrom(r).Warn().Err(err).Str("task_id", task.ID).Msg("artifact download interrupted")
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
