@@ -64,7 +64,7 @@ func (m *Manager) NextRetryDelay(retryCount int, policy *models.RetryPolicy) tim
 
 	// Add jitter: ±25% of the computed delay to prevent thundering herd
 	if policy.Jitter {
-		jitter := delay * 0.25 * (2*rand.Float64() - 1)
+		jitter := delay * 0.25 * (2*rand.Float64() - 1) // #nosec G404 -- spreads retry times; nothing depends on it being unpredictable
 		delay += jitter
 	}
 
