@@ -100,7 +100,7 @@ func maxArtifactBytesFromEnv() (int64, error) {
 	return n, nil
 }
 
-// NewContainerExecutor connects to the local Docker Engine socket.
+// NewContainerExecutor connects to the Docker Engine named by DOCKER_HOST.
 func NewContainerExecutor(storageClient *storage.Client, ws Workspace) (*ContainerExecutor, error) {
 	// The client negotiates the API version on its first request.
 	dc, err := dockerclient.New(dockerclient.FromEnv)
@@ -363,17 +363,14 @@ func (ce *ContainerExecutor) Run(
 	}
 
 	// ── 7. Wait for exit ──────────────────────────────────────────────────────
-	wait := ce.docker.ContainerWait(ctx, containerID, dockerclient.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-	var exitCode int64
-	select {
-	case status := <-wait.Result:
-		exitCode = status.StatusCode
-	case waitErr := <-wait.Error:
-		return "", nil, fmt.Errorf("container: wait: %w", waitErr)
-	case <-ctx.Done():
-		// Best effort: the deferred force-remove above stops it if this kill fails.
-		_, _ = ce.docker.ContainerKill(context.WithoutCancel(ctx), containerID, dockerclient.ContainerKillOptions{Signal: "KILL"})
-		return "", nil, ctx.Err()
+	exitCode, err := ce.waitExit(ctx, containerID)
+	if err != nil {
+		if ctx.Err() != nil {
+			// Best effort: the deferred force-remove above stops it if this kill fails.
+			_, _ = ce.docker.ContainerKill(context.WithoutCancel(ctx), containerID, dockerclient.ContainerKillOptions{Signal: "KILL"})
+			return "", nil, ctx.Err()
+		}
+		return "", nil, fmt.Errorf("container: wait: %w", err)
 	}
 
 	// ── 8. Collect logs ───────────────────────────────────────────────────────
@@ -415,6 +412,34 @@ func (ce *ContainerExecutor) workspaceMount(dir string) mount.Mount {
 		// 0755, created for WorkingDir) onto the empty subpath and takes away
 		// our ownership of it.
 		VolumeOptions: &mount.VolumeOptions{Subpath: filepath.Base(dir), NoCopy: true},
+	}
+}
+
+const waitRetryPause = time.Second
+
+// waitExit returns the container's exit code once it stops running.
+func (ce *ContainerExecutor) waitExit(ctx context.Context, containerID string) (int64, error) {
+	for {
+		wait := ce.docker.ContainerWait(ctx, containerID, dockerclient.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+		select {
+		case status := <-wait.Result:
+			return status.StatusCode, nil
+		case err := <-wait.Error:
+			// The socket proxy (HAProxy) closes a response idle for 10 minutes, and
+			// /wait sends nothing until the container exits. Waiting again is safe:
+			// not-running answers at once for a container that already exited.
+			if !errors.Is(err, io.ErrUnexpectedEOF) {
+				return 0, err
+			}
+			// The pause bounds the request rate if something cuts every wait at once.
+			select {
+			case <-time.After(waitRetryPause):
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
 	}
 }
 

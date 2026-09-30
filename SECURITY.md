@@ -12,4 +12,4 @@ Only `main` is supported; fixes land there.
 
 ## Deployment note
 
-The backend mounts the host Docker socket, which is host-root equivalent (see the README).
+The backend reaches the host Docker daemon through a proxy limited to the calls it makes, but it can still create containers, which is host-root equivalent (see the README, Docker socket access).
