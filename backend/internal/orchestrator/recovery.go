@@ -39,7 +39,6 @@ func (o *Orchestrator) RecoverInFlightExecutions(ctx context.Context) error {
 }
 
 func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.WorkflowExecution) error {
-	// Reload full execution with tasks
 	fullExec, err := o.store.GetWorkflowExecution(ctx, exec.ID)
 	if err != nil {
 		return err
@@ -55,7 +54,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		return err
 	}
 
-	// Rebuild task map
 	taskMap := make(map[string]*models.TaskExecution)
 	completed := make(map[string]bool)
 	failed := make(map[string]bool)
@@ -96,7 +94,6 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		taskMap[task.TaskDefinitionID] = task
 	}
 
-	// Restore execution context
 	execCtx := &ExecutionContext{
 		Execution:  fullExec,
 		Definition: def,
