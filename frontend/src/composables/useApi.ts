@@ -1,7 +1,12 @@
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
-// Stub: the expired-session hook lands in the next commit.
-export function setUnauthorizedHandler(_fn: () => void) {}
+let onUnauthorized: (() => void) | null = null
+
+// fn runs on every 401 outside /api/session, whose own 401s mean "not signed in"
+// or "wrong key" and are handled by the guard and the login page.
+export function setUnauthorizedHandler(fn: () => void) {
+	onUnauthorized = fn
+}
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const res = await fetch(`${BASE_URL}${path}`, {
@@ -9,10 +14,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 		headers: { 'Content-Type': 'application/json' },
 		body: body !== undefined ? JSON.stringify(body) : undefined,
 	})
+	if (res.status === 401 && !path.startsWith('/api/session')) onUnauthorized?.()
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }))
 		throw new Error((err as { error?: string }).error || `HTTP ${res.status}`)
 	}
+	if (res.status === 204) return undefined as T
 	return res.json()
 }
 

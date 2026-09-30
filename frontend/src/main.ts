@@ -1,8 +1,11 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { router } from './router'
+import { handleExpiredSession, router } from './router'
+import { setUnauthorizedHandler } from './composables/useApi'
 import App from './App.vue'
 import './assets/main.css'
+
+setUnauthorizedHandler(handleExpiredSession(router))
 
 const app = createApp(App)
 app.use(createPinia())

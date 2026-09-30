@@ -1,8 +1,15 @@
-import { createRouter, createWebHistory, type Router } from 'vue-router'
+import {
+	createRouter,
+	createWebHistory,
+	type RouteLocationNormalized,
+	type Router,
+} from 'vue-router'
 import BuilderPage from '../pages/Builder.vue'
 import ExecutionsPage from '../pages/Executions.vue'
 import LogsPage from '../pages/Logs.vue'
 import MetricsPage from '../pages/Metrics.vue'
+import LoginPage from '../pages/Login.vue'
+import { loadSession, principal } from '../composables/useSession'
 
 export const navRoutes = [
 	{
@@ -30,6 +37,7 @@ export const router = createRouter({
 	history: createWebHistory(),
 	routes: [
 		{ path: '/', redirect: '/builder' },
+		{ path: '/login', name: 'login', component: LoginPage, meta: { public: true } },
 		...navRoutes,
 		{
 			path: '/builder/:workflowId',
@@ -52,10 +60,24 @@ export const router = createRouter({
 	],
 })
 
-// Stubs: the session guard lands in the next commit.
-export async function requireSession(): Promise<true> {
-	return true
+router.beforeEach(requireSession)
+
+export async function requireSession(to: RouteLocationNormalized) {
+	if (to.meta.public || principal.value || (await loadSession())) return true
+	return { name: 'login', query: { redirect: to.fullPath } }
 }
-export function handleExpiredSession(_router: Router): () => void {
-	return () => {}
+
+// Returns the useApi 401 hook. Every in-flight request fails at once when a
+// session expires, so only the first 401 navigates; the rest are dropped.
+export function handleExpiredSession(router: Router): () => void {
+	let redirecting = false
+	return () => {
+		const from = router.currentRoute.value
+		if (redirecting || from.name === 'login') return
+		redirecting = true
+		principal.value = null
+		router
+			.push({ name: 'login', query: { redirect: from.fullPath } })
+			.finally(() => (redirecting = false))
+	}
 }
