@@ -67,6 +67,7 @@ type Metrics struct {
 	WorkflowsStarted   int64
 	WorkflowsCompleted int64
 	WorkflowsFailed    int64
+	WorkflowsCancelled int64
 	TasksDispatched    int64
 	TasksCompleted     int64
 	TasksFailed        int64
@@ -523,31 +524,26 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 	return nil
 }
 
-// completeWorkflow moves the execution to completed, or to failed and then
-// cancels its still-open tasks. A conflict means another terminal write, such
-// as a cancel, got there first; that write owns the final event.
+// completeWorkflow moves the execution to completed or failed and cancels
+// any task still open, as a failed execution's siblings are. A conflict means
+// another terminal write, such as a cancel, got there first; that write owns
+// the final event.
 func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionContext, failed bool) error {
 	status, evtType := models.WorkflowStatusCompleted, models.WSEventWorkflowCompleted
 	if failed {
 		status, evtType = models.WorkflowStatusFailed, models.WSEventWorkflowFailed
 	}
 
-	row, err := o.store.TransitionExecution(ctx, execCtx.Execution.ID, status, "")
+	// Siblings are closed rather than left to finish: the execution leaves
+	// the active map, so their results would reach handleOrphanedResult, and
+	// recovery skips failed executions. Plan row R7 may let them finish.
+	row, closed, err := o.store.FinishExecution(ctx, execCtx.Execution.ID, status, "")
 	if errors.Is(err, persistence.ErrConflict) {
 		log.Warn().Err(err).Str("exec_id", execCtx.Execution.ID).Msg("execution already final; not overwriting it")
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("persisting workflow completion: %w", err)
-	}
-
-	var closed []*models.TaskExecution
-	if failed {
-		// The execution leaves the active map below, so nothing would ever
-		// close a sibling that is still running or waiting for its retry:
-		// its result would reach handleOrphanedResult, and recovery skips
-		// failed executions. Plan row R7 may later let siblings finish first.
-		closed = o.cancelOpenTasks(ctx, row.ID)
 	}
 
 	final := o.finish(execCtx, row, closed)
@@ -570,11 +566,10 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 // final. Containers of running tasks keep running until they finish on their
 // own (plan row R31 stops them).
 func (o *Orchestrator) CancelExecution(ctx context.Context, id string) (*models.WorkflowExecution, error) {
-	row, err := o.store.TransitionExecution(ctx, id, models.WorkflowStatusCancelled, "")
+	row, closed, err := o.store.FinishExecution(ctx, id, models.WorkflowStatusCancelled, "")
 	if err != nil {
 		return nil, err
 	}
-	closed := o.cancelOpenTasks(ctx, id)
 
 	o.activeMu.RLock()
 	execCtx, ok := o.active[id]
@@ -590,26 +585,17 @@ func (o *Orchestrator) CancelExecution(ctx context.Context, id string) (*models.
 		}
 	}
 
+	o.metrics.mu.Lock()
+	o.metrics.WorkflowsCancelled++
+	o.metrics.mu.Unlock()
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowCancelled, Payload: final})
 	log.Info().Str("exec_id", id).Int("tasks_cancelled", len(closed)).Msg("workflow cancelled")
 	return final, nil
 }
 
-// cancelOpenTasks closes the open tasks of an execution that is already
-// final. A failure is logged rather than returned: the execution's terminal
-// status is committed and its final event must still go out. The rows stay
-// open, and no dispatch touches them once the execution leaves the active map.
-func (o *Orchestrator) cancelOpenTasks(ctx context.Context, execID string) []*models.TaskExecution {
-	closed, err := o.store.CancelOpenTasks(ctx, execID)
-	if err != nil {
-		log.Error().Err(err).Str("exec_id", execID).Msg("execution is final but its open tasks were not cancelled")
-	}
-	return closed
-}
-
-// finish records row, the execution's committed terminal state, and tasks in
-// the cache, marks the execution done so no dispatch or late result changes
-// it, drops it from the active map, and returns the final event's snapshot.
+// finish takes row, the execution's committed terminal state, and tasks into
+// the cache and retires the context. Afterwards the cache matches what was
+// committed, and no dispatch or late result changes it.
 func (o *Orchestrator) finish(execCtx *ExecutionContext, row *models.WorkflowExecution, tasks []*models.TaskExecution) *models.WorkflowExecution {
 	execCtx.mu.Lock()
 	for _, task := range tasks {
@@ -797,6 +783,7 @@ func (o *Orchestrator) GetMetrics() map[string]int64 {
 		"workflows_started":   o.metrics.WorkflowsStarted,
 		"workflows_completed": o.metrics.WorkflowsCompleted,
 		"workflows_failed":    o.metrics.WorkflowsFailed,
+		"workflows_cancelled": o.metrics.WorkflowsCancelled,
 		"tasks_dispatched":    o.metrics.TasksDispatched,
 		"tasks_completed":     o.metrics.TasksCompleted,
 		"tasks_failed":        o.metrics.TasksFailed,
