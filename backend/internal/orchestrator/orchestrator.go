@@ -132,7 +132,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	}
 
 	if err := o.store.CreateExecutionWithTasks(ctx, exec, exec.Tasks); err != nil {
-		return nil, fmt.Errorf("persisting execution: %w", err)
+		return nil, fmt.Errorf("persisting execution and tasks: %w", err)
 	}
 
 	execCtx := &ExecutionContext{
@@ -623,7 +623,7 @@ func runSafe(name, execID string, fn func()) {
 			log.Error().
 				Str("goroutine", name).
 				Str("exec_id", execID).
-				Interface("panic", r).
+				Str("panic", fmt.Sprint(r)).
 				Bytes("stack", debug.Stack()).
 				Msg("recovered panic in execution goroutine")
 		}

@@ -4,6 +4,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,8 +194,9 @@ func TestStartWorkflow_NoPartialRows(t *testing.T) {
 	// Postgres text rejects NUL, so inserting the third task row fails.
 	poisoned.Tasks[2].Name = "C\x00"
 
-	if _, err := orch.StartWorkflow(ctx, &poisoned, nil); err == nil {
-		t.Fatal("StartWorkflow succeeded; want an error from the rejected task row")
+	_, err := orch.StartWorkflow(ctx, &poisoned, nil)
+	if err == nil || !strings.Contains(err.Error(), "inserting task c") {
+		t.Fatalf("StartWorkflow error = %v; want the rejected task c row", err)
 	}
 
 	var execs, taskRows int
@@ -209,6 +211,9 @@ func TestStartWorkflow_NoPartialRows(t *testing.T) {
 	}
 	if execs != 0 || taskRows != 0 {
 		t.Errorf("failed start left %d execution rows and %d task rows; want 0 and 0", execs, taskRows)
+	}
+	if m := orch.GetMetrics(); m["active_workflows"] != 0 || m["workflows_started"] != 0 {
+		t.Errorf("failed start registered in-memory state: %v", m)
 	}
 	if hasEvent(rec, models.WSEventWorkflowStarted) {
 		t.Error("failed start broadcast workflow_started")
