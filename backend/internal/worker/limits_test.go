@@ -117,3 +117,17 @@ func TestBoundedLogs_CapPerAttempt(t *testing.T) {
 		t.Errorf("last entry = %q, want a truncation notice", last.Message)
 	}
 }
+
+func TestLimitsFromEnv(t *testing.T) {
+	t.Setenv("FLUXOR_MAX_TASK_OUTPUT_BYTES", "")
+	t.Setenv("FLUXOR_MAX_TASK_LOG_BYTES", "")
+	if l, err := LimitsFromEnv(); err != nil || l.OutputBytes != DefaultMaxTaskOutputBytes || l.LogBytes != DefaultMaxTaskLogBytes {
+		t.Errorf("defaults = %+v, %v", l, err)
+	}
+	for _, bad := range []string{"abc", "0", "-5", "1MiB"} {
+		t.Setenv("FLUXOR_MAX_TASK_LOG_BYTES", bad)
+		if _, err := LimitsFromEnv(); err == nil {
+			t.Errorf("FLUXOR_MAX_TASK_LOG_BYTES=%q accepted", bad)
+		}
+	}
+}
