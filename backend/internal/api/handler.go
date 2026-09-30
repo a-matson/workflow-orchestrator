@@ -106,6 +106,8 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/health":  h.Health,
 		"GET /api/ready":   h.Ready,
 
+		"POST /api/client-errors": h.ReportClientError,
+
 		// Artifacts
 		"GET /api/tasks/{id}/artifacts":           h.ListTaskArtifacts,
 		"GET /api/tasks/{id}/artifacts/{path...}": h.DownloadTaskArtifact,

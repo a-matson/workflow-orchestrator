@@ -37,6 +37,9 @@ var publicRoutes = map[string]bool{
 // state, so they are open to every role, and to anyone for login.
 var ownSessionRoutes = map[string]bool{"POST /api/session": true, "DELETE /api/session": true}
 
+// logOnlyRoutes take a POST but only write a log line, so every role may call them.
+var logOnlyRoutes = map[string]bool{"POST /api/client-errors": true}
+
 // The role model as invariants, so an entry that is present but too lax
 // (a viewer on a mutating route, say) fails here and not in production.
 func TestRoutePolicy_Levels(t *testing.T) {
@@ -45,7 +48,7 @@ func TestRoutePolicy_Levels(t *testing.T) {
 		if publicRoutes[pattern] != (role == RolePublic) {
 			t.Errorf("%s: role %q, but public = %v", pattern, role, publicRoutes[pattern])
 		}
-		if method != http.MethodGet && method != http.MethodHead && !ownSessionRoutes[pattern] && !role.allows(RoleOperator) {
+		if method != http.MethodGet && method != http.MethodHead && !ownSessionRoutes[pattern] && !logOnlyRoutes[pattern] && !role.allows(RoleOperator) {
 			t.Errorf("%s mutates but requires only %q", pattern, role)
 		}
 		if strings.HasPrefix(path, "/api/keys") && role != RoleAdmin {

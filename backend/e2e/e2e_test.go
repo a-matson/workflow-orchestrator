@@ -199,6 +199,13 @@ func TestE2E_NoopWorkflowCompletes(t *testing.T) {
 	}
 }
 
+// The UI reports errors it could not handle; the backend only logs them.
+func TestE2E_ClientErrorReport(t *testing.T) {
+	do(t, http.MethodPost, baseURL+"/api/client-errors", map[string]any{
+		"message": "e2e", "stack": "Error: e2e", "source": "vue", "path": "/builder",
+	}, http.StatusNoContent, nil)
+}
+
 // Every client-side route must fall back to the SPA so refreshes and deep links work.
 func TestE2E_FrontendServesSPA(t *testing.T) {
 	for _, path := range []string{"/", "/executions", "/metrics"} {
