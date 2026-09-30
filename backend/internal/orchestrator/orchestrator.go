@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -279,6 +280,24 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 		return err
 	}
 
+	o.activeMu.RLock()
+	execCtx, ok := o.active[taskExec.WorkflowExecID]
+	o.activeMu.RUnlock()
+	if ok {
+		// dispatchReadyTasks persists "queued" after the enqueue, under
+		// execCtx.mu, so a fast worker can get here first. Its full-row write
+		// would then put the row back to queued, and a queued task's result
+		// is rejected (completion requires running). Wait for dispatch and
+		// re-read so this write lands last.
+		execCtx.mu.Lock()
+		defer execCtx.mu.Unlock()
+		if taskExec, err = o.store.GetTaskExecution(ctx, taskExecID); err != nil {
+			return err
+		}
+	}
+
+	// Not TransitionTask: a retry is re-enqueued with its row still in
+	// retrying, and retrying -> running is not an allowed transition.
 	now := time.Now()
 	taskExec.Status = models.TaskStatusRunning
 	taskExec.WorkerID = workerID
@@ -288,14 +307,9 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 		return err
 	}
 
-	o.activeMu.RLock()
-	execCtx, ok := o.active[taskExec.WorkflowExecID]
-	o.activeMu.RUnlock()
 	if ok {
-		execCtx.mu.Lock()
 		execCtx.Running[taskExec.TaskDefinitionID] = true
 		delete(execCtx.Queued, taskExec.TaskDefinitionID)
-		execCtx.mu.Unlock()
 	}
 
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventTaskStarted, Payload: taskExec})
@@ -320,15 +334,6 @@ func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskRes
 	// Determine task definition ID from task exec
 	taskDefID := taskExec.TaskDefinitionID
 
-	// Release the concurrency slot so the next task can be dispatched
-	sem := o.getSemaphore(result.WorkflowExecID)
-	if sem != nil {
-		select {
-		case <-sem:
-		default:
-		}
-	}
-
 	if result.Success {
 		return o.handleTaskSuccess(ctx, execCtx, taskExec, taskDefID, result)
 	}
@@ -337,19 +342,20 @@ func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskRes
 
 func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *ExecutionContext, taskExec *models.TaskExecution, taskDefID string, result *models.TaskResult) error {
 	now := time.Now()
-	taskExec.Status = models.TaskStatusCompleted
-	taskExec.Output = result.Output
-	taskExec.Logs = append(taskExec.Logs, result.Logs...)
-	taskExec.CompletedAt = &now
-	taskExec.WorkerID = result.WorkerID
-	taskExec.UpdatedAt = now
-	taskExec.ArtifactsOut = result.ArtifactsOut
+	taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.RetryCount, models.TaskStatusCompleted, persistence.TaskPatch{
+		WorkerID:     result.WorkerID,
+		CompletedAt:  &now,
+		Output:       result.Output,
+		Logs:         result.Logs,
+		ArtifactsOut: result.ArtifactsOut,
+	})
+	if err != nil {
+		return dropStaleResult(result, models.TaskStatusCompleted, err)
+	}
+	// Duration has no column; it only rides on the broadcast payload.
 	dur := now.Sub(result.StartedAt)
 	taskExec.Duration = &dur
-
-	if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
-		return fmt.Errorf("persisting task completion: %w", err)
-	}
+	o.releaseSlot(execCtx.Execution.ID)
 
 	// Mark idempotency so re-delivered messages are no-ops
 	_ = o.redis.SetIdempotency(ctx,
@@ -358,6 +364,7 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 
 	// Update in-memory state — acquire lock, update maps, release, then act
 	execCtx.mu.Lock()
+	execCtx.cacheTask(taskExec)
 	execCtx.Completed[taskDefID] = true
 	delete(execCtx.Running, taskDefID)
 	delete(execCtx.Queued, taskDefID)
@@ -399,24 +406,34 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		policy = &retry.DefaultPolicy
 	}
 
-	taskExec.Logs = append(taskExec.Logs, result.Logs...)
-	taskExec.Error = result.Error
-	taskExec.WorkerID = result.WorkerID
-	taskExec.CompletedAt = &now
+	patch := persistence.TaskPatch{
+		WorkerID:    result.WorkerID,
+		CompletedAt: &now,
+		Error:       &result.Error,
+		Logs:        result.Logs,
+	}
 
 	if o.retryMgr.ShouldRetry(taskExec, policy) {
+		// ScheduleRetry only computes the next attempt on this read copy;
+		// the transition below is what persists it.
 		o.retryMgr.ScheduleRetry(ctx, taskExec, policy, result.Error)
-		taskExec.UpdatedAt = now
+		patch.RetryCount = &taskExec.RetryCount
+		patch.NextRetryAt = taskExec.NextRetryAt
 
-		if err := o.store.UpdateTaskExecution(ctx, taskExec); err != nil {
-			return fmt.Errorf("persisting retry state: %w", err)
+		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.RetryCount, models.TaskStatusRetrying, patch)
+		if err != nil {
+			return dropStaleResult(result, models.TaskStatusRetrying, err)
 		}
+		o.releaseSlot(execCtx.Execution.ID)
 
 		// Schedule retry in Redis
 		taskDef := execCtx.Graph.Nodes[taskDefID].Task
 		// Re-resolve artifact inputs for the retry: the dependency outputs are
 		// still in the TaskMap from the original run.
+		execCtx.mu.Lock()
+		execCtx.cacheTask(taskExec)
 		retryArtifactsIn := o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn)
+		execCtx.mu.Unlock()
 
 		msg := &models.TaskMessage{
 			TaskExecID:       taskExec.ID,
@@ -436,7 +453,9 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 		}
 
 		if taskExec.NextRetryAt != nil {
-			_ = o.redis.ScheduleRetry(ctx, msg, *taskExec.NextRetryAt)
+			if err := o.redis.ScheduleRetry(ctx, msg, *taskExec.NextRetryAt); err != nil {
+				log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to schedule task retry")
+			}
 		}
 
 		o.metrics.mu.Lock()
@@ -452,16 +471,21 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 	} else {
 		// Exhausted retries → dead letter
-		taskExec.Status = models.TaskStatusDeadLetter
-		taskExec.UpdatedAt = now
-		_ = o.store.UpdateTaskExecution(ctx, taskExec)
+		taskExec, err := o.store.TransitionTask(ctx, taskExec.ID, result.RetryCount, models.TaskStatusDeadLetter, patch)
+		if err != nil {
+			return dropStaleResult(result, models.TaskStatusDeadLetter, err)
+		}
+		o.releaseSlot(execCtx.Execution.ID)
 
-		_ = o.redis.SendToDeadLetter(ctx, &models.TaskMessage{
+		if err := o.redis.SendToDeadLetter(ctx, &models.TaskMessage{
 			TaskExecID:     taskExec.ID,
 			WorkflowExecID: execCtx.Execution.ID,
-		}, result.Error)
+		}, result.Error); err != nil {
+			log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to record task in dead-letter queue")
+		}
 
 		execCtx.mu.Lock()
+		execCtx.cacheTask(taskExec)
 		execCtx.Failed[taskDefID] = true
 		delete(execCtx.Queued, taskDefID)
 		delete(execCtx.Running, taskDefID)
@@ -521,6 +545,50 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+// cacheTask replaces the cached row for task's definition, in TaskMap and in
+// Execution.Tasks (the workflow event payload). It swaps pointers rather than
+// copying fields because earlier broadcasts may still be reading the old row.
+// Callers hold c.mu.
+func (c *ExecutionContext) cacheTask(task *models.TaskExecution) {
+	c.TaskMap[task.TaskDefinitionID] = task
+	for i, t := range c.Execution.Tasks {
+		if t.TaskDefinitionID == task.TaskDefinitionID {
+			c.Execution.Tasks[i] = task
+			return
+		}
+	}
+}
+
+// dropStaleResult turns an ErrConflict from a result's transition into a
+// logged no-op: the row is not running this attempt, so the result is a
+// redelivery or belongs to an attempt that has moved on. Applying it would
+// double-count the task. Any other error is returned.
+func dropStaleResult(result *models.TaskResult, to models.TaskStatus, err error) error {
+	if !errors.Is(err, persistence.ErrConflict) {
+		return fmt.Errorf("persisting task %s: %w", to, err)
+	}
+	log.Warn().Err(err).
+		Str("task_exec_id", result.TaskExecID).
+		Str("workflow_exec_id", result.WorkflowExecID).
+		Int("retry_count", result.RetryCount).
+		Msg("dropping stale task result")
+	return nil
+}
+
+// releaseSlot frees one of the execution's concurrency slots. Only an
+// accepted result releases one, so a dropped duplicate cannot free a slot
+// that another task still holds.
+func (o *Orchestrator) releaseSlot(workflowExecID string) {
+	sem := o.getSemaphore(workflowExecID)
+	if sem == nil {
+		return
+	}
+	select {
+	case <-sem:
+	default:
+	}
+}
 
 func (o *Orchestrator) getSemaphore(workflowExecID string) chan struct{} {
 	o.semMu.Lock()
