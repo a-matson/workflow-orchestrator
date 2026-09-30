@@ -18,6 +18,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/retry"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/testutil"
 )
 
@@ -727,6 +728,22 @@ func TestReaper_LostResult(t *testing.T) {
 	}
 	if got := testutil.TaskRow(t, store, exec.ID, "a").Status; got != models.TaskStatusDeadLetter {
 		t.Errorf("task a after its late result = %s, want dead_letter", got)
+	}
+}
+
+// REL-23: a task's max_retries row must be the retry count its failures
+// actually get, including when no policy is set and the default applies.
+func TestTaskMaxRetriesMatchesPolicy(t *testing.T) {
+	orch, store, _, _ := setupOrchestrator(t)
+	tasks := independentTasks("default", "own")
+	tasks[1].RetryPolicy = &models.RetryPolicy{MaxRetries: 5}
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Max Retries", MaxParallel: 2, Tasks: tasks,
+	})
+	for id, want := range map[string]int{"default": retry.DefaultPolicy.MaxRetries, "own": 5} {
+		if got := testutil.TaskRow(t, store, exec.ID, id).MaxRetries; got != want {
+			t.Errorf("task %s max_retries = %d, want %d", id, got, want)
+		}
 	}
 }
 

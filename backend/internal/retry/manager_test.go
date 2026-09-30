@@ -81,3 +81,25 @@ func TestShouldRetry(t *testing.T) {
 		t.Error("should NOT retry at max retries")
 	}
 }
+
+// REL-23: an unset max_delay or backoff_multiplier (0 in JSON) must not
+// collapse the delay to 0 and retry at once.
+func TestNextRetryDelay_ZeroMaxDelay(t *testing.T) {
+	mgr := retry.NewManager()
+	tests := []struct {
+		name   string
+		policy models.RetryPolicy
+		n      int
+		want   time.Duration
+	}{
+		{"no max delay", models.RetryPolicy{InitialDelay: time.Second, BackoffMultiple: 2}, 3, 8 * time.Second},
+		{"no multiplier", models.RetryPolicy{InitialDelay: time.Second, MaxDelay: time.Minute}, 3, time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mgr.NextRetryDelay(tt.n, &tt.policy); got != tt.want {
+				t.Errorf("NextRetryDelay(%d) = %s, want %s", tt.n, got, tt.want)
+			}
+		})
+	}
+}

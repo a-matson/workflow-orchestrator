@@ -215,3 +215,20 @@ func TestGetExecutionDefinition_FallsBackWithoutSnapshot(t *testing.T) {
 		t.Errorf("definition = %s with %d tasks, want %s with %d", got.ID, len(got.Tasks), def.ID, len(def.Tasks))
 	}
 }
+
+// REL-23: global_retry must survive a save and reload, or runs started from
+// the stored definition silently fall back to the default policy.
+func TestGlobalRetryPersisted(t *testing.T) {
+	store := setupStore(t)
+	def := makeWorkflowDef("global retry")
+	def.GlobalRetry = &models.RetryPolicy{MaxRetries: 7, InitialDelay: time.Second, MaxDelay: time.Minute, BackoffMultiple: 3}
+	testutil.SaveDef(t, store, def)
+
+	got, err := store.GetWorkflowDefinition(context.Background(), def.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflowDefinition: %v", err)
+	}
+	if got.GlobalRetry == nil || *got.GlobalRetry != *def.GlobalRetry {
+		t.Errorf("GlobalRetry = %+v, want %+v", got.GlobalRetry, def.GlobalRetry)
+	}
+}
