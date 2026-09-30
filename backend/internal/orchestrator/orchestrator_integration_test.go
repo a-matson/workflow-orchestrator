@@ -616,6 +616,31 @@ func TestRecoveryRedeliversOpenTask(t *testing.T) {
 	}
 }
 
+// REL-10: recovery must find every open execution, not only those among the
+// newest 200 of all executions.
+func TestRecovery_Beyond200(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Buried", MaxParallel: 1,
+		Tasks: independentTasks("a"),
+	})
+	testutil.Drain(t, redis, 1)
+	if _, err := store.Pool().Exec(ctx, `
+		INSERT INTO workflow_executions (id, workflow_id, workflow_name, status, created_at)
+		SELECT gen_random_uuid()::text, workflow_id, workflow_name, 'completed', created_at + n * interval '1 second'
+		FROM workflow_executions, generate_series(1, 200) AS n WHERE id = $1
+	`, exec.ID); err != nil {
+		t.Fatalf("insert newer executions: %v", err)
+	}
+
+	restarted := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+	testutil.Eventually(t, eventWait, func() bool { return testutil.Queued(t, redis, exec.ID) == 1 })
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.
