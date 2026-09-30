@@ -15,7 +15,12 @@
 			<div class="toolbar-right">
 				<button class="btn-secondary" @click="autoLayout">Auto Layout</button>
 				<button class="btn-secondary" @click="runValidation">Validate</button>
-				<button class="btn-primary" :disabled="saving" @click="saveWorkflow">
+				<button
+					class="btn-primary"
+					data-testid="save-workflow"
+					:disabled="saving"
+					@click="saveWorkflow"
+				>
 					{{ saving ? 'Saving…' : 'Save' }}
 				</button>
 				<button v-if="savedWorkflowId" class="btn-run" @click="triggerRun">▶ Run</button>
