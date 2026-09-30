@@ -735,7 +735,7 @@ func TestRecoveryContinuesPastTaskStoreError(t *testing.T) {
 }
 
 // A failed execution leaves the active map, so a sibling still running or
-// waiting for its retry would otherwise stay open forever.
+// waiting for its retry would otherwise stay open forever (REL-11).
 func TestFailedWorkflow_CancelsOpenSiblings(t *testing.T) {
 	orch, store, redis, _ := setupOrchestrator(t)
 	ctx := context.Background()
@@ -763,6 +763,20 @@ func TestFailedWorkflow_CancelsOpenSiblings(t *testing.T) {
 	orch.SetTaskCanceller(stopped)
 	runTask(t, orch, byDef["doomed"], testutil.Fail(byDef["doomed"], "fatal"))
 
+	if got := testutil.TaskRow(t, store, exec.ID, "doomed").Status; got != models.TaskStatusDeadLetter {
+		t.Errorf("doomed status = %s, want %s", got, models.TaskStatusDeadLetter)
+	}
+	tasks, err := store.ListTaskExecutions(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("list task executions: %v", err)
+	}
+	// Whatever a cancel may close is still open; none of it may outlive the failure.
+	open := models.TaskFrom(models.TaskStatusCancelled)
+	for _, task := range tasks {
+		if slices.Contains(open, task.Status) {
+			t.Errorf("task %s left %s under the failed execution", task.TaskDefinitionID, task.Status)
+		}
+	}
 	if got := testutil.TaskRow(t, store, exec.ID, "sibling").Status; got != models.TaskStatusCancelled {
 		t.Errorf("sibling status = %s, want %s", got, models.TaskStatusCancelled)
 	}
