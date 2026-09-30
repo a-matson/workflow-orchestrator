@@ -17,6 +17,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	dockerclient "github.com/moby/moby/client"
 )
 
 func env(key, def string) string {
@@ -450,5 +451,88 @@ func TestE2E_TaskHasNoNetwork(t *testing.T) {
 		if strings.HasPrefix(iface, "eth") {
 			t.Errorf("task has network interface %s (all: %v), want only loopback", iface, got)
 		}
+	}
+}
+
+// taskContainers lists the containers, running or not, that the executor
+// created for task taskExecID.
+func taskContainers(t *testing.T, dc *dockerclient.Client, taskExecID string) []string {
+	t.Helper()
+	res, err := dc.ContainerList(t.Context(), dockerclient.ContainerListOptions{
+		All:     true,
+		Filters: make(dockerclient.Filters).Add("label", "fluxor.task_exec_id="+taskExecID),
+	})
+	if err != nil {
+		t.Fatalf("list containers of task %s: %v", taskExecID, err)
+	}
+	var states []string
+	for _, c := range res.Items {
+		states = append(states, c.ID[:12]+" "+string(c.State))
+	}
+	return states
+}
+
+// A cancelled execution must not leave user code running: until the
+// container is gone it can still burn CPU and write side effects.
+func TestE2E_CancelStopsRunningContainer(t *testing.T) {
+	dc, err := dockerclient.New(dockerclient.FromEnv)
+	if err != nil {
+		t.Fatalf("docker client: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := dc.Close(); err != nil {
+			t.Errorf("close docker client: %v", err)
+		}
+	})
+
+	var wf struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows", map[string]any{
+		"name": "e2e-cancel-running",
+		"tasks": []map[string]any{{
+			"id": "sleep", "name": "Sleep", "type": "generic", "dependencies": []string{},
+			"config":    map[string]any{"command": "sleep", "args": []string{"60"}},
+			"container": map[string]any{"image": "alpine:3.22"},
+		}},
+	}, http.StatusCreated, &wf)
+	var run struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{}, http.StatusAccepted, &run)
+
+	// The row turns running before the image pull, so the container itself is
+	// what proves the task's code has started.
+	var taskID string
+	deadline := time.Now().Add(120 * time.Second) // the first run may pull the image
+	for {
+		var got struct {
+			Status string
+			Tasks  []struct {
+				ID     string
+				Status string
+			}
+		}
+		do(t, http.MethodGet, baseURL+"/api/executions/"+run.ID, nil, http.StatusOK, &got)
+		if len(got.Tasks) == 1 && got.Tasks[0].Status == "running" {
+			taskID = got.Tasks[0].ID
+			if states := taskContainers(t, dc, taskID); len(states) == 1 && strings.HasSuffix(states[0], " running") {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("execution %s (%q, tasks %+v) has no running task container after 120s", run.ID, got.Status, got.Tasks)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	do(t, http.MethodPost, baseURL+"/api/executions/"+run.ID+"/cancel", map[string]any{}, http.StatusOK, nil)
+
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		states := taskContainers(t, dc, taskID)
+		if len(states) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s containers %v still present 5s after cancel, want none", taskID, states)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 }
