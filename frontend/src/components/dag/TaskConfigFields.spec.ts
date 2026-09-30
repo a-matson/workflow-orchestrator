@@ -7,7 +7,7 @@ import { api } from '../../composables/useApi'
 import { WORKFLOW_TEMPLATES } from '../../composables/useTemplates'
 import type { WorkflowDefinition } from '../../types'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), onBeforeRouteLeave: vi.fn() }))
 vi.mock('../../composables/useApi', () => ({
 	api: { get: vi.fn(), put: vi.fn(), post: vi.fn() },
 	WS_URL: 'ws://test/ws',
