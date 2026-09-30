@@ -534,6 +534,9 @@ func TestDuplicateResultDoesNotExceedMaxParallel(t *testing.T) {
 		t.Fatalf("ProcessResult: %v", err)
 	}
 	testutil.Never(t, 300*time.Millisecond, overLimit)
+	// The capacity m2 freed must be reused; an orchestrator that stopped
+	// dispatching altogether would pass the over-limit check above.
+	testutil.Drain(t, redis, 1)
 }
 
 // REL-12: recovery must count the tasks already queued or running against
