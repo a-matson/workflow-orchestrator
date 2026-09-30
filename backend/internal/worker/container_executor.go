@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -728,25 +729,41 @@ func buildCommand(msg *models.TaskMessage) []string {
 }
 
 // buildEnv merges ContainerSpec env and task config env into []string for Docker.
+// FLUXOR_* keys always come from the executor: a workflow that could override
+// FLUXOR_WORKSPACE or FLUXOR_TASK_EXEC_ID would mislead the scripts and SDKs
+// that trust them. Malformed keys are dropped because Docker splits on the
+// first '=' and C strings end at NUL.
 func buildEnv(msg *models.TaskMessage, spec models.ContainerSpec) []string {
-	env := map[string]string{
-		"FLUXOR_TASK_EXEC_ID":     msg.TaskExecID,
-		"FLUXOR_WORKFLOW_EXEC_ID": msg.WorkflowExecID,
-		"FLUXOR_TASK_NAME":        msg.TaskName,
-		"FLUXOR_WORKSPACE":        WorkspaceDir,
-	}
-	// Merge spec env
+	user := map[string]string{}
 	for k, v := range spec.Env {
-		env[k] = v
+		user[k] = v
 	}
-	// Merge config env
 	if envMap, ok := msg.Config["env"].(map[string]any); ok {
 		for k, v := range envMap {
 			if vs, ok := v.(string); ok {
-				env[k] = vs
+				user[k] = vs
 			}
 		}
 	}
+	env := map[string]string{}
+	var dropped []string
+	for k, v := range user {
+		if k == "" || strings.ContainsAny(k, "=\x00") || strings.HasPrefix(strings.ToUpper(k), "FLUXOR_") {
+			dropped = append(dropped, k)
+			continue
+		}
+		env[k] = v
+	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		// Key names only: values may be secrets.
+		log.Warn().Str("task_exec_id", msg.TaskExecID).Strs("keys", dropped).
+			Msg("container: ignored reserved or invalid task env keys")
+	}
+	env["FLUXOR_TASK_EXEC_ID"] = msg.TaskExecID
+	env["FLUXOR_WORKFLOW_EXEC_ID"] = msg.WorkflowExecID
+	env["FLUXOR_TASK_NAME"] = msg.TaskName
+	env["FLUXOR_WORKSPACE"] = WorkspaceDir
 	result := make([]string, 0, len(env))
 	for k, v := range env {
 		result = append(result, k+"="+v)
