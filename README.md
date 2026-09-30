@@ -162,6 +162,7 @@ npm run format
 | `FLUXOR_TRUSTED_PROXIES` | _(empty)_ | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` the rate limiter believes (the right-most address outside this set is the client). From any other peer the header is ignored and the limiter keys on the peer IP (IPv6 on its /64). Compose defaults it to `FLUXOR_PROXY_IP/32`; the bundled nginx overwrites the header with the client address. With an empty value behind a proxy, all clients share the proxy's bucket. A proxy you add in front of nginx must be listed and must append to the header |
 | `FLUXOR_RATE_LIMIT_PER_MIN` | `200` | Requests per minute per client IP for the whole API. Positive integer; anything else stops startup |
 | `FLUXOR_LOGIN_RATE_LIMIT_PER_MIN` | `10` | `POST /api/session` per minute per client IP, counted separately. Positive integer; anything else stops startup. A `429` carries `Retry-After` |
+| `FLUXOR_MAX_BODY_BYTES` | `1048576` (1 MiB) | Largest request body the API reads; a bigger one gets `413` `request body too large`. `POST /api/session` keeps its own 4 KiB cap. Positive integer; anything else stops startup |
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 | `FLUXOR_SESSION_SECRET` | _(random per start)_ | Base64 HMAC key (≥ 32 bytes) for browser session cookies (see [Browser login](#browser-login)) |
 | `FLUXOR_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` even over plain HTTP, for a TLS-terminating proxy |

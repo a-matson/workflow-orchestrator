@@ -27,16 +27,17 @@ type Handler struct {
 	storage      *storage.Client
 	session      SessionConfig
 	trusted      []netip.Prefix
-	generalLimit int // requests per minute per client IP
-	loginLimit   int // POST /api/session per minute per client IP
+	maxBody      int64 // bytes; see MaxBody
+	generalLimit int   // requests per minute per client IP
+	loginLimit   int   // POST /api/session per minute per client IP
 }
 
 // NewHandler returns a Handler whose session secret is random, so sessions
 // last only as long as the process; production sets one with WithSession.
 func NewHandler(store *persistence.Store, redis *persistence.RedisClient, orch *orchestrator.Orchestrator, hub *Hub, sc *storage.Client) *Handler {
 	return &Handler{store: store, redis: redis, orchestrator: orch, hub: hub, storage: sc,
-		session:      SessionConfig{Secret: RandomSessionSecret()},
-		generalLimit: 200, loginLimit: 10}
+		session: SessionConfig{Secret: RandomSessionSecret()},
+		maxBody: DefaultMaxBody, generalLimit: 200, loginLimit: 10}
 }
 
 // WithSession replaces the session cookie configuration.
@@ -55,6 +56,12 @@ func (h *Handler) WithTrustedProxies(p []netip.Prefix) *Handler {
 // WithRateLimits sets the per-minute budgets of the general API and of login.
 func (h *Handler) WithRateLimits(general, login int) *Handler {
 	h.generalLimit, h.loginLimit = general, login
+	return h
+}
+
+// WithMaxBody sets the largest request body, in bytes, the API reads.
+func (h *Handler) WithMaxBody(n int64) *Handler {
+	h.maxBody = n
 	return h
 }
 
@@ -116,8 +123,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 
 func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	var def models.WorkflowDefinition
-	if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-		writeError(w, r, http.StatusBadRequest, "invalid request body: "+err.Error(), err)
+	if !decodeJSON(w, r, &def) {
 		return
 	}
 	if err := validateDefinition(&def); err != nil {
@@ -160,8 +166,7 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var def models.WorkflowDefinition
-	if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-		writeError(w, r, http.StatusBadRequest, "invalid request body", err)
+	if !decodeJSON(w, r, &def) {
 		return
 	}
 	if err := validateDefinition(&def); err != nil {
@@ -208,7 +213,11 @@ func (h *Handler) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&payload)
+	// An absent or malformed payload means "no inputs"; only an oversized one is refused.
+	if err := json.NewDecoder(r.Body).Decode(&payload); isTooBig(err) {
+		writeError(w, r, http.StatusRequestEntityTooLarge, errBodyTooLarge, nil)
+		return
+	}
 
 	exec, err := h.orchestrator.StartWorkflow(r.Context(), def, payload)
 	if err != nil {
@@ -441,6 +450,28 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+const errBodyTooLarge = "request body too large"
+
+func isTooBig(err error) bool {
+	var tooBig *http.MaxBytesError
+	return errors.As(err, &tooBig)
+}
+
+// decodeJSON reads the request body into v, answering the client itself
+// (413 or 400) and returning false when it cannot.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	err := json.NewDecoder(r.Body).Decode(v)
+	switch {
+	case err == nil:
+		return true
+	case isTooBig(err):
+		writeError(w, r, http.StatusRequestEntityTooLarge, errBodyTooLarge, nil)
+	default:
+		writeError(w, r, http.StatusBadRequest, "invalid request body", err)
+	}
+	return false
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, publicMsg string, internalErr error) {
