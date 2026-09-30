@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -44,4 +45,23 @@ func TestGetMetrics_WaitsOutsideActiveMu(t *testing.T) {
 	if m := <-got; m["retry_queue_depth"] != 1 {
 		t.Errorf("retry_queue_depth = %d, want 1", m["retry_queue_depth"])
 	}
+}
+
+// REL-13: active_workflows was read without activeMu, racing every
+// registration and eviction. Run under -race.
+func TestGetMetrics_Race(t *testing.T) {
+	o := &Orchestrator{active: map[string]*ExecutionContext{}, metrics: &Metrics{}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 1000 {
+			o.activeMu.Lock()
+			o.active[fmt.Sprint(i)] = &ExecutionContext{}
+			o.activeMu.Unlock()
+		}
+	}()
+	for range 1000 {
+		o.GetMetrics()
+	}
+	<-done
 }
