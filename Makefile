@@ -1,6 +1,6 @@
 .PHONY: all dev dev-infra dev-backend dev-frontend build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs migrate migrate-reset \
-	test test-dag test-orchestrator test-integration e2e check lint clean load-test hooks
+	test test-dag test-orchestrator test-integration e2e e2e-ui check lint clean load-test hooks
 
 # ── Variables ─────────────────────────────────────────────
 GO_CMD       = ./cmd/server
@@ -106,19 +106,29 @@ test-integration:
 # e2e gets its own to keep `down -v` off the dev stack's volume.
 E2E_COMPOSE = FLUXOR_WORKSPACE_VOLUME=fluxor-e2e-task-workspaces \
 	docker compose --env-file .env.example -p fluxor-e2e
-# Each run mints its own admin key, so no credential is committed or reused.
-e2e:
+# Runs $(1) against a fresh e2e stack. Each run mints its own admin key, so no
+# credential is committed or reused.
+define e2e_stack
 	@status=0; \
 	FLUXOR_BOOTSTRAP_ADMIN_KEY="flx_$$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"; \
 	FLUXOR_API_KEY="$$FLUXOR_BOOTSTRAP_ADMIN_KEY"; \
 	export FLUXOR_BOOTSTRAP_ADMIN_KEY FLUXOR_API_KEY; \
 	trap '$(E2E_COMPOSE) down -v' INT TERM; \
 	$(E2E_COMPOSE) up -d --build --wait && \
-	  (cd backend && go test -tags e2e -count=1 -v ./e2e/) && \
-	  examples/smoke-test.sh || status=$$?; \
+	  $(1) || status=$$?; \
 	[ $$status -eq 0 ] || $(E2E_COMPOSE) logs --no-color --tail=200; \
 	$(E2E_COMPOSE) down -v; \
 	exit $$status
+endef
+
+e2e:
+	$(call e2e_stack,(cd backend && go test -tags e2e -count=1 -v ./e2e/) && examples/smoke-test.sh)
+
+# Installing first keeps a slow npm or browser download out of the stack's lifetime.
+# `A11Y_RECORD=1 make e2e-ui` rewrites e2e-ui/a11y-baseline.json.
+e2e-ui:
+	cd e2e-ui && npm ci && npx playwright install chromium
+	$(call e2e_stack,(cd e2e-ui && npx playwright test))
 
 # ── Linting ──────────────────────────────────────────────
 lint:

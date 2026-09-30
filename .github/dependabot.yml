@@ -9,7 +9,7 @@ updates:
     groups: {gomod: {patterns: ["*"]}}
     commit-message: {prefix: build, include: scope}
   - package-ecosystem: npm
-    directory: /frontend
+    directories: [/frontend, /e2e-ui]
     schedule: {interval: weekly}
     cooldown: {default-days: 7}
     groups: {npm: {patterns: ["*"]}}

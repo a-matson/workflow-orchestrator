@@ -11,6 +11,7 @@
 					:key="r.name as string"
 					:to="r.path"
 					class="nav-link"
+					:data-testid="`nav-${r.name as string}`"
 					active-class="nav-link--active"
 				>
 					<span class="nav-icon">{{ r.meta.icon }}</span
@@ -18,7 +19,7 @@
 				</RouterLink>
 			</nav>
 			<div class="topbar-end">
-				<div class="ws-pill" :class="wsStore.status">
+				<div class="ws-pill" :class="wsStore.status" data-testid="ws-status">
 					<span class="ws-dot"></span><span class="ws-label">{{ wsLabel }}</span>
 				</div>
 				<div class="metric-pill blue">
