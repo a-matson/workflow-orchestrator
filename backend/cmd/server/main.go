@@ -173,6 +173,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("worker pool: task workspace setup failed")
 	}
+	orch.SetTaskCanceller(workerPool)
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)

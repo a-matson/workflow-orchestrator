@@ -30,7 +30,7 @@ func TestExecuteTask_RunsDespiteLeftoverTaskLock(t *testing.T) {
 	if err := testutil.Raw(t, redis).Set(context.Background(), "workflow:task:lock:"+id, "locked", 10*time.Minute).Err(); err != nil {
 		t.Fatalf("set leftover lock: %v", err)
 	}
-	w := &Worker{id: "worker-test", redis: redis, notifier: pickupNotifier{}, httpClient: g.HTTPClient(5 * time.Second)}
+	w := &Worker{id: "worker-test", redis: redis, notifier: pickupNotifier{}, httpClient: g.HTTPClient(5 * time.Second), running: newRunningTasks()}
 
 	w.executeTask(context.Background(), &models.TaskMessage{
 		TaskExecID: id, WorkflowExecID: uuid.NewString(), TaskType: "http_request",

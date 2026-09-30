@@ -49,12 +49,14 @@ type Worker struct {
 	// sendmail is a seam for tests; nil runs the host binary.
 	sendmail   sendmailFunc
 	httpClient *http.Client // guarded: every task-initiated request goes through the egress guard
+	running    *runningTasks
 }
 
 // Pool manages a set of concurrent workers.
 type Pool struct {
 	workers []*Worker
 	redis   *persistence.RedisClient
+	running *runningTasks
 }
 
 // NewPool creates workers with all capabilities: task notification,
@@ -93,6 +95,7 @@ func NewPool(
 	}
 
 	httpClient := guard.HTTPClient(60 * time.Second)
+	running := newRunningTasks()
 	workers := make([]*Worker, workerCount)
 	for i := 0; i < workerCount; i++ {
 		workers[i] = &Worker{
@@ -105,9 +108,10 @@ func NewPool(
 			guard:       guard,
 			limits:      limits,
 			httpClient:  httpClient,
+			running:     running,
 		}
 	}
-	return &Pool{workers: workers, redis: redis}, nil
+	return &Pool{workers: workers, redis: redis, running: running}, nil
 }
 
 func (p *Pool) Start(ctx context.Context) {
@@ -231,11 +235,14 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		}
 	}
 
-	// Create execution context with timeout
-	taskCtx := ctx
+	// Tracked before the pickup: once the row is running, a cancel must find
+	// this run, and a cancel of a row not yet picked up fails the pickup instead.
+	runCtx, release := w.running.track(ctx, msg.TaskExecID)
+	defer release()
+	taskCtx := runCtx
 	if msg.Timeout > 0 {
 		var cancel context.CancelFunc
-		taskCtx, cancel = context.WithTimeout(ctx, msg.Timeout)
+		taskCtx, cancel = context.WithTimeout(runCtx, msg.Timeout)
 		defer cancel()
 	}
 
@@ -246,6 +253,12 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		} else {
 			taskLogger.Error().Err(execErr).Msg("dropping task message: its pickup could not be recorded")
 		}
+		return
+	}
+	// The cancel already closed the row; a failure result would only be
+	// dropped by the status guard.
+	if errors.Is(context.Cause(runCtx), errTaskCancelled) {
+		taskLogger.Info().Msg("task cancelled; not publishing its result")
 		return
 	}
 
