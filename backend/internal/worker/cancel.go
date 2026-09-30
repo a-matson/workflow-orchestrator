@@ -10,6 +10,10 @@ import (
 // cancelled, telling that apart from a timeout or a shutdown.
 var errTaskCancelled = errors.New("task cancelled")
 
+// errShutdown is the cause of a run's context when the pool's drain grace ran
+// out before the run finished.
+var errShutdown = errors.New("worker pool shut down")
+
 // runningTasks maps task executions to the contexts of their runs in this
 // process. A task can have more than one run: a redelivered message registers
 // before its pickup is refused, and Cancel must reach the real run either way.

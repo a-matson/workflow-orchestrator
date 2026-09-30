@@ -87,6 +87,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Longer than the backend's 25s task drain (shutdownGrace), so SIGKILL
+    # does not cut it short.
+    stop_grace_period: 40s
     networks: [fluxor-internal, docker-api]
     ports:
       - "127.0.0.1:8080:8080"
