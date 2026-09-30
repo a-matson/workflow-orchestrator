@@ -315,6 +315,7 @@ func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
 		Status string
 		Error  string
 		Tasks  []struct {
+			ID           string
 			Status       string
 			Error        string
 			ArtifactsOut []struct {
@@ -347,6 +348,14 @@ func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
 	if content := minioObject(t, arts[0].MinioKey); content != "hello\n" {
 		t.Errorf("artifact content = %q, want %q", content, "hello\n")
 	}
+	// SEC-6: the browser downloads through the API, scoped to the task.
+	artifacts := baseURL + "/api/tasks/" + got.Tasks[0].ID + "/artifacts/"
+	if status, body := send(t, http.MethodGet, artifacts+"out.txt", nil); status != http.StatusOK || string(body) != "hello\n" {
+		t.Errorf("GET task artifact out.txt = %d %q, want 200 %q", status, body, "hello\n")
+	}
+	if status, _ := send(t, http.MethodGet, artifacts+"missing.txt", nil); status != http.StatusNotFound {
+		t.Errorf("GET task artifact missing.txt = %d, want 404", status)
+	}
 
 	// The worker removes the workspace before it reports the result.
 	vol := env("FLUXOR_WORKSPACE_VOLUME", "fluxor-e2e-task-workspaces")
@@ -356,6 +365,15 @@ func TestE2E_ContainerTaskWritesArtifact(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Errorf("workspace volume %s not empty after the task:\n%s", vol, out)
+	}
+}
+
+// SEC-6: the presign endpoint signed any key, including other tasks' and
+// non-artifact objects, for any lifetime. Downloads go through the task.
+func TestE2E_PresignArbitraryKey(t *testing.T) {
+	status, body := send(t, http.MethodGet, baseURL+"/api/artifacts/url?key=anything/at/all&expires=525600", nil)
+	if status != http.StatusNotFound {
+		t.Errorf("GET /api/artifacts/url = %d %s, want 404", status, body)
 	}
 }
 
