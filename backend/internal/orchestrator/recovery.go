@@ -70,7 +70,9 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 			// a queued task's message may have died in a worker's hands.
 			// Back to pending, the dispatch below queues and sends it again;
 			// a message still in Redis becomes a duplicate that the pickup
-			// CAS drops.
+			// CAS drops. The dead worker's worker_id and started_at stay on
+			// the pending row until the next pickup overwrites both; clearing
+			// them would take a full-row write outside the transition.
 			reset, err := o.store.TransitionTask(ctx, task.ID, -1, models.TaskStatusPending, persistence.TaskPatch{})
 			if err != nil {
 				// Skipping the execution would strand every other task in it.
