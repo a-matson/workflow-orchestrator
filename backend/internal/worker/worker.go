@@ -187,8 +187,9 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
-// executeTask acquires the idempotency lock, marks the task running, runs it
-// through dispatch and publishes the result.
+// executeTask marks the task running, runs it through dispatch and publishes
+// the result. The pickup transition is the only dedupe: it admits one message
+// per attempt.
 func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	startedAt := time.Now()
 
@@ -226,14 +227,6 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		taskCtx, cancel = context.WithTimeout(ctx, msg.Timeout)
 		defer cancel()
 	}
-
-	// Distributed idempotency lock — prevents double-execution on re-delivery
-	locked, err := w.redis.AcquireTaskLock(taskCtx, msg.TaskExecID, 10*time.Minute)
-	if err != nil || !locked {
-		log.Warn().Str("task_exec_id", msg.TaskExecID).Msg("task already locked, skipping")
-		return
-	}
-	defer func() { _ = w.redis.ReleaseTaskLock(ctx, msg.TaskExecID) }()
 
 	output, artifactsOut, ran, execErr := w.pickUpAndDispatch(ctx, taskCtx, msg, addLog)
 	if !ran {
