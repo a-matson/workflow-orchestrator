@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/rs/zerolog/log"
 
@@ -14,7 +15,15 @@ import (
 // sessionConfig reads FLUXOR_SESSION_SECRET and FLUXOR_COOKIE_SECURE. Errors
 // never quote the secret.
 func sessionConfig() (api.SessionConfig, error) {
-	cfg := api.SessionConfig{Secure: os.Getenv("FLUXOR_COOKIE_SECURE") == "true"}
+	var cfg api.SessionConfig
+	// A typo such as "ture" must not silently drop the Secure flag.
+	if v := os.Getenv("FLUXOR_COOKIE_SECURE"); v != "" {
+		secure, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("FLUXOR_COOKIE_SECURE=%q: want true or false", v)
+		}
+		cfg.Secure = secure
+	}
 	raw := os.Getenv("FLUXOR_SESSION_SECRET")
 	if raw == "" {
 		log.Warn().Msg("FLUXOR_SESSION_SECRET is unset, so a random one is used and browser sessions end on every restart")

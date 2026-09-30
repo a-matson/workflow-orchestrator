@@ -68,6 +68,16 @@ func TestSession_CookieFlags(t *testing.T) {
 	if len(gone.Result().Cookies()) != 0 {
 		t.Errorf("revoked key got a cookie: %v", gone.Header().Values("Set-Cookie"))
 	}
+	if huge := call(http.MethodPost, "/api/session", `{"api_key":"`+strings.Repeat("x", 5000)+`"}`, nil); huge.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("5 KB login body = %d, want 413", huge.Code)
+	}
+	noStore := func(what string, rr *httptest.ResponseRecorder) {
+		t.Helper()
+		if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", what, got)
+		}
+	}
+	noStore("rejected login", gone)
 
 	rr := call(http.MethodPost, "/api/session", `{"api_key":"`+plain+`"}`, nil)
 	if rr.Code != http.StatusOK {
@@ -80,6 +90,7 @@ func TestSession_CookieFlags(t *testing.T) {
 	if strings.Contains(rr.Body.String(), plain) {
 		t.Errorf("response echoes the key: %s", rr.Body)
 	}
+	noStore("login", rr)
 	c := sessionCookie(rr)
 	if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.MaxAge != 43200 || c.Secure {
 		t.Errorf("cookie = %+v; want HttpOnly, SameSite=Strict, Path=/, Max-Age=43200, not Secure over plain HTTP", c)
@@ -92,6 +103,7 @@ func TestSession_CookieFlags(t *testing.T) {
 	if rr := call(http.MethodGet, "/api/workflows", "", session); rr.Code != http.StatusOK {
 		t.Errorf("GET /api/workflows with the cookie = %d, want 200: %s", rr.Code, rr.Body)
 	}
+	noStore("GET /api/session", call(http.MethodGet, "/api/session", "", session))
 	if rr := call(http.MethodGet, "/api/session", "", session); rr.Code != http.StatusOK ||
 		!strings.Contains(rr.Body.String(), `"name":"browser"`) || !strings.Contains(rr.Body.String(), `"role":"operator"`) {
 		t.Errorf("GET /api/session = %d %s, want 200 with name and role", rr.Code, rr.Body)
@@ -112,6 +124,7 @@ func TestSession_CookieFlags(t *testing.T) {
 	}
 
 	rr = call(http.MethodDelete, "/api/session", "", session)
+	noStore("DELETE /api/session", rr)
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("DELETE /api/session = %d, want 204: %s", rr.Code, rr.Body)
 	} else if cleared := sessionCookie(rr); cleared.MaxAge >= 0 || cleared.Value != "" {

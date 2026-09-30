@@ -234,7 +234,7 @@ func (c *Client) writePump(ctx context.Context) {
 			if !c.stillAuthorized(ctx) {
 				// Best effort: the connection is closed on return either way.
 				_ = c.conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential revoked"),
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "credential expired or revoked"),
 					time.Now().Add(time.Second))
 				return
 			}

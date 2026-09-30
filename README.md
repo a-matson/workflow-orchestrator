@@ -240,12 +240,15 @@ The UI has no Bearer header to send, so it signs in once with an API key at `/lo
 cookie: HttpOnly, `SameSite=Strict`, `Path=/`, valid for 12 hours. That cookie authenticates
 every request, `/ws` included, with the key's name and role. `GET /api/session` returns
 `{name, role}`; `DELETE /api/session` (the UI's Log out) clears the cookie. Revoking the key ends
-its sessions on the next request and closes their open `/ws` streams within 30 seconds.
+its sessions on the next request and closes their open `/ws` streams within 30 seconds; a
+`/ws` stream opened with the cookie likewise closes within 30 seconds of the cookie expiring.
+Session responses carry `Cache-Control: no-store`, and the login body is capped at 4 KiB.
 
 The cookie is signed with HMAC-SHA256 under `FLUXOR_SESSION_SECRET`, at least 32 bytes, base64
 encoded (`head -c 32 /dev/urandom | base64`). Without it the backend picks a random secret and
 logs a warning, so every restart logs everyone out. The cookie is marked `Secure` when the request
-arrives over TLS; behind a TLS-terminating proxy, set `FLUXOR_COOKIE_SECURE=true`.
+arrives over TLS; behind a TLS-terminating proxy, set `FLUXOR_COOKIE_SECURE=true` (any value
+Go's `strconv.ParseBool` accepts; anything else stops startup).
 
 ---
 
