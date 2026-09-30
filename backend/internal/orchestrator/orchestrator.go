@@ -162,7 +162,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 		exec.Tasks = append(exec.Tasks, taskExec)
 	}
 
-	if err := o.store.CreateExecutionWithTasks(ctx, exec, exec.Tasks); err != nil {
+	if err := o.store.CreateExecutionWithTasks(ctx, exec, def, exec.Tasks); err != nil {
 		return nil, fmt.Errorf("persisting execution and tasks: %w", err)
 	}
 

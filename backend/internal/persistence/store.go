@@ -141,14 +141,14 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 // ==================== Workflow Executions ====================
 
 func (s *Store) CreateWorkflowExecution(ctx context.Context, exec *models.WorkflowExecution) error {
-	return insertExecution(ctx, s.pool, exec)
+	return insertExecution(ctx, s.pool, exec, nil)
 }
 
-// CreateExecutionWithTasks inserts exec and its tasks atomically: either all
-// rows exist afterwards or none do.
-func (s *Store) CreateExecutionWithTasks(ctx context.Context, exec *models.WorkflowExecution, tasks []*models.TaskExecution) error {
+// CreateExecutionWithTasks inserts exec, a snapshot of def, and its tasks
+// atomically: either all rows exist afterwards or none do.
+func (s *Store) CreateExecutionWithTasks(ctx context.Context, exec *models.WorkflowExecution, def *models.WorkflowDefinition, tasks []*models.TaskExecution) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := insertExecution(ctx, tx, exec); err != nil {
+		if err := insertExecution(ctx, tx, exec, def); err != nil {
 			return fmt.Errorf("inserting execution: %w", err)
 		}
 		for _, task := range tasks {
@@ -174,7 +174,7 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func insertExecution(ctx context.Context, db execer, exec *models.WorkflowExecution) error {
+func insertExecution(ctx context.Context, db execer, exec *models.WorkflowExecution, def *models.WorkflowDefinition) error {
 	payloadJSON, err := json.Marshal(exec.TriggerPayload)
 	if err != nil {
 		return fmt.Errorf("marshaling trigger payload: %w", err)
@@ -183,15 +183,44 @@ func insertExecution(ctx context.Context, db execer, exec *models.WorkflowExecut
 	if err != nil {
 		return fmt.Errorf("marshaling metadata: %w", err)
 	}
+	var defJSON []byte // nil stores SQL NULL, not a JSON null
+	if def != nil {
+		if defJSON, err = json.Marshal(def); err != nil {
+			return fmt.Errorf("marshaling definition: %w", err)
+		}
+	}
 
 	_, err = db.Exec(ctx, `
 		INSERT INTO workflow_executions
-		(id, workflow_id, workflow_name, status, trigger_payload, metadata, started_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		(id, workflow_id, workflow_name, status, trigger_payload, metadata, definition, started_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, exec.ID, exec.WorkflowID, exec.WorkflowName, exec.Status,
-		payloadJSON, metaJSON, exec.StartedAt, exec.CreatedAt, exec.UpdatedAt)
+		payloadJSON, metaJSON, defJSON, exec.StartedAt, exec.CreatedAt, exec.UpdatedAt)
 
 	return err
+}
+
+// GetExecutionDefinition returns the definition execution id started with,
+// or the stored definition for an execution created before snapshots existed.
+func (s *Store) GetExecutionDefinition(ctx context.Context, id string) (*models.WorkflowDefinition, error) {
+	var workflowID string
+	var defJSON []byte
+	err := s.pool.QueryRow(ctx, `SELECT workflow_id, definition FROM workflow_executions WHERE id = $1`, id).
+		Scan(&workflowID, &defJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading execution definition: %w", err)
+	}
+	if defJSON == nil {
+		return s.GetWorkflowDefinition(ctx, workflowID)
+	}
+	def := &models.WorkflowDefinition{}
+	if err := json.Unmarshal(defJSON, def); err != nil {
+		return nil, fmt.Errorf("unmarshaling execution definition: %w", err)
+	}
+	return def, nil
 }
 
 func (s *Store) GetWorkflowExecution(ctx context.Context, id string) (*models.WorkflowExecution, error) {

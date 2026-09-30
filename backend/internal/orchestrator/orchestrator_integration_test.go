@@ -178,15 +178,15 @@ func TestStartWorkflow_NoPartialRows(t *testing.T) {
 		{ID: "c", Name: "C", Type: "generic", Dependencies: []string{}},
 	}
 	def := &models.WorkflowDefinition{ID: uuid.NewString(), Name: "Partial Start", Tasks: tasks, MaxParallel: 10}
-	// The definition row must exist for the executions FK, but jsonb rejects
-	// NUL too, so only the in-memory copy carries the poisoned name.
 	testutil.SaveDef(t, store, def)
-	poisoned := *def
-	poisoned.Tasks = append([]models.TaskDefinition(nil), tasks...)
-	// Postgres text rejects NUL, so inserting the third task row fails.
-	poisoned.Tasks[2].Name = "C\x00"
+	// The test has its own database, so this makes only the third task row
+	// fail, after the execution row with its definition snapshot is written.
+	if _, err := store.Pool().Exec(ctx,
+		`ALTER TABLE task_executions ADD CONSTRAINT reject_c CHECK (task_name <> 'C')`); err != nil {
+		t.Fatalf("add constraint: %v", err)
+	}
 
-	_, err := orch.StartWorkflow(ctx, &poisoned, nil)
+	_, err := orch.StartWorkflow(ctx, def, nil)
 	if err == nil || !strings.Contains(err.Error(), "inserting task c") {
 		t.Fatalf("StartWorkflow error = %v; want the rejected task c row", err)
 	}
