@@ -40,7 +40,9 @@
 					</div>
 					<div class="exec-item-row3">
 						<span class="exec-id-mono">{{ exec.id.slice(0, 12) }}…</span>
-						<span class="exec-elapsed">{{ elapsedStr(exec.started_at, exec.completed_at) }}</span>
+						<span class="exec-elapsed" data-testid="exec-elapsed">{{
+							elapsedStr(exec.started_at, exec.completed_at)
+						}}</span>
 					</div>
 				</div>
 				<div v-if="!filteredExecs.length && !store.loading" class="list-empty">
@@ -119,7 +121,7 @@
 						<span class="task-name">{{ task.task_name }}</span>
 						<span class="task-type">{{ task.task_type }}</span>
 						<span class="task-worker">{{ task.worker_id?.slice(-8) ?? '' }}</span>
-						<span class="task-dur">{{ taskDuration(task) }}</span>
+						<span class="task-dur" data-testid="task-dur">{{ taskDuration(task) }}</span>
 						<span v-if="task.retry_count > 0" class="task-retry">↺{{ task.retry_count }}</span>
 					</div>
 
