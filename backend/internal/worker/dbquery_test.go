@@ -47,8 +47,10 @@ func TestExecDBQuery_Denied(t *testing.T) {
 	}
 }
 
+// Loopback port 1 refuses at once: since the driver dials, an unroutable
+// host would stall the test for the whole task timeout.
 func TestExecDBQuery_AllowlistedHostPasses(t *testing.T) {
-	err := runDBTask(t, "10.0.0.5:5432", "postgres://u:s3cretpw@10.0.0.5:5432/db")
+	err := runDBTask(t, "127.0.0.1:1", "postgres://u:s3cretpw@127.0.0.1:1/db")
 	if errors.Is(err, egress.ErrEgressDenied) {
 		t.Fatalf("allowlisted host was denied: %v", err)
 	}
