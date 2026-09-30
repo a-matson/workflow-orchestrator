@@ -563,3 +563,21 @@ func TestDuplicateResultDoesNotExceedMaxParallel(t *testing.T) {
 	}
 	testutil.Never(t, 300*time.Millisecond, overLimit)
 }
+
+// REL-12: recovery must count the tasks already queued or running against
+// MaxParallel instead of starting the execution with every slot free.
+func TestRecoveryDoesNotExceedMaxParallel(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	const maxParallel = 2
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Recovered Slots", MaxParallel: maxParallel,
+		Tasks: independentTasks("a", "b", "c", "d", "e"),
+	})
+	testutil.Drain(t, redis, maxParallel)
+
+	restarted := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(context.Background()); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+	testutil.Never(t, 300*time.Millisecond, func() bool { return openTasks(t, store, exec.ID) > maxParallel })
+}
