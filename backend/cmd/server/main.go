@@ -98,7 +98,7 @@ func main() {
 	log.Info().Str("endpoint", minioEndpoint).Msg("connecting to MinIO")
 	minioClient, err := storage.NewClient(ctx, minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL)
 	if err != nil {
-		log.Warn().Err(err).Msg("MinIO unavailable — artifact storage disabled; tasks run in-process")
+		log.Warn().Err(err).Msg("MinIO unavailable — artifact storage disabled")
 		minioClient = nil
 	}
 

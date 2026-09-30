@@ -27,7 +27,6 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 
 - The API and WebSocket are currently unauthenticated.
 - The backend mounts the Docker socket, which is host-root equivalent.
-- In-process task types can run shell commands on the backend.
 - `docker-compose.yml` currently publishes every port on all interfaces (0.0.0.0).
 - Bind every port to 127.0.0.1 and never expose the stack to a network.
 
@@ -75,7 +74,7 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 ```
 ## Container-per-Task Isolation
 
-Every task with a `container` field defined runs in its own ephemeral Docker container. When the task finishes the container is removed.
+Code tasks (`data_transform`, `generic`, `ml_inference`) always run in their own ephemeral Docker container; there is no in-process fallback. If Docker or MinIO is unreachable at startup the backend still starts, logs a warning, and fails those tasks with `container runtime unavailable`. `http_request`, `database_query` and `notification` tasks run in the backend unless they set a `container` field. When the task finishes the container is removed.
 
 **Security model:**
 - `--cap-drop ALL` — drops every Linux capability
@@ -106,7 +105,7 @@ The backend container reaches the host Docker daemon through the mounted socket,
 
 ### Configuring a task for isolation
 
-In the **Builder → task config panel → Container Isolation**, toggle Enabled and set:
+In the **Builder → task config panel → Container Isolation**, toggle Enabled to override the defaults below. Code tasks use the defaults when it is off.
 
 | Field | Default | Description |
 |-------|---------|-------------|
