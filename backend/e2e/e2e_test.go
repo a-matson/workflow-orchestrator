@@ -380,3 +380,61 @@ func minioObject(t *testing.T, key string) string {
 	}
 	return string(b)
 }
+
+// runScriptArtifact runs script in an alpine task container and returns what it
+// wrote to out.txt.
+func runScriptArtifact(t *testing.T, name, script string) string {
+	t.Helper()
+	var wf struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows", map[string]any{
+		"name": name,
+		"tasks": []map[string]any{{
+			"id": "run", "name": "Run", "type": "generic", "dependencies": []string{},
+			"config":        map[string]any{"command": "sh", "args": []string{"-c", script}},
+			"container":     map[string]any{"image": "alpine:3.22"},
+			"artifacts_out": []map[string]any{{"path": "out.txt"}},
+		}},
+	}, http.StatusCreated, &wf)
+	var run struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{}, http.StatusAccepted, &run)
+
+	var got struct {
+		Status string
+		Error  string
+		Tasks  []struct {
+			ArtifactsOut []struct {
+				MinioKey string `json:"minio_key"`
+			} `json:"artifacts_out"`
+		}
+	}
+	deadline := time.Now().Add(120 * time.Second) // the first run may pull the image
+	for {
+		got.Status = ""
+		do(t, http.MethodGet, baseURL+"/api/executions/"+run.ID, nil, http.StatusOK, &got)
+		if got.Status == "completed" || got.Status == "failed" || got.Status == "cancelled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("execution %s still %q after 120s", run.ID, got.Status)
+		}
+		time.Sleep(time.Second)
+	}
+	if got.Status != "completed" || len(got.Tasks) != 1 || len(got.Tasks[0].ArtifactsOut) != 1 {
+		t.Fatalf("execution %s ended %q (%s), tasks = %+v", run.ID, got.Status, got.Error, got.Tasks)
+	}
+	return minioObject(t, got.Tasks[0].ArtifactsOut[0].MinioKey)
+}
+
+// A container escape or a writable-volume trick is far cheaper as root, so the
+// task must run as the backend's own unprivileged uid:gid.
+func TestE2E_TaskRunsAsNonRoot(t *testing.T) {
+	got := strings.TrimSpace(runScriptArtifact(t, "e2e-nonroot", "echo $(id -u):$(id -g) > /workspace/out.txt"))
+	uid, gid, ok := strings.Cut(got, ":")
+	if !ok || uid == "0" || gid == "0" {
+		t.Fatalf("task ran as %q, want a non-root uid:gid", got)
+	}
+	// 10001 is the appuser in backend/Dockerfile, which compose runs.
+	if got != "10001:10001" {
+		t.Errorf("task ran as %s, want the backend's 10001:10001", got)
+	}
+}
