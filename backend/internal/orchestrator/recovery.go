@@ -2,17 +2,19 @@ package orchestrator
 
 import (
 	"context"
-	"time"
+	"fmt"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 )
 
-// RecoverInFlightExecutions reloads all RUNNING workflow executions from PostgreSQL
-// on startup so the orchestrator can resume dispatching after a crash/restart.
-// This implements the idempotent crash-recovery guarantee.
+// RecoverInFlightExecutions reloads every open workflow execution from
+// PostgreSQL at startup and resumes dispatching it. It must run before the
+// worker pool starts: it re-queues every queued or running task, which is
+// only safe while no worker of this process holds one.
 func (o *Orchestrator) RecoverInFlightExecutions(ctx context.Context) error {
 	log.Info().Msg("scanning for in-flight workflow executions to recover...")
 
@@ -59,49 +61,33 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 	completed := make(map[string]bool)
 	failed := make(map[string]bool)
 
-	for _, task := range fullExec.Tasks {
-		taskMap[task.TaskDefinitionID] = task
+	for i, task := range fullExec.Tasks {
 		switch task.Status {
 		case models.TaskStatusCompleted:
 			completed[task.TaskDefinitionID] = true
 
-		case models.TaskStatusRunning:
-			log.Info().
-				Str("exec_id", exec.ID).
-				Str("task_id", task.TaskDefinitionID).
-				Str("worker_id", task.WorkerID).
-				Msg("recovering in-flight task — checking worker liveness")
-
-			// Check whether the worker that owned this task is still alive.
-			// IsWorkerAlive looks for a Redis heartbeat key set by the worker every 15s with a 45s TTL.
-			alive, liveErr := o.redis.IsWorkerAlive(ctx, task.WorkerID)
-			if liveErr != nil {
-				log.Warn().Err(liveErr).Str("worker_id", task.WorkerID).
-					Msg("could not check worker liveness — assuming dead, resetting task")
-				alive = false
+		case models.TaskStatusQueued, models.TaskStatusRunning:
+			// Workers run in this process, so none survived the restart, and
+			// a queued task's message may have died in a worker's hands.
+			// Back to pending, the dispatch below queues and sends it again;
+			// a message still in Redis becomes a duplicate that the pickup
+			// CAS drops.
+			reset, err := o.store.TransitionTask(ctx, task.ID, -1, models.TaskStatusPending, persistence.TaskPatch{})
+			if err != nil {
+				return fmt.Errorf("requeueing task %s: %w", task.ID, err)
 			}
-
-			if alive {
-				// Worker is still alive: leave in running state, it will publish a result.
-				log.Info().Str("task_id", task.TaskDefinitionID).Str("worker_id", task.WorkerID).
-					Msg("worker still alive — leaving task in running state")
-			} else {
-				// Worker is dead: reset to queued so the dispatcher re-sends it.
-				log.Warn().Str("task_id", task.TaskDefinitionID).Str("worker_id", task.WorkerID).
-					Msg("worker heartbeat expired — resetting task to queued")
-				task.Status = models.TaskStatusQueued
-				task.WorkerID = ""
-				task.StartedAt = nil
-				task.UpdatedAt = time.Now()
-				o.store.UpdateTaskExecution(ctx, task) // nolint:errcheck // best-effort on recovery
-			}
+			log.Warn().Str("exec_id", exec.ID).Str("task_id", task.TaskDefinitionID).
+				Str("was", string(task.Status)).Msg("requeueing task left open by the previous process")
+			task = reset
+			fullExec.Tasks[i] = reset
 
 		case models.TaskStatusFailed, models.TaskStatusDeadLetter:
 			failed[task.TaskDefinitionID] = true
 
-		case models.TaskStatusPending, models.TaskStatusQueued, models.TaskStatusRetrying, models.TaskStatusSkipped:
+		case models.TaskStatusPending, models.TaskStatusRetrying, models.TaskStatusSkipped:
 			// Dispatch reads these statuses from the rows in taskMap.
 		}
+		taskMap[task.TaskDefinitionID] = task
 	}
 
 	// Restore execution context
