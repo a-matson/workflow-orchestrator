@@ -58,10 +58,7 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 	if from == nil {
 		return nil, fmt.Errorf("%w: task -> %s", ErrInvalidTransition, to)
 	}
-	fromText := make([]string, len(from))
-	for i, f := range from {
-		fromText[i] = string(f)
-	}
+	fromText := statusText(from)
 
 	var workerID *string
 	if p.WorkerID != "" {
@@ -130,10 +127,7 @@ func (s *Store) TransitionExecution(ctx context.Context, id string, to models.Wo
 	if from == nil {
 		return nil, fmt.Errorf("%w: execution -> %s", ErrInvalidTransition, to)
 	}
-	fromText := make([]string, len(from))
-	for i, f := range from {
-		fromText[i] = string(f)
-	}
+	fromText := statusText(from)
 
 	// Every valid target except running is terminal.
 	terminal := to != models.WorkflowStatusRunning
@@ -160,4 +154,42 @@ func (s *Store) TransitionExecution(ctx context.Context, id string, to models.Wo
 		return nil, fmt.Errorf("transitioning execution %s to %s: %w", id, to, err)
 	}
 	return exec, nil
+}
+
+// CancelOpenTasks moves every task of execution execID that is in one of
+// models.TaskFrom(TaskStatusCancelled) to cancelled in one statement, stamps
+// completed_at, and returns the rows it changed. Tasks already final are left
+// alone. It does not stop a running task's container.
+func (s *Store) CancelOpenTasks(ctx context.Context, execID string) ([]*models.TaskExecution, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE task_executions SET status = $2, completed_at = NOW()
+		WHERE workflow_exec_id = $1 AND status = ANY($3)
+		RETURNING `+taskColumns,
+		execID, string(models.TaskStatusCancelled), statusText(models.TaskFrom(models.TaskStatusCancelled)))
+	if err != nil {
+		return nil, fmt.Errorf("cancelling open tasks of %s: %w", execID, err)
+	}
+	defer rows.Close()
+
+	var tasks []*models.TaskExecution
+	for rows.Next() {
+		task, err := scanTaskExecution(rows)
+		if err != nil {
+			return nil, fmt.Errorf("cancelling open tasks of %s: %w", execID, err)
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cancelling open tasks of %s: %w", execID, err)
+	}
+	return tasks, nil
+}
+
+// statusText converts statuses for a text[] query parameter.
+func statusText[S ~string](statuses []S) []string {
+	out := make([]string, len(statuses))
+	for i, st := range statuses {
+		out[i] = string(st)
+	}
+	return out
 }

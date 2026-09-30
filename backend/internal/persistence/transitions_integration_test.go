@@ -367,3 +367,66 @@ func TestTransitionExecution_EmptyErrMsgKeepsError(t *testing.T) {
 		t.Errorf("error = %q, want %q", got.Error, "first")
 	}
 }
+
+func TestCancelOpenTasks(t *testing.T) {
+	store := setupStore(t)
+	ctx := context.Background()
+	exec := createExecution(t, store, makeWorkflowDef("cancel"), models.WorkflowStatusCancelled)
+	other := createExecution(t, store, makeWorkflowDef("other"), models.WorkflowStatusRunning)
+
+	statuses := []models.TaskStatus{
+		models.TaskStatusPending, models.TaskStatusQueued, models.TaskStatusRunning,
+		models.TaskStatusRetrying, models.TaskStatusCompleted, models.TaskStatusDeadLetter,
+	}
+	create := func(execID, defID string, status models.TaskStatus) {
+		t.Helper()
+		now := pgNow()
+		if err := store.CreateTaskExecution(ctx, &models.TaskExecution{
+			ID: uuid.NewString(), WorkflowExecID: execID, TaskDefinitionID: defID, TaskName: defID,
+			TaskType: "generic", Status: status, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("create task %s: %v", defID, err)
+		}
+	}
+	for _, st := range statuses {
+		create(exec.ID, string(st), st)
+	}
+	create(other.ID, "other", models.TaskStatusRunning)
+
+	got, err := store.CancelOpenTasks(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("CancelOpenTasks: %v", err)
+	}
+	var returned []string
+	for _, task := range got {
+		returned = append(returned, task.TaskDefinitionID)
+		if task.Status != models.TaskStatusCancelled || task.CompletedAt == nil {
+			t.Errorf("returned %s: status=%s completed_at=%v, want cancelled and stamped", task.TaskDefinitionID, task.Status, task.CompletedAt)
+		}
+	}
+	slices.Sort(returned)
+	if want := []string{"pending", "queued", "retrying", "running"}; !slices.Equal(returned, want) {
+		t.Errorf("returned tasks = %v, want %v", returned, want)
+	}
+
+	stored, err := store.ListTaskExecutions(ctx, exec.ID)
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	for _, task := range stored {
+		want := models.TaskStatusCancelled
+		if !slices.Contains(models.TaskFrom(models.TaskStatusCancelled), models.TaskStatus(task.TaskDefinitionID)) {
+			want = models.TaskStatus(task.TaskDefinitionID)
+		}
+		if task.Status != want {
+			t.Errorf("stored %s = %s, want %s", task.TaskDefinitionID, task.Status, want)
+		}
+	}
+	otherTasks, err := store.ListTaskExecutions(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("list other tasks: %v", err)
+	}
+	if otherTasks[0].Status != models.TaskStatusRunning {
+		t.Errorf("another execution's task = %s, want running", otherTasks[0].Status)
+	}
+}
