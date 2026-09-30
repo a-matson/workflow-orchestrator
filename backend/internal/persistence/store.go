@@ -217,10 +217,22 @@ func (s *Store) GetWorkflowExecution(ctx context.Context, id string) (*models.Wo
 }
 
 func (s *Store) ListWorkflowExecutions(ctx context.Context, limit, offset int) ([]*models.WorkflowExecution, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.queryExecutions(ctx, `
 		SELECT id, workflow_id, workflow_name, status, started_at, completed_at, error, created_at, updated_at
 		FROM workflow_executions ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`, limit, offset)
+}
+
+// ListOpenExecutions returns every pending or running execution with its tasks, oldest first.
+func (s *Store) ListOpenExecutions(ctx context.Context) ([]*models.WorkflowExecution, error) {
+	return s.queryExecutions(ctx, `
+		SELECT id, workflow_id, workflow_name, status, started_at, completed_at, error, created_at, updated_at
+		FROM workflow_executions WHERE status IN ('pending', 'running') ORDER BY created_at
+	`)
+}
+
+func (s *Store) queryExecutions(ctx context.Context, sql string, args ...any) ([]*models.WorkflowExecution, error) {
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

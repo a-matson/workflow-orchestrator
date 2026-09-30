@@ -17,16 +17,13 @@ import (
 func (o *Orchestrator) RecoverInFlightExecutions(ctx context.Context) error {
 	log.Info().Msg("scanning for in-flight workflow executions to recover...")
 
-	execs, err := o.store.ListWorkflowExecutions(ctx, 200, 0)
+	execs, err := o.store.ListOpenExecutions(ctx)
 	if err != nil {
 		return err
 	}
 
 	recovered := 0
 	for _, exec := range execs {
-		if exec.Status != models.WorkflowStatusRunning && exec.Status != models.WorkflowStatusPending {
-			continue
-		}
 		if err := o.recoverExecution(ctx, exec); err != nil {
 			log.Error().Err(err).Str("exec_id", exec.ID).Msg("failed to recover execution")
 			continue
