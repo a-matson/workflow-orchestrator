@@ -20,11 +20,12 @@
 					v-for="exec in filteredExecs"
 					:key="exec.id"
 					class="exec-item"
+					:data-testid="`exec-${exec.id}`"
 					:class="{ active: selectedId === exec.id }"
 					@click="selectExec(exec.id)"
 				>
 					<div class="exec-item-row1">
-						<span :class="['badge', exec.status]">{{ exec.status }}</span>
+						<span :class="['badge', exec.status]" data-testid="exec-status">{{ exec.status }}</span>
 						<span class="exec-wf-name">{{ exec.workflow_name }}</span>
 					</div>
 					<div class="exec-item-row2">

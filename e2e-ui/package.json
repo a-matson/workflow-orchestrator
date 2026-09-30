@@ -1,0 +1,13 @@
+{
+  "name": "fluxor-e2e-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "a11y:record": "A11Y_RECORD=1 playwright test --project=a11y"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0"
+  }
+}

@@ -4,16 +4,25 @@
 		<div class="dag-toolbar">
 			<div class="toolbar-left">
 				<input v-model="workflowName" placeholder="Workflow name…" class="name-input" />
-				<select v-model="selectedTaskType" class="type-select">
+				<select v-model="selectedTaskType" class="type-select" data-testid="task-type-select">
 					<option value="">Add task…</option>
 					<option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">
 						{{ t.label }}
 					</option>
 				</select>
-				<button :disabled="!selectedTaskType" class="btn-add" @click="addNode">+ Add Task</button>
+				<button
+					:disabled="!selectedTaskType"
+					class="btn-add"
+					data-testid="add-task"
+					@click="addNode"
+				>
+					+ Add Task
+				</button>
 			</div>
 			<div class="toolbar-right">
-				<button class="btn-secondary" @click="autoLayout">Auto Layout</button>
+				<button class="btn-secondary" data-testid="auto-layout" @click="autoLayout">
+					Auto Layout
+				</button>
 				<button class="btn-secondary" @click="runValidation">Validate</button>
 				<button
 					class="btn-primary"
@@ -68,7 +77,7 @@
 
 		<!-- Right config panel -->
 		<Transition name="slide-right">
-			<div v-if="selectedNode" class="config-panel">
+			<div v-if="selectedNode" class="config-panel" data-testid="config-panel">
 				<div class="config-header">
 					<span class="config-title">Configure Task</span>
 					<button class="config-close" @click="selectedNode = null">✕</button>

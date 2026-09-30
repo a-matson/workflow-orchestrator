@@ -1,0 +1,29 @@
+{
+  "/builder": {
+    "button-name": 3,
+    "color-contrast": 3,
+    "page-has-heading-one": 1,
+    "select-name": 1
+  },
+  "/executions": {
+    "color-contrast": 4,
+    "page-has-heading-one": 1,
+    "select-name": 1
+  },
+  "/logs": {
+    "color-contrast": 5,
+    "page-has-heading-one": 1
+  },
+  "/metrics": {
+    "color-contrast": 25,
+    "page-has-heading-one": 1
+  },
+  "/builder (panel open)": {
+    "button-name": 3,
+    "color-contrast": 21,
+    "label": 5,
+    "page-has-heading-one": 1,
+    "select-name": 2
+  },
+  "/login": {}
+}
