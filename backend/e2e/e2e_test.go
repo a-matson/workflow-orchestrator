@@ -216,10 +216,14 @@ func TestE2E_FrontendServesSPA(t *testing.T) {
 	}
 }
 
-// get returns the response so header assertions can see it; send drops headers.
-func get(t *testing.T, url string) (*http.Response, []byte) {
+// get returns the status and headers too, which send drops, for header assertions.
+func get(t *testing.T, url string) (int, http.Header, []byte) {
 	t.Helper()
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -232,7 +236,7 @@ func get(t *testing.T, url string) (*http.Response, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp, body
+	return resp.StatusCode, resp.Header, body
 }
 
 var scriptSrc = regexp.MustCompile(`src="(/assets/[^"]+\.js)"`)
@@ -240,7 +244,7 @@ var scriptSrc = regexp.MustCompile(`src="(/assets/[^"]+\.js)"`)
 // firstScriptAsset finds a hashed bundle through index.html so the tests survive rebuilds.
 func firstScriptAsset(t *testing.T) string {
 	t.Helper()
-	_, index := get(t, frontendURL+"/")
+	_, _, index := get(t, frontendURL+"/")
 	m := scriptSrc.FindSubmatch(index)
 	if m == nil {
 		t.Fatalf("index.html references no /assets/*.js:\n%s", index)
@@ -252,8 +256,7 @@ func firstScriptAsset(t *testing.T) string {
 // location class (SPA, asset, proxied API) is probed, not just "/".
 func TestFrontend_SecurityHeaders(t *testing.T) {
 	for _, path := range []string{"/", "/executions", firstScriptAsset(t), "/api/health"} {
-		resp, _ := get(t, frontendURL+path)
-		h := resp.Header
+		_, h, _ := get(t, frontendURL+path)
 		if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
 			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", path, got)
 		}
@@ -280,24 +283,24 @@ func TestFrontend_SecurityHeaders(t *testing.T) {
 
 func TestFrontend_NoSourceMaps(t *testing.T) {
 	asset := firstScriptAsset(t)
-	resp, js := get(t, frontendURL+asset)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s: %d", asset, resp.StatusCode)
+	status, _, js := get(t, frontendURL+asset)
+	if status != http.StatusOK {
+		t.Fatalf("GET %s: %d", asset, status)
 	}
 	if strings.Contains(string(js), "sourceMappingURL") {
 		t.Errorf("%s still carries a sourceMappingURL comment", asset)
 	}
-	resp, _ = get(t, frontendURL+asset+".map")
+	status, _, _ = get(t, frontendURL+asset+".map")
 	// SPA fallback would answer 200 with index.html, so only an explicit 404 passes.
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("GET %s.map = %d, want 404", asset, resp.StatusCode)
+	if status != http.StatusNotFound {
+		t.Errorf("GET %s.map = %d, want 404", asset, status)
 	}
 }
 
 func TestFrontend_Robots(t *testing.T) {
-	resp, body := get(t, frontendURL+"/robots.txt")
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
-		t.Errorf("/robots.txt: status %d, type %q, want 200 text/plain:\n%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	status, h, body := get(t, frontendURL+"/robots.txt")
+	if status != http.StatusOK || !strings.HasPrefix(h.Get("Content-Type"), "text/plain") {
+		t.Errorf("/robots.txt: status %d, type %q, want 200 text/plain:\n%s", status, h.Get("Content-Type"), body)
 	}
 }
 

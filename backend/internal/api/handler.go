@@ -364,9 +364,12 @@ func (h *Handler) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := h.orchestrator.GetMetrics()
 
-	queueDepth, _ := h.redis.QueueDepth(r.Context())
-
-	metrics["queue_depth"] = queueDepth
+	// Left out when unreadable: a 0 would claim an empty queue.
+	if queueDepth, err := h.redis.QueueDepth(r.Context()); err != nil {
+		logFrom(r).Warn().Err(err).Msg("metrics: could not read task queue depth")
+	} else {
+		metrics["queue_depth"] = queueDepth
+	}
 	metrics["ws_clients"] = int64(h.hub.ConnectedClients())
 
 	writeJSON(w, http.StatusOK, metrics)
@@ -491,6 +494,7 @@ func (h *Handler) DownloadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	// The status is sent; an encode error means the client went away mid-body.
 	_ = json.NewEncoder(w).Encode(v)
 }
 

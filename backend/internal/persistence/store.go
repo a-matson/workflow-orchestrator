@@ -137,8 +137,12 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(tasksJSON, &def.Tasks)
-		_ = json.Unmarshal(tagsJSON, &def.Tags)
+		if err := json.Unmarshal(tasksJSON, &def.Tasks); err != nil {
+			return nil, fmt.Errorf("unmarshaling tasks of %s: %w", def.ID, err)
+		}
+		if err := json.Unmarshal(tagsJSON, &def.Tags); err != nil {
+			return nil, fmt.Errorf("unmarshaling tags of %s: %w", def.ID, err)
+		}
 		defs = append(defs, def)
 	}
 
@@ -355,10 +359,17 @@ func insertTask(ctx context.Context, db execer, task *models.TaskExecution) erro
 }
 
 func (s *Store) UpdateTaskExecution(ctx context.Context, task *models.TaskExecution) error {
-	outputJSON, _ := json.Marshal(task.Output)
-	logsJSON, _ := json.Marshal(task.Logs)
-	artifactsInJSON, _ := json.Marshal(task.ArtifactsIn)
-	artifactsOutJSON, _ := json.Marshal(task.ArtifactsOut)
+	var outputJSON, logsJSON, artifactsInJSON, artifactsOutJSON []byte
+	for _, f := range []struct {
+		dst *[]byte
+		v   any
+	}{{&outputJSON, task.Output}, {&logsJSON, task.Logs}, {&artifactsInJSON, task.ArtifactsIn}, {&artifactsOutJSON, task.ArtifactsOut}} {
+		b, err := json.Marshal(f.v)
+		if err != nil {
+			return fmt.Errorf("marshaling task %s: %w", task.ID, err)
+		}
+		*f.dst = b
+	}
 
 	_, err := s.pool.Exec(ctx, `
 		UPDATE task_executions SET
@@ -465,6 +476,8 @@ func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 	if outputJSON != nil {
 		task.Output = outputJSON
 	}
+	// Best effort, as for executions: a malformed logs, metadata or artifacts
+	// blob must not hide the task's status from callers.
 	if logsJSON != nil {
 		_ = json.Unmarshal(logsJSON, &task.Logs)
 	}

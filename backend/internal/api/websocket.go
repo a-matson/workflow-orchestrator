@@ -211,6 +211,8 @@ func (c *Client) writePump(ctx context.Context) {
 		defer t.Stop()
 		recheck = t.C
 	}
+	// Connection teardown and write deadlines are best effort below: a failure
+	// means the peer is gone, and the next write or read ends the pump anyway.
 	defer func() {
 		ticker.Stop()
 		_ = c.conn.Close()
@@ -249,6 +251,7 @@ func (c *Client) writePump(ctx context.Context) {
 }
 
 func (c *Client) readPump() {
+	// Best effort, as in writePump: a failed close or deadline means the peer is gone.
 	defer func() {
 		c.hub.unregister <- c
 		_ = c.conn.Close()

@@ -105,7 +105,7 @@ func (c *Client) Download(ctx context.Context, key string) (io.ReadCloser, int64
 	}
 	info, err := obj.Stat()
 	if err != nil {
-		_ = obj.Close()
+		_ = obj.Close() // the stat error is the one worth returning
 		return nil, 0, fmt.Errorf("minio: stat %q: %w", key, err)
 	}
 	return obj, info.Size, nil
