@@ -130,3 +130,28 @@ func TestMigrations_Concurrent(t *testing.T) {
 		t.Fatalf("schema_migrations rows = %d, want %d", n, len(files))
 	}
 }
+
+// HYG-5: schema no code uses is dropped, so nobody mistakes it for live data.
+func TestMigrations_DropUnusedSchema(t *testing.T) {
+	ctx := context.Background()
+	pool := newMigrationDB(t)
+	if err := persistence.Migrate(ctx, pool, migrations.FS); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	for _, rel := range []string{"artifacts", "idempotency_keys", "execution_summaries", "worker_activity"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, rel).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Errorf("%s still exists after Migrate", rel)
+		}
+	}
+	var fn bool
+	if err := pool.QueryRow(ctx, `SELECT to_regprocedure('archive_old_executions(integer)') IS NOT NULL`).Scan(&fn); err != nil {
+		t.Fatal(err)
+	}
+	if fn {
+		t.Error("archive_old_executions still exists after Migrate")
+	}
+}
