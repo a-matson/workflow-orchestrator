@@ -74,8 +74,9 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 	}
 
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO workflow_definitions (id, name, description, version, tasks, max_parallel, tags, global_retry, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO workflow_definitions (id, name, description, version, tasks, max_parallel, tags, global_retry,
+			schedule, next_run_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			description = EXCLUDED.description,
@@ -84,22 +85,26 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 			max_parallel = EXCLUDED.max_parallel,
 			tags = EXCLUDED.tags,
 			global_retry = EXCLUDED.global_retry,
+			schedule = EXCLUDED.schedule,
+			next_run_at = EXCLUDED.next_run_at,
 			updated_at = EXCLUDED.updated_at
-	`, def.ID, def.Name, def.Description, def.Version, tasksJSON, def.MaxParallel, tagsJSON, retryJSON, def.CreatedAt, def.UpdatedAt)
+	`, def.ID, def.Name, def.Description, def.Version, tasksJSON, def.MaxParallel, tagsJSON, retryJSON,
+		def.Schedule, def.NextRunAt, def.CreatedAt, def.UpdatedAt)
 
 	return err
 }
 
 func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.WorkflowDefinition, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry, created_at, updated_at
+		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry,
+			COALESCE(schedule, ''), next_run_at, created_at, updated_at
 		FROM workflow_definitions WHERE id = $1
 	`, id)
 
 	def := &models.WorkflowDefinition{}
 	var tasksJSON, tagsJSON []byte
 	err := row.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.CreatedAt, &def.UpdatedAt)
+		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.Schedule, &def.NextRunAt, &def.CreatedAt, &def.UpdatedAt)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -120,7 +125,8 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 
 func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) ([]*models.WorkflowDefinition, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry, created_at, updated_at
+		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry,
+			COALESCE(schedule, ''), next_run_at, created_at, updated_at
 		FROM workflow_definitions ORDER BY created_at DESC, id
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -134,7 +140,7 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 		def := &models.WorkflowDefinition{}
 		var tasksJSON, tagsJSON []byte
 		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.CreatedAt, &def.UpdatedAt); err != nil {
+			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.Schedule, &def.NextRunAt, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(tasksJSON, &def.Tasks); err != nil {
@@ -147,6 +153,42 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 	}
 
 	return defs, rows.Err()
+}
+
+// DueSchedule is a workflow whose schedule fired at or before a given time.
+type DueSchedule struct {
+	ID, Schedule string
+	NextRunAt    time.Time
+}
+
+// ListDueSchedules returns the schedules due at now, oldest first.
+func (s *Store) ListDueSchedules(ctx context.Context, now time.Time) ([]DueSchedule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, schedule, next_run_at FROM workflow_definitions
+		WHERE schedule IS NOT NULL AND next_run_at <= $1 ORDER BY next_run_at
+	`, now)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (DueSchedule, error) {
+		var d DueSchedule
+		err := row.Scan(&d.ID, &d.Schedule, &d.NextRunAt)
+		return d, err
+	})
+}
+
+// ClaimSchedule moves workflow id's next_run_at from due to next, only if it
+// is still due: the compare-and-swap that lets each firing start one run,
+// however many schedulers see it. next nil stops the schedule.
+func (s *Store) ClaimSchedule(ctx context.Context, id string, due time.Time, next *time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE workflow_definitions SET next_run_at = $3
+		WHERE id = $1 AND next_run_at = $2
+	`, id, due, next)
+	if err != nil {
+		return false, fmt.Errorf("claiming schedule of %s: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // ==================== Workflow Executions ====================

@@ -92,3 +92,14 @@ func TestValidateDefinitionExampleETL(t *testing.T) {
 		t.Fatalf("etl-pipeline.json rejected: %v", err)
 	}
 }
+
+func TestValidateDefinition_Schedule(t *testing.T) {
+	ok := &models.WorkflowDefinition{Tasks: []models.TaskDefinition{task("a")}, Schedule: "0 2 * * *"}
+	if err := validateDefinition(ok); err != nil {
+		t.Errorf("valid schedule rejected: %v", err)
+	}
+	bad := &models.WorkflowDefinition{Tasks: []models.TaskDefinition{task("a")}, Schedule: "every day"}
+	if err := validateDefinition(bad); err == nil || !strings.Contains(err.Error(), `schedule "every day"`) {
+		t.Errorf("bad schedule: %v, want an error naming it", err)
+	}
+}

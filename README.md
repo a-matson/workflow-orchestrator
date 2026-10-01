@@ -150,6 +150,10 @@ Strings in a task's `config` can use Go `text/template`. They see the run's trig
 
 A missing key fails the task instead of rendering an empty string, and a template that does not parse is rejected when the workflow is saved. Rendered values are inserted as text, so quote or validate them where they end up in a command or a query.
 
+### Schedules
+
+A workflow's `schedule` is a cron expression, evaluated in UTC: five fields (`0 2 * * *` is 02:00 every day) or a descriptor such as `@hourly`. Each time it fires, the backend starts a run whose trigger payload is `{"scheduled_at": "<RFC3339 time>"}`. The response's `next_run_at` shows the next firing; saving the workflow restarts the schedule from now. A firing missed while the backend was down runs once at startup, not once per missed time. Clear `schedule` to stop it.
+
 ## Development Setup
 
 ```bash

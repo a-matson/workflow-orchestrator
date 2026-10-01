@@ -117,6 +117,15 @@ export interface WorkflowDefinition {
 	global_retry?: RetryPolicy;
 	max_parallel: number /* int */;
 	tags?: { [key: string]: string};
+	/**
+	 * Schedule is a cron expression (five fields or a descriptor, UTC) that
+	 * starts a run each time it fires; empty means none.
+	 */
+	schedule?: string;
+	/**
+	 * NextRunAt is when Schedule next fires. The server sets it; input is ignored.
+	 */
+	next_run_at?: string /* RFC3339 */;
 	created_at: string /* RFC3339 */;
 	updated_at: string /* RFC3339 */;
 }

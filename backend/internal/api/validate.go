@@ -5,9 +5,11 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/schedule"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
 )
 
@@ -21,6 +23,11 @@ var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 func validateDefinition(def *models.WorkflowDefinition) error {
 	if len(def.Tasks) == 0 {
 		return fmt.Errorf("workflow has no tasks")
+	}
+	if def.Schedule != "" {
+		if _, err := schedule.Next(def.Schedule, time.Now()); err != nil {
+			return fmt.Errorf("%w (use five fields, e.g. \"0 2 * * *\", or a descriptor such as @daily; times are UTC)", err)
+		}
 	}
 	for i := range def.Tasks {
 		t := &def.Tasks[i]
@@ -52,4 +59,17 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 		return err
 	}
 	return nil
+}
+
+// planSchedule sets def.NextRunAt from its schedule, counting from now, or
+// clears it. Saving a workflow restarts its schedule. Call after
+// validateDefinition, which has parsed the expression.
+func planSchedule(def *models.WorkflowDefinition, now time.Time) {
+	def.NextRunAt = nil
+	if def.Schedule == "" {
+		return
+	}
+	if next, err := schedule.Next(def.Schedule, now); err == nil {
+		def.NextRunAt = &next
+	}
 }
