@@ -10,9 +10,9 @@ want=${2:-}
 ci=.github/workflows/ci.yml
 fail=0
 
-# The build info records -ldflags, so the version is checked without running a
-# binary built for another platform.
-if ! go version -m "$bin" | grep -q -- "-X main.version=$want"; then
+# -trimpath drops -ldflags from the build info, but an -X string is stored
+# verbatim, so search the binary instead of running one built for another platform.
+if ! grep -aqF -- "$want" "$bin"; then
   echo "FAIL: $bin was not built with -X main.version=$want (the image would report \"dev\")" >&2
   fail=1
 fi
