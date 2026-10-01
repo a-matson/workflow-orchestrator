@@ -10,6 +10,7 @@
 					v-for="exec in store.executions.slice(0, 40)"
 					:key="exec.id"
 					class="picker-item"
+					:data-testid="`log-exec-${exec.id}`"
 					:class="{ active: selectedId === exec.id }"
 					@click="selectExec(exec.id)"
 				>
