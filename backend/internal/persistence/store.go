@@ -72,11 +72,17 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 			return fmt.Errorf("marshaling global retry: %w", err)
 		}
 	}
+	var alertsJSON []byte
+	if def.Alerts != nil {
+		if alertsJSON, err = json.Marshal(def.Alerts); err != nil {
+			return fmt.Errorf("marshaling alerts: %w", err)
+		}
+	}
 
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO workflow_definitions (id, name, description, version, tasks, max_parallel, tags, global_retry,
-			schedule, next_run_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12)
+			schedule, next_run_at, alerts, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			description = EXCLUDED.description,
@@ -87,9 +93,10 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 			global_retry = EXCLUDED.global_retry,
 			schedule = EXCLUDED.schedule,
 			next_run_at = EXCLUDED.next_run_at,
+			alerts = EXCLUDED.alerts,
 			updated_at = EXCLUDED.updated_at
 	`, def.ID, def.Name, def.Description, def.Version, tasksJSON, def.MaxParallel, tagsJSON, retryJSON,
-		def.Schedule, def.NextRunAt, def.CreatedAt, def.UpdatedAt)
+		def.Schedule, def.NextRunAt, alertsJSON, def.CreatedAt, def.UpdatedAt)
 
 	return err
 }
@@ -97,14 +104,14 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.WorkflowDefinition, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry,
-			COALESCE(schedule, ''), next_run_at, created_at, updated_at
+			COALESCE(schedule, ''), next_run_at, alerts, created_at, updated_at
 		FROM workflow_definitions WHERE id = $1
 	`, id)
 
 	def := &models.WorkflowDefinition{}
 	var tasksJSON, tagsJSON []byte
 	err := row.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.Schedule, &def.NextRunAt, &def.CreatedAt, &def.UpdatedAt)
+		&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.Schedule, &def.NextRunAt, &def.Alerts, &def.CreatedAt, &def.UpdatedAt)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -126,7 +133,7 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.W
 func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) ([]*models.WorkflowDefinition, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, description, version, tasks, max_parallel, tags, global_retry,
-			COALESCE(schedule, ''), next_run_at, created_at, updated_at
+			COALESCE(schedule, ''), next_run_at, alerts, created_at, updated_at
 		FROM workflow_definitions ORDER BY created_at DESC, id
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -140,7 +147,7 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, limit, offset int) 
 		def := &models.WorkflowDefinition{}
 		var tasksJSON, tagsJSON []byte
 		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &def.Version,
-			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.Schedule, &def.NextRunAt, &def.CreatedAt, &def.UpdatedAt); err != nil {
+			&tasksJSON, &def.MaxParallel, &tagsJSON, &def.GlobalRetry, &def.Schedule, &def.NextRunAt, &def.Alerts, &def.CreatedAt, &def.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(tasksJSON, &def.Tasks); err != nil {

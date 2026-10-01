@@ -155,6 +155,13 @@ func main() {
 		}
 	}()
 
+	egressGuard, err := egress.New(os.Getenv("FLUXOR_EGRESS_ALLOW"))
+	if err != nil {
+		log.Fatal().Err(err).Msg("FLUXOR_EGRESS_ALLOW is invalid")
+	}
+	// Before recovery, which can finish runs whose alerts would otherwise be lost.
+	orch.SetAlertClient(egressGuard.HTTPClient(10 * time.Second))
+
 	// Must finish before the result processor and the worker pool start below:
 	// recovery moves every running task back to pending, which would pull a
 	// live pickup out from under its worker.
@@ -166,10 +173,6 @@ func main() {
 	// Background services
 	resultProcessor := scheduler.NewResultProcessor(redisClient, orch)
 	retryPoller := scheduler.NewRetryPoller(orch)
-	egressGuard, err := egress.New(os.Getenv("FLUXOR_EGRESS_ALLOW"))
-	if err != nil {
-		log.Fatal().Err(err).Msg("FLUXOR_EGRESS_ALLOW is invalid")
-	}
 	workerPool, err := worker.NewPool(redisClient, workerCount, workerConc, orch, minioClient, worker.Workspace{
 		Root:   os.Getenv("FLUXOR_WORKSPACE_ROOT"),
 		Volume: os.Getenv("FLUXOR_WORKSPACE_VOLUME"),

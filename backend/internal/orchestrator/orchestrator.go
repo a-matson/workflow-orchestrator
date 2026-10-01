@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -34,6 +35,7 @@ type Orchestrator struct {
 	broadcaster EventBroadcaster
 	canceller   TaskCanceller
 	durations   DurationObserver
+	alertClient *http.Client
 
 	// In-memory state for active executions (keyed by workflow exec ID).
 	// Lock order: activeMu and an ExecutionContext's mu are never held
@@ -807,6 +809,7 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	o.metrics.mu.Unlock()
 
 	o.broadcaster.Broadcast(models.WebSocketEvent{Type: evtType, Payload: final})
+	o.alert(ctx, execCtx.Definition.Alerts, final)
 	log.Info().Str("exec_id", final.ID).Str("status", string(final.Status)).Msg("workflow finished")
 	return nil
 }
