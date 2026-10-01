@@ -20,6 +20,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/secrets"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/workflowyaml"
 )
@@ -33,9 +34,10 @@ type Handler struct {
 	storage      *storage.Client
 	session      SessionConfig
 	trusted      []netip.Prefix
-	maxBody      int64 // bytes; see MaxBody
-	generalLimit int   // requests per minute per client IP
-	loginLimit   int   // POST /api/session per minute per client IP
+	maxBody      int64          // bytes; see MaxBody
+	generalLimit int            // requests per minute per client IP
+	loginLimit   int            // POST /api/session per minute per client IP
+	secrets      *secrets.Vault // nil: secrets are not configured
 }
 
 // NewHandler returns a Handler whose session secret is random, so sessions
@@ -117,9 +119,12 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/tasks/{id}/artifacts/{path...}": h.DownloadTaskArtifact,
 
 		// API keys
-		"GET /api/keys":         h.ListAPIKeys,
-		"POST /api/keys":        h.CreateAPIKey,
-		"DELETE /api/keys/{id}": h.RevokeAPIKey,
+		"GET /api/keys":              h.ListAPIKeys,
+		"GET /api/secrets":           h.ListSecrets,
+		"PUT /api/secrets/{name}":    h.PutSecret,
+		"DELETE /api/secrets/{name}": h.DeleteSecret,
+		"POST /api/keys":             h.CreateAPIKey,
+		"DELETE /api/keys/{id}":      h.RevokeAPIKey,
 
 		"GET /api/audit": h.ListAudit,
 

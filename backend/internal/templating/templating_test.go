@@ -19,7 +19,7 @@ func TestRender(t *testing.T) {
 		"plain":   "no template",
 		"timeout": 30,
 	}
-	got, err := Render(cfg, data)
+	got, err := Render(cfg, data, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestRender(t *testing.T) {
 }
 
 func TestRender_MissingKeyFails(t *testing.T) {
-	_, err := Render(map[string]any{"q": "{{ .payload.regoin }}"}, Data(map[string]any{"region": "eu"}, nil))
+	_, err := Render(map[string]any{"q": "{{ .payload.regoin }}"}, Data(map[string]any{"region": "eu"}, nil), nil)
 	if err == nil || !strings.Contains(err.Error(), "regoin") {
 		t.Errorf("Render with a missing key = %v, want an error naming it", err)
 	}
@@ -57,5 +57,19 @@ func TestCheck_And_HasTemplates(t *testing.T) {
 	}
 	if !HasTemplates(map[string]any{"b": []any{"{{ .payload.x }}"}}) {
 		t.Error("HasTemplates missed a nested template")
+	}
+}
+
+func TestRender_Funcs(t *testing.T) {
+	cfg := map[string]any{"token": `{{ secret "api" }}`}
+	if err := Check(cfg); err != nil {
+		t.Errorf("Check rejected the secret function: %v", err)
+	}
+	if _, err := Render(cfg, Data(nil, nil), nil); err == nil {
+		t.Error("rendering secret without the function succeeded")
+	}
+	got, err := Render(cfg, Data(nil, nil), map[string]any{SecretFunc: func(name string) (string, error) { return "v-" + name, nil }})
+	if err != nil || got.(map[string]any)["token"] != "v-api" {
+		t.Errorf("Render with secret = %v, %v", got, err)
 	}
 }

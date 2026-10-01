@@ -25,6 +25,8 @@ var auditActions = map[string]string{
 	"POST /api/executions/{id}/resume": "execution.resume",
 	"POST /api/keys":                   "key.create",
 	"DELETE /api/keys/{id}":            "key.revoke",
+	"PUT /api/secrets/{name}":          "secret.set",
+	"DELETE /api/secrets/{name}":       "secret.delete",
 	"POST /api/session":                "session.login",
 	"DELETE /api/session":              "session.logout",
 }

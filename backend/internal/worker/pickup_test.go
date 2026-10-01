@@ -47,7 +47,7 @@ func TestPickUpAndDispatch_FailedPickupDoesNotRun(t *testing.T) {
 			msg := &models.TaskMessage{TaskExecID: "t", TaskType: "http_request", Config: map[string]any{"url": srv.URL}}
 			ctx := context.Background()
 
-			_, _, ran, err := w.pickUpAndDispatch(ctx, ctx, msg, func(string, string, map[string]any) {})
+			_, _, ran, err := w.pickUpAndDispatch(ctx, ctx, msg, func(string, string, map[string]any) {}, &redactor{})
 
 			if got := hits.Load(); got != tt.wantRuns {
 				t.Errorf("task ran %d times, want %d", got, tt.wantRuns)

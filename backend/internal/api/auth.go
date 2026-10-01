@@ -70,10 +70,14 @@ var routePolicy = map[string]Role{
 	"POST /api/executions/{id}/retry":  RoleOperator,
 	"POST /api/executions/{id}/resume": RoleOperator,
 
-	"GET /api/audit":        RoleAdmin,
-	"GET /api/keys":         RoleAdmin,
-	"POST /api/keys":        RoleAdmin,
-	"DELETE /api/keys/{id}": RoleAdmin,
+	"GET /api/audit": RoleAdmin,
+	"GET /api/keys":  RoleAdmin,
+	// Secrets can reach any system a workflow talks to.
+	"GET /api/secrets":           RoleAdmin,
+	"PUT /api/secrets/{name}":    RoleAdmin,
+	"DELETE /api/secrets/{name}": RoleAdmin,
+	"POST /api/keys":             RoleAdmin,
+	"DELETE /api/keys/{id}":      RoleAdmin,
 }
 
 // Principal is the authenticated caller of a request.

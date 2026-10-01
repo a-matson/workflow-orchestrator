@@ -45,19 +45,28 @@ func HasTemplates(v any) bool {
 	return found
 }
 
+// SecretFunc is the template function that resolves a secret by name. Only
+// the worker supplies it; elsewhere a template that calls it fails to render.
+const SecretFunc = "secret"
+
+// knownFuncs lets Check accept templates that call functions only the worker
+// provides.
+var knownFuncs = template.FuncMap{SecretFunc: func(string) (string, error) { return "", nil }}
+
 // Check parses every template in v, for validation when a workflow is saved.
 func Check(v any) error {
 	_, err := walk(v, func(s string) (string, error) {
-		_, err := parse(s)
+		_, err := parse(s, knownFuncs)
 		return s, err
 	})
 	return err
 }
 
-// Render returns a copy of v with every template string executed against data.
-func Render(v any, data map[string]any) (any, error) {
+// Render returns a copy of v with every template string executed against
+// data, with funcs (which may be nil) available to the templates.
+func Render(v any, data map[string]any, funcs template.FuncMap) (any, error) {
 	return walk(v, func(s string) (string, error) {
-		t, err := parse(s)
+		t, err := parse(s, funcs)
 		if err != nil || t == nil {
 			return s, err
 		}
@@ -70,11 +79,11 @@ func Render(v any, data map[string]any) (any, error) {
 }
 
 // parse returns nil for a string without template actions, which is left as is.
-func parse(s string) (*template.Template, error) {
+func parse(s string, funcs template.FuncMap) (*template.Template, error) {
 	if !strings.Contains(s, "{{") {
 		return nil, nil
 	}
-	t, err := template.New("config").Option("missingkey=error").Parse(s)
+	t, err := template.New("config").Option("missingkey=error").Funcs(funcs).Parse(s)
 	if err != nil {
 		return nil, fmt.Errorf("template %q: %w", s, err)
 	}

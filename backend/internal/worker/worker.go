@@ -51,6 +51,7 @@ type Worker struct {
 	sendmail   sendmailFunc
 	httpClient *http.Client // guarded: every task-initiated request goes through the egress guard
 	running    *runningTasks
+	secrets    SecretSource // nil: {{ secret }} fails the task
 }
 
 // Pool manages a set of concurrent workers.
@@ -240,13 +241,18 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	taskLogger.Info().Msg("executing task")
 
 	logs := newBoundedLogs(w.limits.logs())
+	red := &redactor{}
 	addLog := func(level, message string, fields map[string]any) {
+		var redFields map[string]any
+		if fields != nil {
+			redFields, _ = red.redactValue(fields).(map[string]any) // a map stays a map
+		}
 		entry := models.LogEntry{
 			Timestamp: time.Now(),
 			Level:     level,
 			Attempt:   msg.RetryCount,
-			Message:   message,
-			Fields:    fields,
+			Message:   red.redact(message),
+			Fields:    redFields,
 		}
 
 		// Broadcast immediately so the UI streams output in real time
@@ -268,7 +274,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		defer cancel()
 	}
 
-	output, artifactsOut, ran, execErr := w.pickUpAndDispatch(ctx, taskCtx, msg, addLog)
+	output, artifactsOut, ran, execErr := w.pickUpAndDispatch(ctx, taskCtx, msg, addLog, red)
 	if !ran {
 		if errors.Is(execErr, persistence.ErrConflict) {
 			taskLogger.Warn().Err(execErr).Msg("dropping task message: its row is not queued at this attempt")
@@ -302,7 +308,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 
 	if execErr != nil {
 		result.Success = false
-		result.Error = execErr.Error()
+		result.Error = red.redact(execErr.Error())
 		addLog("error", "Task failed", map[string]any{
 			"error":         execErr.Error(),
 			"duration_ms":   completedAt.Sub(startedAt).Milliseconds(),
@@ -310,7 +316,7 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		})
 	} else {
 		result.Success = true
-		if out, err := json.Marshal(output); err == nil {
+		if out, err := json.Marshal(red.redactValue(map[string]any(output))); err == nil {
 			result.Output = out
 		}
 		addLog("info", "Task completed successfully", map[string]any{
@@ -337,7 +343,7 @@ type logFn func(level, message string, fields map[string]any)
 // have committed), so running could duplicate another worker's run; the
 // message is dropped instead. A row whose pickup did commit then stays
 // running until Orchestrator.ReapTimedOut fails it past its timeout.
-func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.TaskMessage, addLog logFn) (map[string]any, []models.ResolvedArtifact, bool, error) {
+func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.TaskMessage, addLog logFn, red *redactor) (map[string]any, []models.ResolvedArtifact, bool, error) {
 	// Before the first log line, so a dropped message streams nothing.
 	if w.notifier != nil {
 		if err := w.notifier.MarkTaskRunning(ctx, msg.TaskExecID, w.id, msg.RetryCount, msg.Timeout); err != nil {
@@ -357,7 +363,15 @@ func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.Tas
 	// through the normal result path. The rendered config is never logged:
 	// it can hold values from the payload and upstream outputs.
 	if msg.TemplateData != nil {
-		rendered, err := templating.Render(msg.Config, msg.TemplateData)
+		secret := func(name string) (string, error) {
+			if w.secrets == nil {
+				return "", errors.New("secrets store not configured")
+			}
+			v, err := w.secrets.Secret(ctx, name)
+			red.add(v) // before the value can reach any log line
+			return v, err
+		}
+		rendered, err := templating.Render(msg.Config, msg.TemplateData, map[string]any{templating.SecretFunc: secret})
 		if err != nil {
 			return nil, nil, true, fmt.Errorf("config template: %w", err)
 		}
