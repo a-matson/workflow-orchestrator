@@ -387,6 +387,51 @@ func TestE2E_PresignArbitraryKey(t *testing.T) {
 	}
 }
 
+// F4: config templates render the trigger payload in the worker, so the
+// task's command runs with the payload's value.
+func TestE2E_TemplateRendersPayload(t *testing.T) {
+	var wf struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows", map[string]any{
+		"name": "e2e-template",
+		"tasks": []map[string]any{{
+			"id": "run", "name": "Run", "type": "generic", "dependencies": []string{},
+			"config":        map[string]any{"command": "sh", "args": []string{"-c", "echo {{ .payload.greeting }} > /workspace/out.txt"}},
+			"container":     map[string]any{"image": "alpine:3.22"},
+			"artifacts_out": []map[string]any{{"path": "out.txt"}},
+		}},
+	}, http.StatusCreated, &wf)
+	var run struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{"greeting": "hello-template"}, http.StatusAccepted, &run)
+
+	var got struct {
+		Status string
+		Error  string
+		Tasks  []struct {
+			ArtifactsOut []struct {
+				MinioKey string `json:"minio_key"`
+			} `json:"artifacts_out"`
+		}
+	}
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		got.Status = ""
+		do(t, http.MethodGet, baseURL+"/api/executions/"+run.ID, nil, http.StatusOK, &got)
+		if got.Status == "completed" || got.Status == "failed" || got.Status == "cancelled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("execution %s still %q after 120s", run.ID, got.Status)
+		}
+		time.Sleep(time.Second)
+	}
+	if got.Status != "completed" || len(got.Tasks) != 1 || len(got.Tasks[0].ArtifactsOut) != 1 {
+		t.Fatalf("execution %s ended %q (%s)", run.ID, got.Status, got.Error)
+	}
+	if content := minioObject(t, got.Tasks[0].ArtifactsOut[0].MinioKey); content != "hello-template\n" {
+		t.Errorf("artifact = %q, want the rendered payload value", content)
+	}
+}
+
 // minioObject reads an object with the credentials `make e2e` gives the stack.
 func minioObject(t *testing.T, key string) string {
 	t.Helper()

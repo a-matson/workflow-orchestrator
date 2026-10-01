@@ -24,6 +24,8 @@ func TestValidateDefinition(t *testing.T) {
 	badRule.TriggerRule = "sometimes"
 	okRule := task("b", "a")
 	okRule.TriggerRule = models.TriggerRuleOneFailed
+	badTemplate := task("a")
+	badTemplate.Config = map[string]any{"url": "{{ .payload.x"}
 	okPath := task("a")
 	okPath.ArtifactsOut = []models.ArtifactRef{{Path: "results/data.csv"}}
 	// Not canonical: a consumer's "./out.txt" never matches a producer's
@@ -43,6 +45,7 @@ func TestValidateDefinition(t *testing.T) {
 		{"valid dag", []models.TaskDefinition{task("a"), task("b", "a")}, ""},
 		{"valid trigger rule", []models.TaskDefinition{task("a"), okRule}, ""},
 		{"unknown trigger rule", []models.TaskDefinition{badRule}, "trigger_rule \"sometimes\""},
+		{"broken config template", []models.TaskDefinition{badTemplate}, "config: template"},
 		{"valid artifact path", []models.TaskDefinition{okPath}, ""},
 		{"cycle", []models.TaskDefinition{task("a", "b"), task("b", "a")}, "cycle"},
 		{"unknown dependency", []models.TaskDefinition{task("a", "ghost")}, "depends on unknown task ghost"},

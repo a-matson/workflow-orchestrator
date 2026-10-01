@@ -8,6 +8,7 @@ import (
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
 )
 
 const maxTaskIDLen = 64
@@ -33,6 +34,9 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 		case "", models.TriggerRuleAllSuccess, models.TriggerRuleAllDone, models.TriggerRuleOneFailed:
 		default:
 			return fmt.Errorf("task %q: trigger_rule %q must be all_success, all_done or one_failed", t.ID, t.TriggerRule)
+		}
+		if err := templating.Check(t.Config); err != nil {
+			return fmt.Errorf("task %q: config: %w", t.ID, err)
 		}
 		for _, refs := range [][]models.ArtifactRef{t.ArtifactsIn, t.ArtifactsOut} {
 			for _, a := range refs {

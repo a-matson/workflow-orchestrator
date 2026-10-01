@@ -140,6 +140,16 @@ Add file paths under **Artifact Outputs** (files this task writes) and **Artifac
 
 ---
 
+### Templating task config
+
+Strings in a task's `config` can use Go `text/template`. They see the run's trigger payload and the outputs of the task's direct dependencies, and are rendered by the worker just before the task runs:
+
+```json
+{"url": "https://{{ .payload.region }}.example.com/items/{{ .tasks.extract.output.id }}"}
+```
+
+A missing key fails the task instead of rendering an empty string, and a template that does not parse is rejected when the workflow is saved. Rendered values are inserted as text, so quote or validate them where they end up in a command or a query.
+
 ## Development Setup
 
 ```bash
