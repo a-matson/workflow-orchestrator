@@ -207,6 +207,10 @@ type TaskMessage struct {
 	Container        *ContainerSpec     `json:"container,omitempty"`
 	ArtifactsIn      []ResolvedArtifact `json:"artifacts_in,omitempty"`
 	ArtifactsOut     []ArtifactRef      `json:"artifacts_out,omitempty"`
+	// TemplateData is what the worker renders Config's templates against: the
+	// trigger payload and the dependencies' outputs. Set only when Config has
+	// templates.
+	TemplateData map[string]any `json:"template_data,omitempty"`
 }
 
 // TaskResult is what workers publish back

@@ -25,6 +25,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
 )
 
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
@@ -351,6 +352,20 @@ func (w *Worker) pickUpAndDispatch(ctx, taskCtx context.Context, msg *models.Tas
 		"retry":     msg.RetryCount,
 		"isolated":  w.usesContainer(msg),
 	})
+
+	// Rendered here, after the pickup, so a template error fails the task
+	// through the normal result path. The rendered config is never logged:
+	// it can hold values from the payload and upstream outputs.
+	if msg.TemplateData != nil {
+		rendered, err := templating.Render(msg.Config, msg.TemplateData)
+		if err != nil {
+			return nil, nil, true, fmt.Errorf("config template: %w", err)
+		}
+		cfg, _ := rendered.(map[string]any) // Render keeps a map a map
+		run := *msg
+		run.Config = cfg
+		msg = &run
+	}
 
 	out, arts, err := w.dispatch(taskCtx, msg, addLog)
 	return out, arts, true, err

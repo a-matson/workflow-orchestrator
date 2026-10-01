@@ -203,6 +203,12 @@ export interface TaskMessage {
 	container?: ContainerSpec;
 	artifacts_in?: ResolvedArtifact[];
 	artifacts_out?: ArtifactRef[];
+	/**
+	 * TemplateData is what the worker renders Config's templates against: the
+	 * trigger payload and the dependencies' outputs. Set only when Config has
+	 * templates.
+	 */
+	template_data?: { [key: string]: any};
 }
 /**
  * TaskResult is what workers publish back

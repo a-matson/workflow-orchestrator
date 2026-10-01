@@ -944,6 +944,40 @@ func TestTriggerRules_OneFailedSkippedOnSuccess(t *testing.T) {
 	}
 }
 
+// F4: a task whose config has templates gets the trigger payload and its
+// dependencies' outputs in its message; one without templates gets nothing.
+func TestTemplateDataReachesMessage(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	def := &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Templates", MaxParallel: 1,
+		Tasks: []models.TaskDefinition{
+			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
+			{ID: "b", Name: "B", Type: "generic", Dependencies: []string{"a"},
+				Config: map[string]any{"url": "{{ .payload.region }}/{{ .tasks.a.output.n }}"}},
+		},
+	}
+	testutil.SaveDef(t, store, def)
+	if _, err := orch.StartWorkflow(ctx, def, map[string]any{"region": "eu"}); err != nil {
+		t.Fatal(err)
+	}
+	a := testutil.Drain(t, redis, 1)[0]
+	if a.TemplateData != nil {
+		t.Errorf("a has no templates but got template data %v", a.TemplateData)
+	}
+	res := testutil.Ok(a)
+	res.Output = json.RawMessage(`{"n": 3}`)
+	runTask(t, orch, a, res)
+
+	b := testutil.Drain(t, redis, 1)[0]
+	payload, _ := b.TemplateData["payload"].(map[string]any)
+	tasks, _ := b.TemplateData["tasks"].(map[string]any)
+	aOut, _ := tasks["a"].(map[string]any)["output"].(map[string]any)
+	if payload["region"] != "eu" || aOut["n"] != float64(3) {
+		t.Errorf("b template data = %v, want payload.region eu and tasks.a.output.n 3", b.TemplateData)
+	}
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -16,6 +17,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/retry"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
 )
 
 // Orchestrator is the central coordinator that:
@@ -296,6 +298,9 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		ArtifactsIn:      o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn),
 		ArtifactsOut:     taskDef.ArtifactsOut,
 	}
+	if templating.HasTemplates(taskDef.Config) {
+		msg.TemplateData = templateData(execCtx, taskDefID)
+	}
 	if err := o.redis.EnqueueTask(ctx, msg); err != nil {
 		log.Error().Err(err).Str("task_exec_id", taskExec.ID).Msg("failed to enqueue task")
 		// Back to pending, retries included: queued -> retrying is not a
@@ -325,6 +330,18 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 
 	o.broadcaster.Broadcast(taskEvent(models.WSEventTaskQueued, taskExec))
 	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskDef.Name).Msg("task dispatched")
+}
+
+// templateData is what taskDefID's config templates see: the trigger payload
+// and the outputs of its direct dependencies. Callers hold c.mu.
+func templateData(c *ExecutionContext, taskDefID string) map[string]any {
+	outputs := map[string]json.RawMessage{}
+	for _, dep := range c.Graph.Nodes[taskDefID].Dependencies {
+		if row := c.TaskMap[dep.Task.ID]; row != nil {
+			outputs[dep.Task.ID] = row.Output
+		}
+	}
+	return templating.Data(c.Execution.TriggerPayload, outputs)
 }
 
 // readyTasks lists, in definition order, the tasks dispatch may queue at
