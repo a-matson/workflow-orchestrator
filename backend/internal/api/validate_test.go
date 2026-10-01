@@ -103,3 +103,11 @@ func TestValidateDefinition_Schedule(t *testing.T) {
 		t.Errorf("bad schedule: %v, want an error naming it", err)
 	}
 }
+
+func TestValidateDefinition_When(t *testing.T) {
+	bad := task("a")
+	bad.When = "{{ eq .payload.env"
+	if err := validateDefinition(&models.WorkflowDefinition{Tasks: []models.TaskDefinition{bad}}); err == nil || !strings.Contains(err.Error(), "when:") {
+		t.Errorf("broken when template: %v, want an error naming when", err)
+	}
+}

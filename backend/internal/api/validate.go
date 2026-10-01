@@ -45,6 +45,9 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 		if err := templating.Check(t.Config); err != nil {
 			return fmt.Errorf("task %q: config: %w", t.ID, err)
 		}
+		if err := templating.Check(t.When); err != nil {
+			return fmt.Errorf("task %q: when: %w", t.ID, err)
+		}
 		for _, refs := range [][]models.ArtifactRef{t.ArtifactsIn, t.ArtifactsOut} {
 			for _, a := range refs {
 				// Canonical, because artifacts are matched by path string: a

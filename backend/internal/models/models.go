@@ -104,14 +104,18 @@ type TaskDefinition struct {
 	ArtifactsIn  []ArtifactRef     `json:"artifacts_in,omitempty"`
 	ArtifactsOut []ArtifactRef     `json:"artifacts_out,omitempty"`
 	TriggerRule  TriggerRule       `json:"trigger_rule,omitempty"`
+	// When is a template that must render to "true" for the task to run, as
+	// in {{ eq .payload.env "prod" }}; anything else skips it. It sees what
+	// config templates see and is checked once TriggerRule is met.
+	When string `json:"when,omitempty"`
 }
 
 // UsesTriggerRules reports whether any task sets a rule other than the
-// default. Such a workflow lets failures propagate through the rules instead
-// of failing fast.
+// default, or a When condition. Such a workflow lets failures and skips
+// propagate through the rules instead of failing fast.
 func (d *WorkflowDefinition) UsesTriggerRules() bool {
 	for _, t := range d.Tasks {
-		if t.TriggerRule != "" && t.TriggerRule != TriggerRuleAllSuccess {
+		if (t.TriggerRule != "" && t.TriggerRule != TriggerRuleAllSuccess) || t.When != "" {
 			return true
 		}
 	}

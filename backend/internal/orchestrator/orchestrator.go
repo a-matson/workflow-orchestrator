@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -206,6 +207,15 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 
 	// Dispatch first wave of tasks (those with no dependencies)
 	dispatchCtx := context.WithoutCancel(ctx)
+	if def.UsesTriggerRules() {
+		// Also finishes a run whose when conditions skip every task.
+		runSafe("advance", exec.ID, func() {
+			if err := o.advance(dispatchCtx, execCtx); err != nil {
+				log.Error().Err(err).Str("exec_id", exec.ID).Msg("could not advance new execution")
+			}
+		})
+		return snap, nil
+	}
 	runSafe("dispatch", exec.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 
 	return snap, nil
@@ -224,6 +234,11 @@ func (o *Orchestrator) dispatchReadyTasks(ctx context.Context, execCtx *Executio
 	defer execCtx.mu.Unlock()
 	if execCtx.done {
 		return
+	}
+	if execCtx.Definition.UsesTriggerRules() {
+		// Every dispatch, the first included, skips first, so a task whose
+		// when condition is false is never queued.
+		o.skipLost(ctx, execCtx)
 	}
 
 	limit := execCtx.Definition.MaxParallel
@@ -418,11 +433,24 @@ func (o *Orchestrator) skipLost(ctx context.Context, c *ExecutionContext) {
 		changed = false
 		for _, def := range c.Definition.Tasks {
 			task := c.TaskMap[def.ID]
-			if task.Status != models.TaskStatusPending || !c.ruleLost(def.TriggerRule, c.Graph.Nodes[def.ID].Dependencies) {
+			if task.Status != models.TaskStatusPending {
+				continue
+			}
+			deps := c.Graph.Nodes[def.ID].Dependencies
+			var reason *string
+			switch {
+			case c.ruleLost(def.TriggerRule, deps):
+			case def.When != "" && c.ruleMet(def.TriggerRule, deps):
+				run, why := whenHolds(def.When, templateData(c, def.ID))
+				if run {
+					continue
+				}
+				reason = &why
+			default:
 				continue
 			}
 			now := time.Now()
-			row, err := o.store.TransitionTask(ctx, task.ID, task.RetryCount, models.TaskStatusSkipped, persistence.TaskPatch{CompletedAt: &now})
+			row, err := o.store.TransitionTask(ctx, task.ID, task.RetryCount, models.TaskStatusSkipped, persistence.TaskPatch{CompletedAt: &now, Error: reason})
 			if err != nil {
 				log.Error().Err(err).Str("task_exec_id", task.ID).Msg("could not skip task whose trigger rule can no longer be met")
 				continue
@@ -433,6 +461,19 @@ func (o *Orchestrator) skipLost(ctx context.Context, c *ExecutionContext) {
 			o.broadcaster.Broadcast(taskEvent(models.WSEventTaskSkipped, row))
 		}
 	}
+}
+
+// whenHolds evaluates a task's when condition. It returns false, with the
+// reason to record on the skipped task, unless the template renders "true".
+func whenHolds(when string, data map[string]any) (bool, string) {
+	out, err := templating.Render(when, data)
+	if err != nil {
+		return false, "when: " + err.Error()
+	}
+	if s, _ := out.(string); strings.TrimSpace(s) == "true" { // Render keeps a string a string
+		return true, ""
+	}
+	return false, fmt.Sprintf("when: %q was not true", when)
 }
 
 // advance is how a workflow with trigger rules moves on after a task ends:
