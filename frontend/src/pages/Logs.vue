@@ -34,6 +34,7 @@
 							:key="lvl"
 							class="level-btn"
 							:class="{ active: activeLevels.has(lvl) }"
+							:aria-pressed="activeLevels.has(lvl)"
 							@click="toggleLevel(lvl)"
 						>
 							{{ lvl }}

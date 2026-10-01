@@ -6,7 +6,13 @@
 		<!-- Header -->
 		<div class="node-header">
 			<span class="task-type-badge">{{ taskTypeLabel }}</span>
-			<span v-if="data.status" class="status-dot" :style="{ background: statusColor }"></span>
+			<span
+				v-if="data.status"
+				class="status-dot"
+				role="img"
+				:aria-label="`Status: ${data.status}`"
+				:style="{ background: statusColor }"
+			></span>
 		</div>
 
 		<!-- Name -->
