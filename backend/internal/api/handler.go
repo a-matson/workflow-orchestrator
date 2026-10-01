@@ -155,6 +155,7 @@ func (h *Handler) createWorkflow(w http.ResponseWriter, r *http.Request, def *mo
 	now := time.Now()
 	def.CreatedAt = now
 	def.UpdatedAt = now
+	planSchedule(def, now)
 
 	if err := h.store.SaveWorkflowDefinition(r.Context(), def); err != nil {
 		logFrom(r).Error().Err(err).Msg("failed to save workflow definition")
@@ -241,6 +242,7 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 		def.CreatedAt = now
 	}
 	def.UpdatedAt = now
+	planSchedule(&def, now)
 	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
 		logFrom(r).Error().Err(err).Str("id", id).Msg("failed to update workflow definition")
 		h.audit(r, "workflow.update", "workflow", id, auditError)

@@ -41,7 +41,7 @@ func Parse(src []byte) (*models.WorkflowDefinition, error) {
 }
 
 // serverFields are set by the server, so an exported file imports as a new workflow.
-var serverFields = []string{"id", "created_at", "updated_at"}
+var serverFields = []string{"id", "created_at", "updated_at", "next_run_at"}
 
 // Render encodes def as YAML, with durations as strings and without the
 // fields the server assigns.

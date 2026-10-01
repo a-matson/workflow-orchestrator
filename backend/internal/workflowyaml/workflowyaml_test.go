@@ -10,8 +10,9 @@ import (
 )
 
 func TestRender_ThenParse_RoundTrips(t *testing.T) {
+	next := time.Date(2026, 10, 2, 2, 0, 0, 0, time.UTC)
 	def := &models.WorkflowDefinition{
-		ID: "server-id", Name: "ETL", Version: "1.0.0", MaxParallel: 4,
+		ID: "server-id", Name: "ETL", Version: "1.0.0", MaxParallel: 4, Schedule: "0 2 * * *", NextRunAt: &next,
 		GlobalRetry: &models.RetryPolicy{MaxRetries: 3, InitialDelay: 2 * time.Second, MaxDelay: 5 * time.Minute, BackoffMultiple: 2},
 		Tasks: []models.TaskDefinition{
 			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}, Timeout: 90 * time.Second,
@@ -25,12 +26,12 @@ func TestRender_ThenParse_RoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	y := string(out)
-	for _, want := range []string{"timeout: 1m30s", "initial_delay: 2s", "max_delay: 5m0s", "name: ETL"} {
+	for _, want := range []string{"timeout: 1m30s", "initial_delay: 2s", "max_delay: 5m0s", "name: ETL", "schedule: 0 2 * * *"} {
 		if !strings.Contains(y, want) {
 			t.Errorf("rendered YAML lacks %q:\n%s", want, y)
 		}
 	}
-	if strings.Contains(y, "server-id") || strings.Contains(y, "created_at") {
+	if strings.Contains(y, "server-id") || strings.Contains(y, "created_at") || strings.Contains(y, "next_run_at") {
 		t.Errorf("rendered YAML carries server fields:\n%s", y)
 	}
 

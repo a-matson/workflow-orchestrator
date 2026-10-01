@@ -4,6 +4,14 @@
 		<div class="dag-toolbar">
 			<div class="toolbar-left">
 				<input v-model="workflowName" placeholder="Workflow name…" class="name-input" />
+				<input
+					v-model="schedule"
+					class="name-input schedule-input"
+					placeholder="Schedule (cron, UTC)"
+					aria-label="Schedule as a cron expression in UTC, for example 0 2 * * *; empty runs only on demand"
+					title="Cron, UTC: e.g. 0 2 * * * or @hourly. Empty: runs only on demand."
+					data-testid="workflow-schedule"
+				/>
 				<select
 					v-model="selectedTaskType"
 					class="type-select"
@@ -409,6 +417,7 @@
 
 	// ── State ──────────────────────────────────────────────────────
 	const workflowName = ref('New Workflow')
+	const schedule = ref('')
 	const selectedTaskType = ref('')
 	// The API carries time.Duration as integer nanoseconds; s * 1e9 can be fractional (1.001 s).
 	const secondsToNs = (s: number) => Math.round(s * 1e9)
@@ -462,6 +471,7 @@
 	const contentKey = () =>
 		JSON.stringify([
 			workflowName.value,
+			schedule.value,
 			nodes.value.map((n) => n.data.taskDef),
 			edges.value.map((e) => [e.source, e.target]),
 		])
@@ -760,6 +770,7 @@
 				max_parallel: 10,
 				...loadedDef.value,
 				name: workflowName.value,
+				schedule: schedule.value.trim() || undefined,
 				tasks: nodes.value.map((n) => n.data.taskDef),
 			}
 			let result
@@ -796,6 +807,7 @@
 			const { name, tasks, id } = wf
 			loadedDef.value = wf
 			workflowName.value = name
+			schedule.value = wf.schedule ?? ''
 			savedWorkflowId.value = id
 			nodes.value = tasks?.map((t, i) => ({
 				id: t.id,
@@ -845,6 +857,7 @@
 			edges.value = []
 			savedWorkflowId.value = null
 			loadedDef.value = null
+			schedule.value = ''
 			selectedNode.value = null
 			markClean()
 		},
@@ -879,6 +892,11 @@
 		gap: 8px;
 	}
 
+	.schedule-input {
+		width: 150px;
+		font-family: var(--mono);
+		font-weight: 400;
+	}
 	.name-input {
 		font-size: 13px;
 		font-weight: 600;

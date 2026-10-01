@@ -128,8 +128,13 @@ type WorkflowDefinition struct {
 	GlobalRetry *RetryPolicy      `json:"global_retry,omitempty"`
 	MaxParallel int               `json:"max_parallel"`
 	Tags        map[string]string `json:"tags,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	// Schedule is a cron expression (five fields or a descriptor, UTC) that
+	// starts a run each time it fires; empty means none.
+	Schedule string `json:"schedule,omitempty"`
+	// NextRunAt is when Schedule next fires. The server sets it; input is ignored.
+	NextRunAt *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // ResolvedArtifact is an ArtifactRef with its fully-qualified MinIO key resolved.

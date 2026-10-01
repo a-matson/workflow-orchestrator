@@ -180,6 +180,7 @@ func main() {
 
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
+	go scheduler.NewCronScheduler(store, orch).Run(ctx)
 	// Workers stop before everything else, so the result processor is still
 	// consuming while they drain. Docker's stop timeout must exceed the grace
 	// (compose sets stop_grace_period).
