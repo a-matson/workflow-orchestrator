@@ -79,7 +79,13 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 		}
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	defJSON, err := json.Marshal(def)
+	if err != nil {
+		return fmt.Errorf("marshaling revision: %w", err)
+	}
+
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
 		INSERT INTO workflow_definitions (id, name, description, version, tasks, max_parallel, tags, global_retry,
 			schedule, next_run_at, alerts, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12, $13)
@@ -96,9 +102,17 @@ func (s *Store) SaveWorkflowDefinition(ctx context.Context, def *models.Workflow
 			alerts = EXCLUDED.alerts,
 			updated_at = EXCLUDED.updated_at
 	`, def.ID, def.Name, def.Description, def.Version, tasksJSON, def.MaxParallel, tagsJSON, retryJSON,
-		def.Schedule, def.NextRunAt, alertsJSON, def.CreatedAt, def.UpdatedAt)
-
-	return err
+			def.Schedule, def.NextRunAt, alertsJSON, def.CreatedAt, def.UpdatedAt); err != nil {
+			return err
+		}
+		// A separate statement, not a CTE: it reads MAX after the upsert holds
+		// the definition's row lock, so concurrent saves get distinct revisions.
+		_, err := tx.Exec(ctx, `
+		INSERT INTO workflow_revisions (workflow_id, revision, definition, created_at)
+		SELECT $1, COALESCE(MAX(revision), 0) + 1, $2, $3 FROM workflow_revisions WHERE workflow_id = $1
+	`, def.ID, defJSON, def.UpdatedAt)
+		return err
+	})
 }
 
 func (s *Store) GetWorkflowDefinition(ctx context.Context, id string) (*models.WorkflowDefinition, error) {

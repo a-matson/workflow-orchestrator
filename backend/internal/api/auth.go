@@ -48,6 +48,8 @@ var routePolicy = map[string]Role{
 	"GET /api/workflows":                      RoleViewer,
 	"GET /api/workflows/{id}":                 RoleViewer,
 	"GET /api/workflows/{id}/export":          RoleViewer,
+	"GET /api/workflows/{id}/revisions":       RoleViewer,
+	"GET /api/workflows/{id}/revisions/{rev}": RoleViewer,
 	"GET /api/executions":                     RoleViewer,
 	"GET /api/executions/{id}":                RoleViewer,
 	"GET /api/executions/{execID}/tasks":      RoleViewer,

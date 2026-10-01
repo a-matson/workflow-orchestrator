@@ -168,6 +168,10 @@ A workflow's `alerts` posts a run's outcome as JSON to a URL when the run finish
 
 The body is `{"event": "workflow.failed", "workflow_id", "workflow_name", "execution_id", "status", "started_at", "completed_at", "failed_tasks": ["load"]}`. Alerts go out through the egress guard, so a private or loopback host needs `FLUXOR_EGRESS_ALLOW`. Each alert is one attempt with a 10-second timeout: a receiver that is down or answers outside 2xx misses it, and the backend logs a warning. Anyone who can read the workflow can see the URL, so prefer a URL that does not embed a long-lived credential.
 
+### Revisions
+
+Every save of a workflow (create, update or import) records a new revision, numbered from 1 and never changed. `GET /api/workflows/{id}/revisions` lists them and `GET /api/workflows/{id}/revisions/{rev}` returns the definition as it was saved; to roll back, `PUT` that body to `/api/workflows/{id}`, which records it as the next revision. A run keeps the definition it started with, whatever is saved later. Workflows that existed before revisions start at revision 1, their state at upgrade.
+
 ## Development Setup
 
 ```bash
@@ -250,6 +254,8 @@ printf 'Authorization: Bearer %s\n' "$FLUXOR_API_KEY" |
 POST   /api/workflows                  Create workflow definition
 POST   /api/workflows/import           Create a workflow from YAML ({"yaml": "..."})
 GET    /api/workflows/{id}/export      Download a workflow as YAML
+GET    /api/workflows/{id}/revisions   List a workflow's saved revisions, newest first
+GET    /api/workflows/{id}/revisions/{rev}  A workflow as saved at one revision
 GET    /api/workflows                  List all definitions
 GET    /api/workflows/{id}             Get definition
 POST   /api/workflows/{id}/trigger     Start execution

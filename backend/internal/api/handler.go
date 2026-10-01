@@ -87,12 +87,14 @@ func (h *Handler) Routes() *http.ServeMux {
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		// Workflow definitions
-		"POST /api/workflows":            h.CreateWorkflow,
-		"POST /api/workflows/import":     h.ImportWorkflow,
-		"GET /api/workflows/{id}/export": h.ExportWorkflow,
-		"GET /api/workflows":             h.ListWorkflows,
-		"GET /api/workflows/{id}":        h.GetWorkflow,
-		"PUT /api/workflows/{id}":        h.UpdateWorkflow,
+		"POST /api/workflows":                     h.CreateWorkflow,
+		"POST /api/workflows/import":              h.ImportWorkflow,
+		"GET /api/workflows/{id}/export":          h.ExportWorkflow,
+		"GET /api/workflows/{id}/revisions":       h.ListWorkflowRevisions,
+		"GET /api/workflows/{id}/revisions/{rev}": h.GetWorkflowRevision,
+		"GET /api/workflows":                      h.ListWorkflows,
+		"GET /api/workflows/{id}":                 h.GetWorkflow,
+		"PUT /api/workflows/{id}":                 h.UpdateWorkflow,
 
 		// Workflow executions
 		"POST /api/workflows/{id}/trigger": h.TriggerWorkflow,

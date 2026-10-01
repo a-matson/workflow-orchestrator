@@ -151,6 +151,14 @@ export interface AlertTarget {
 	url: string;
 }
 /**
+ * WorkflowRevision is one saved state of a workflow definition. Revisions
+ * count up from 1 per workflow and are never changed.
+ */
+export interface WorkflowRevision {
+	revision: number /* int */;
+	created_at: string /* RFC3339 */;
+}
+/**
  * ResolvedArtifact is an ArtifactRef with its fully-qualified MinIO key resolved.
  */
 export interface ResolvedArtifact {
