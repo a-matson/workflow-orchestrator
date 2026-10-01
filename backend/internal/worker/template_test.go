@@ -31,7 +31,7 @@ func TestPickUpAndDispatch_RendersTemplates(t *testing.T) {
 		Config:       map[string]any{"url": srv.URL + "/{{ .payload.region }}/{{ .tasks.a.output.n }}"},
 		TemplateData: templating.Data(map[string]any{"region": "eu"}, map[string]json.RawMessage{"a": json.RawMessage(`{"n":3}`)}),
 	}
-	if _, _, ran, err := w.pickUpAndDispatch(ctx, ctx, msg, noLog); !ran || err != nil {
+	if _, _, ran, err := w.pickUpAndDispatch(ctx, ctx, msg, noLog, &redactor{}); !ran || err != nil {
 		t.Fatalf("pickUpAndDispatch = ran %v, %v", ran, err)
 	}
 	if hits.Load() != 1 || gotPath != "/eu/3" {
@@ -43,7 +43,7 @@ func TestPickUpAndDispatch_RendersTemplates(t *testing.T) {
 
 	bad := *msg
 	bad.Config = map[string]any{"url": srv.URL + "/{{ .payload.regoin }}"}
-	if _, _, ran, err := w.pickUpAndDispatch(ctx, ctx, &bad, noLog); !ran || err == nil || !strings.Contains(err.Error(), "config template") {
+	if _, _, ran, err := w.pickUpAndDispatch(ctx, ctx, &bad, noLog, &redactor{}); !ran || err == nil || !strings.Contains(err.Error(), "config template") {
 		t.Errorf("missing key: ran %v err %v, want a config template failure", ran, err)
 	}
 	if hits.Load() != 1 {

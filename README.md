@@ -140,6 +140,10 @@ Add file paths under **Artifact Outputs** (files this task writes) and **Artifac
 
 ---
 
+### Secrets
+
+Admins store secrets with `PUT /api/secrets/{name}` (`{"value": "..."}`), list their names with `GET /api/secrets` and remove them with `DELETE /api/secrets/{name}`; a value is never returned. Task config uses them as `{{ secret "name" }}`. Secrets are sealed with AES-256-GCM under `FLUXOR_SECRETS_KEY` and decrypted only by the worker, just before the task runs; the run's logs, error and output show resolved values as `***`. A value a task transforms (base64, split) is not recognised and is not masked. Changing the key makes stored secrets unreadable.
+
 ### Templating task config
 
 Strings in a task's `config` can use Go `text/template`. They see the run's trigger payload and the outputs of the task's direct dependencies, and are rendered by the worker just before the task runs:
@@ -211,6 +215,7 @@ npm run format
 | `FLUXOR_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` even over plain HTTP, for a TLS-terminating proxy |
 | `FLUXOR_RETENTION_DAYS` | `0` | Delete finished runs, with their tasks and logs, this many days after they finished; `0` keeps them forever. Artifacts in MinIO are not deleted |
 | `FLUXOR_AUDIT_RETENTION_DAYS` | `0` | Delete audit entries older than this many days; `0` keeps them forever |
+| `FLUXOR_SECRETS_KEY` | _(empty)_ | Base64 AES-256 key (32 bytes, `head -c 32 /dev/urandom \| base64`) that encrypts workflow secrets; empty disables secrets |
 | `LOG_FORMAT` | `json` | `json` (one object per line, with `request_id`) or `console` (pretty, local dev) |
 | `FLUXOR_BOOTSTRAP_ADMIN_KEY` | _(empty)_ | Admin API key installed at startup, if set (see [Authentication](#authentication)) |
 
@@ -249,6 +254,9 @@ GET    /api/tasks/{id}/logs            Get task logs
 GET    /api/tasks/{id}/artifacts       Get task artifact metadata
 GET    /api/tasks/{id}/artifacts/{path} Download one artifact the task produced
 GET    /api/metrics                    Platform metrics
+GET    /api/secrets                    List secret names (admin)
+PUT    /api/secrets/{name}             Set a secret (admin; write-only)
+DELETE /api/secrets/{name}             Delete a secret (admin)
 POST   /api/client-errors              Log an error the UI could not handle (sent by the UI, rate-limited)
 GET    /api/health                     Liveness (process up, no dependency checks)
 GET    /api/ready                      Readiness (Postgres, Redis, MinIO; 503 if any is down)

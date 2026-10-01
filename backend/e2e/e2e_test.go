@@ -432,6 +432,59 @@ func TestE2E_TemplateRendersPayload(t *testing.T) {
 	}
 }
 
+// F3: a secret set through the API renders into a container task in the
+// worker, and the task's logs show it masked.
+func TestE2E_SecretRendersAndIsRedacted(t *testing.T) {
+	do(t, http.MethodPut, baseURL+"/api/secrets/e2e_greeting", map[string]any{"value": "hello-secret-e2e"}, http.StatusOK, nil)
+	var wf struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows", map[string]any{
+		"name": "e2e-secret",
+		"tasks": []map[string]any{{
+			"id": "run", "name": "Run", "type": "generic", "dependencies": []string{},
+			"config": map[string]any{"command": "sh", "args": []string{"-c",
+				`echo {{ secret "e2e_greeting" }} > /workspace/out.txt; echo {{ secret "e2e_greeting" }}`}},
+			"container":     map[string]any{"image": "alpine:3.22"},
+			"artifacts_out": []map[string]any{{"path": "out.txt"}},
+		}},
+	}, http.StatusCreated, &wf)
+	var run struct{ ID string }
+	do(t, http.MethodPost, baseURL+"/api/workflows/"+wf.ID+"/trigger", map[string]any{}, http.StatusAccepted, &run)
+
+	var got struct {
+		Status string
+		Error  string
+		Tasks  []struct {
+			ID           string
+			ArtifactsOut []struct {
+				MinioKey string `json:"minio_key"`
+			} `json:"artifacts_out"`
+		}
+	}
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		got.Status = ""
+		do(t, http.MethodGet, baseURL+"/api/executions/"+run.ID, nil, http.StatusOK, &got)
+		if got.Status == "completed" || got.Status == "failed" || got.Status == "cancelled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("execution %s still %q after 120s", run.ID, got.Status)
+		}
+		time.Sleep(time.Second)
+	}
+	if got.Status != "completed" || len(got.Tasks) != 1 || len(got.Tasks[0].ArtifactsOut) != 1 {
+		t.Fatalf("execution %s ended %q (%s)", run.ID, got.Status, got.Error)
+	}
+	if content := minioObject(t, got.Tasks[0].ArtifactsOut[0].MinioKey); content != "hello-secret-e2e\n" {
+		t.Errorf("artifact = %q, want the secret's value", content)
+	}
+	status, logs := send(t, http.MethodGet, baseURL+"/api/tasks/"+got.Tasks[0].ID+"/logs", nil)
+	if status != http.StatusOK || strings.Contains(string(logs), "hello-secret-e2e") || !strings.Contains(string(logs), "***") {
+		t.Errorf("task logs = %d %s, want the secret masked as ***", status, logs)
+	}
+	do(t, http.MethodDelete, baseURL+"/api/secrets/e2e_greeting", map[string]any{}, http.StatusNoContent, nil)
+}
+
 // minioObject reads an object with the credentials `make e2e` gives the stack.
 func minioObject(t *testing.T, key string) string {
 	t.Helper()

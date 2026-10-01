@@ -22,6 +22,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/scheduler"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/secrets"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/worker"
 	"github.com/a-matson/workflow-orchestrator/backend/migrations"
@@ -189,6 +190,21 @@ func main() {
 	// Workers stop before everything else, so the result processor is still
 	// consuming while they drain. Docker's stop timeout must exceed the grace
 	// (compose sets stop_grace_period).
+	// Secrets need a key; without one the endpoints answer 503 and templates
+	// that call secret fail their task.
+	var vault *secrets.Vault
+	if k := os.Getenv("FLUXOR_SECRETS_KEY"); k != "" {
+		key, err := secrets.ParseKey(k)
+		if err != nil {
+			log.Fatal().Err(err).Msg("invalid FLUXOR_SECRETS_KEY")
+		}
+		box, err := secrets.NewBox(key)
+		if err != nil {
+			log.Fatal().Err(err).Msg("secrets box")
+		}
+		vault = secrets.NewVault(store, box)
+		workerPool.SetSecrets(vault)
+	}
 	workerCtx, stopWorkers := context.WithCancel(ctx)
 	defer stopWorkers()
 	workersDone := make(chan struct{})
@@ -202,7 +218,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("session configuration failed")
 	}
-	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSession(session).WithTrustedProxies(trustedProxies).WithRateLimits(generalLimit, loginLimit).WithMaxBody(maxBody)
+	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSecrets(vault).WithSession(session).WithTrustedProxies(trustedProxies).WithRateLimits(generalLimit, loginLimit).WithMaxBody(maxBody)
 
 	httpSrv := &http.Server{
 		Addr:         httpAddr,

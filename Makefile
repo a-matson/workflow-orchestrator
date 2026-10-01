@@ -115,7 +115,8 @@ define e2e_stack
 	@status=0; \
 	FLUXOR_BOOTSTRAP_ADMIN_KEY="flx_$$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"; \
 	FLUXOR_API_KEY="$$FLUXOR_BOOTSTRAP_ADMIN_KEY"; \
-	export FLUXOR_BOOTSTRAP_ADMIN_KEY FLUXOR_API_KEY; \
+	FLUXOR_SECRETS_KEY="$$(head -c 32 /dev/urandom | base64)"; \
+	export FLUXOR_BOOTSTRAP_ADMIN_KEY FLUXOR_API_KEY FLUXOR_SECRETS_KEY; \
 	trap '$(E2E_COMPOSE) down -v' INT TERM; \
 	$(E2E_COMPOSE) up -d --build --wait && \
 	  $(1) || status=$$?; \
