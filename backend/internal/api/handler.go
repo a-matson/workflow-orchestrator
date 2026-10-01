@@ -428,6 +428,12 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "task not found", err)
 		return
 	}
+	logs, err := h.store.TaskLogs(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load task logs", err)
+		return
+	}
+	task.Logs = logs[task.ID]
 	writeJSON(w, http.StatusOK, task)
 }
 
@@ -438,7 +444,12 @@ func (h *Handler) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "task not found", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"logs": task.Logs, "task_id": id})
+	logs, err := h.store.TaskLogs(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load task logs", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"logs": logs[task.ID], "task_id": id})
 }
 
 // ==================== System ====================

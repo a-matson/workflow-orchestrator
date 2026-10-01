@@ -68,6 +68,7 @@ func getTask(t *testing.T, store *persistence.Store, id string) *models.TaskExec
 	if err != nil {
 		t.Fatalf("get task %s: %v", id, err)
 	}
+	task.Logs = taskLogs(t, store, id)
 	return task
 }
 
@@ -76,6 +77,16 @@ func equalTime(a, b *time.Time) bool {
 		return a == b
 	}
 	return a.Equal(*b)
+}
+
+// taskLogs reads id's log lines, which a transition stores but does not return.
+func taskLogs(t *testing.T, store *persistence.Store, id string) []models.LogEntry {
+	t.Helper()
+	logs, err := store.TaskLogs(context.Background(), id)
+	if err != nil {
+		t.Fatalf("logs of %s: %v", id, err)
+	}
+	return logs[id]
 }
 
 func messages(logs []models.LogEntry) []string {
@@ -116,8 +127,8 @@ func TestTransitionTask_Allowed(t *testing.T) {
 					t.Errorf("patched columns not written: worker=%q started=%v retry=%d output=%s",
 						got.WorkerID, got.StartedAt, got.RetryCount, got.Output)
 				}
-				if want := []string{"old", "new"}; !slices.Equal(messages(got.Logs), want) {
-					t.Errorf("logs = %v, want %v", messages(got.Logs), want)
+				if want := []string{"old", "new"}; !slices.Equal(messages(taskLogs(t, store, got.ID)), want) {
+					t.Errorf("logs = %v, want %v", messages(taskLogs(t, store, got.ID)), want)
 				}
 				if !equalTime(got.QueuedAt, before.QueuedAt) || !equalTime(got.CompletedAt, before.CompletedAt) ||
 					!equalTime(got.NextRetryAt, before.NextRetryAt) ||
@@ -159,9 +170,9 @@ func TestTransitionTask_PatchesRemainingColumns(t *testing.T) {
 	}
 	if got.WorkerID != before.WorkerID || got.RetryCount != before.RetryCount ||
 		!equalTime(got.StartedAt, before.StartedAt) ||
-		string(got.Output) != string(before.Output) || !slices.Equal(messages(got.Logs), messages(before.Logs)) {
+		string(got.Output) != string(before.Output) || !slices.Equal(messages(taskLogs(t, store, got.ID)), messages(before.Logs)) {
 		t.Errorf("unpatched columns changed: worker=%q retry=%d started=%v output=%s logs=%v",
-			got.WorkerID, got.RetryCount, got.StartedAt, got.Output, messages(got.Logs))
+			got.WorkerID, got.RetryCount, got.StartedAt, got.Output, messages(taskLogs(t, store, got.ID)))
 	}
 }
 
@@ -193,7 +204,7 @@ func TestTransitionTask_Conflict(t *testing.T) {
 	}
 	after := getTask(t, store, before.ID)
 	if after.Status != before.Status || after.WorkerID != before.WorkerID ||
-		!after.UpdatedAt.Equal(before.UpdatedAt) || len(after.Logs) != len(before.Logs) {
+		!after.UpdatedAt.Equal(before.UpdatedAt) || len(taskLogs(t, store, before.ID)) != len(before.Logs) {
 		t.Errorf("row changed on conflict: before=%+v after=%+v", before, after)
 	}
 
@@ -253,27 +264,23 @@ func TestTransitionTask_ConcurrentSingleWinner(t *testing.T) {
 	}
 }
 
-func TestTransitionTask_NullLogsGuard(t *testing.T) {
+// F10: logs live in task_logs, appended in order by each transition.
+func TestTransitionTask_AppendsLogsInOrder(t *testing.T) {
 	store := setupStore(t)
 	ctx := context.Background()
-	task := seedTask(t, store, models.TaskStatusRunning, 0)
-	// UpdateTaskExecution marshals nil Logs as JSON null into the column.
-	task.Logs = nil
-	if err := store.UpdateTaskExecution(ctx, task); err != nil {
-		t.Fatalf("store null logs: %v", err)
-	}
-	if logs := getTask(t, store, task.ID).Logs; logs != nil {
-		t.Fatalf("precondition: logs = %v, want JSON null", logs)
-	}
-
-	got, err := store.TransitionTask(ctx, task.ID, 0, models.TaskStatusCompleted, persistence.TaskPatch{
-		Logs: []models.LogEntry{{Message: "new"}},
-	})
-	if err != nil {
+	task := seedTask(t, store, models.TaskStatusQueued, 0)
+	now := pgNow()
+	if _, err := store.TransitionTask(ctx, task.ID, 0, models.TaskStatusRunning, persistence.TaskPatch{
+		Logs: []models.LogEntry{{Timestamp: now, Level: "info", Message: "a", Attempt: 0}, {Timestamp: now, Level: "warn", Message: "b"}},
+	}); err != nil {
 		t.Fatalf("TransitionTask: %v", err)
 	}
-	if want := []string{"new"}; !slices.Equal(messages(got.Logs), want) {
-		t.Errorf("logs = %v, want %v", messages(got.Logs), want)
+	logs := taskLogs(t, store, task.ID)
+	if want := []string{"old", "a", "b"}; !slices.Equal(messages(logs), want) {
+		t.Fatalf("logs = %v, want %v", messages(logs), want)
+	}
+	if logs[2].Level != "warn" || !logs[2].Timestamp.Equal(now) {
+		t.Errorf("stored line = %+v, want level warn at %s", logs[2], now)
 	}
 }
 

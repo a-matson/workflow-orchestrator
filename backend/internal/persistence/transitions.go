@@ -24,7 +24,7 @@ var ErrInvalidTransition = errors.New("invalid state transition target")
 const (
 	taskColumns = `id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 	       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-	       next_retry_at, output, error, logs, metadata, created_at, updated_at,
+	       next_retry_at, output, error, metadata, created_at, updated_at,
 	       artifacts_in, artifacts_out`
 	execColumns = `id, workflow_id, workflow_name, status, trigger_payload, metadata,
 	       started_at, completed_at, error, created_at, updated_at`
@@ -86,10 +86,10 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 		artifactsOut = b
 	}
 
-	// The logs CASE exists because UpdateTaskExecution writes the whole row
-	// and stores JSON null for a task without logs; JSON null || array is
-	// [null, ...] (and SQL NULL || array is NULL).
+	// One statement: the logs are inserted only if the transition matched,
+	// in their order, so a dropped stale result leaves no log rows behind.
 	row := s.pool.QueryRow(ctx, `
+		WITH t AS (
 		UPDATE task_executions SET
 			status        = $2,
 			worker_id     = COALESCE($4, worker_id),
@@ -100,12 +100,19 @@ func (s *Store) TransitionTask(ctx context.Context, id string, attempt int, to m
 			retry_count   = COALESCE($9::int, retry_count),
 			error         = COALESCE($10, error),
 			output        = COALESCE($11::jsonb, output),
-			logs          = (CASE WHEN jsonb_typeof(logs) = 'array' THEN logs ELSE '[]'::jsonb END) || $12::jsonb,
 			artifacts_out = COALESCE($13::jsonb, artifacts_out),
 			timeout_at    = COALESCE($16, timeout_at)
 		WHERE id = $1 AND status = ANY($14) AND ($3::int < 0 OR retry_count = $3::int)
 		  AND ($15::text = '' OR worker_id = $15::text)
-		RETURNING `+taskColumns,
+		RETURNING `+taskColumns+`
+		), l AS (
+			INSERT INTO task_logs (task_exec_id, attempt, logged_at, level, message, fields)
+			SELECT t.id, COALESCE((x.e->>'attempt')::int, 0), (x.e->>'timestamp')::timestamptz,
+				x.e->>'level', x.e->>'message', x.e->'fields'
+			FROM t, jsonb_array_elements($12::jsonb) WITH ORDINALITY AS x(e, n)
+			ORDER BY x.n
+		)
+		SELECT `+taskColumns+` FROM t`,
 		id, string(to), attempt, workerID, p.QueuedAt, p.StartedAt, p.CompletedAt,
 		p.NextRetryAt, p.RetryCount, p.Error, output, logs, artifactsOut, fromText, p.ExpectWorkerID, p.TimeoutAt)
 

@@ -181,6 +181,11 @@ func main() {
 	go resultProcessor.Run(ctx)
 	go retryPoller.Run(ctx)
 	go scheduler.NewCronScheduler(store, orch).Run(ctx)
+	// Days; 0 keeps everything. Artifacts in MinIO are not deleted with their run.
+	day := 24 * time.Hour
+	go scheduler.NewRetentionSweeper(store,
+		time.Duration(getEnvInt("FLUXOR_RETENTION_DAYS", 0))*day,
+		time.Duration(getEnvInt("FLUXOR_AUDIT_RETENTION_DAYS", 0))*day).Run(ctx)
 	// Workers stop before everything else, so the result processor is still
 	// consuming while they drain. Docker's stop timeout must exceed the grace
 	// (compose sets stop_grace_period).

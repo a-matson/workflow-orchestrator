@@ -209,6 +209,8 @@ npm run format
 | `LOG_LEVEL` | `info` | `debug` or `info` |
 | `FLUXOR_SESSION_SECRET` | _(random per start)_ | Base64 HMAC key (≥ 32 bytes) for browser session cookies (see [Browser login](#browser-login)) |
 | `FLUXOR_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` even over plain HTTP, for a TLS-terminating proxy |
+| `FLUXOR_RETENTION_DAYS` | `0` | Delete finished runs, with their tasks and logs, this many days after they finished; `0` keeps them forever. Artifacts in MinIO are not deleted |
+| `FLUXOR_AUDIT_RETENTION_DAYS` | `0` | Delete audit entries older than this many days; `0` keeps them forever |
 | `LOG_FORMAT` | `json` | `json` (one object per line, with `request_id`) or `console` (pretty, local dev) |
 | `FLUXOR_BOOTSTRAP_ADMIN_KEY` | _(empty)_ | Admin API key installed at startup, if set (see [Authentication](#authentication)) |
 

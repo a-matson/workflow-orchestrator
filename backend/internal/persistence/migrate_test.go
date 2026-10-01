@@ -155,3 +155,78 @@ func TestMigrations_DropUnusedSchema(t *testing.T) {
 		t.Error("archive_old_executions still exists after Migrate")
 	}
 }
+
+// F10: logs stored in the old JSONB column move to task_logs in order, the
+// column is emptied, its GIN index dropped, and deleting a run cascades.
+func TestMigrations_MoveLogsToTable(t *testing.T) {
+	ctx := context.Background()
+	pool := newMigrationDB(t)
+	files, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f >= "011" {
+			break
+		}
+		b, err := fs.ReadFile(migrations.FS, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, string(b)); err != nil {
+			t.Fatalf("apply %s: %v", f, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workflow_definitions (id, name, tasks) VALUES ('wf', 'wf', '[]');
+		INSERT INTO workflow_executions (id, workflow_id, workflow_name, status) VALUES ('e', 'wf', 'wf', 'completed');
+		INSERT INTO task_executions (id, workflow_exec_id, task_definition_id, task_name, task_type, logs)
+		VALUES ('t', 'e', 'a', 'A', 'generic',
+			'[{"timestamp":"2026-01-01T00:00:00Z","level":"info","attempt":0,"message":"first"},
+			  {"timestamp":"2026-01-01T00:00:01Z","level":"error","attempt":1,"message":"second","fields":{"k":1}}]');
+	`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := persistence.Migrate(ctx, pool, migrations.FS); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	rows, err := pool.Query(ctx, `SELECT message, level, attempt FROM task_logs WHERE task_exec_id = 't' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var msg, level string
+		var attempt int
+		if err := rows.Scan(&msg, &level, &attempt); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s/%s/%d", msg, level, attempt))
+	}
+	rows.Close()
+	if want := []string{"first/info/0", "second/error/1"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("task_logs = %v, want %v", got, want)
+	}
+	var leftover, gin int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_executions WHERE logs IS NOT NULL`).Scan(&leftover); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_task_execs_logs'`).Scan(&gin); err != nil {
+		t.Fatal(err)
+	}
+	if leftover != 0 || gin != 0 {
+		t.Errorf("old logs column still has %d rows, GIN index count %d; want 0 and 0", leftover, gin)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM workflow_executions WHERE id = 'e'`); err != nil {
+		t.Fatalf("deleting a run must cascade: %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM task_executions) + (SELECT count(*) FROM task_logs)`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d task or log rows left after deleting their run", n)
+	}
+}
