@@ -44,6 +44,8 @@ var routePolicy = map[string]Role{
 	"GET /api/ready":  RolePublic,
 	// Login exchanges a key for a cookie, so it cannot itself need one.
 	"POST /api/session": RolePublic,
+	// Senders hold a signing secret, not an API key; TriggerWebhook checks it.
+	"POST /api/hooks/{id}": RolePublic,
 
 	"GET /api/workflows":                      RoleViewer,
 	"GET /api/workflows/{id}":                 RoleViewer,

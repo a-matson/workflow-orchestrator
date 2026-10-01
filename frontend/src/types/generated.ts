@@ -133,6 +133,7 @@ export interface WorkflowDefinition {
 	 */
 	next_run_at?: string /* RFC3339 */;
 	alerts?: WorkflowAlerts;
+	webhook?: WebhookTrigger;
 	created_at: string /* RFC3339 */;
 	updated_at: string /* RFC3339 */;
 }
@@ -143,6 +144,13 @@ export interface WorkflowDefinition {
 export interface WorkflowAlerts {
 	on_success?: AlertTarget;
 	on_failure?: AlertTarget;
+}
+/**
+ * WebhookTrigger lets POST /api/hooks/{id} start a run when the request is
+ * signed with the named secret (HMAC-SHA256 over "<timestamp>.<body>").
+ */
+export interface WebhookTrigger {
+	secret: string;
 }
 /**
  * AlertTarget is an http or https URL that receives the alert as a JSON POST.

@@ -172,6 +172,19 @@ The body is `{"event": "workflow.failed", "workflow_id", "workflow_name", "execu
 
 Every save of a workflow (create, update or import) records a new revision, numbered from 1 and never changed. `GET /api/workflows/{id}/revisions` lists them and `GET /api/workflows/{id}/revisions/{rev}` returns the definition as it was saved; to roll back, `PUT` that body to `/api/workflows/{id}`, which records it as the next revision. A run keeps the definition it started with, whatever is saved later. Workflows that existed before revisions start at revision 1, their state at upgrade.
 
+### Webhooks
+
+A workflow with `"webhook": {"secret": "<secret name>"}` can be started by `POST /api/hooks/{id}` without an API key. The request is signed with that secret (see Secrets): `X-Fluxor-Timestamp` is the Unix time in seconds, and `X-Fluxor-Signature` is `sha256=` plus the hex HMAC-SHA256 of `<timestamp>.<body>`. The JSON body becomes the run's trigger payload, and the response is `202 {"execution_id": "..."}`.
+
+```bash
+ts=$(date +%s); body='{"ref":"main"}'
+sig=$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -hex | sed 's/^.* //')
+curl -X POST "$FLUXOR/api/hooks/$WORKFLOW_ID" -H 'Content-Type: application/json' \
+  -H "X-Fluxor-Timestamp: $ts" -H "X-Fluxor-Signature: sha256=$sig" -d "$body"
+```
+
+A timestamp more than five minutes from the server's clock is refused, as is the same signed request sent twice. Every refusal is the same `401`, whether the workflow is unknown, has no webhook or the signature is wrong. The request must be `application/json` and reach the API on a host it serves (`FLUXOR_ALLOWED_ORIGINS`).
+
 ## Development Setup
 
 ```bash
@@ -258,6 +271,7 @@ GET    /api/workflows/{id}/revisions   List a workflow's saved revisions, newest
 GET    /api/workflows/{id}/revisions/{rev}  A workflow as saved at one revision
 GET    /api/workflows                  List all definitions
 GET    /api/workflows/{id}             Get definition
+POST   /api/hooks/{id}                 Start a run from a signed webhook (no API key)
 POST   /api/workflows/{id}/trigger     Start execution
 GET    /api/executions                 List executions
 GET    /api/executions/{id}            Get execution with tasks
