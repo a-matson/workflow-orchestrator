@@ -417,3 +417,7 @@ cd backend && go build -o workflow-server ./cmd/server
 # Or build the Docker image
 docker build -t fluxor-backend ./backend
 ```
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
