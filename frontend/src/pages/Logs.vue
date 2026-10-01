@@ -11,8 +11,12 @@
 					:key="exec.id"
 					class="picker-item"
 					:data-testid="`log-exec-${exec.id}`"
+					role="button"
+					tabindex="0"
 					:class="{ active: selectedId === exec.id }"
 					@click="selectExec(exec.id)"
+					@keydown.enter.self.prevent="selectExec(exec.id)"
+					@keydown.space.self.prevent="selectExec(exec.id)"
 				>
 					<span :class="['badge', exec.status]">{{ exec.status }}</span>
 					<span class="picker-name">{{ exec.workflow_name }}</span>

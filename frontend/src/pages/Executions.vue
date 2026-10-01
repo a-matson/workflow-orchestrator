@@ -27,8 +27,12 @@
 					:key="exec.id"
 					class="exec-item"
 					:data-testid="`exec-${exec.id}`"
+					role="button"
+					tabindex="0"
 					:class="{ active: selectedId === exec.id }"
 					@click="selectExec(exec.id)"
+					@keydown.enter.self.prevent="selectExec(exec.id)"
+					@keydown.space.self.prevent="selectExec(exec.id)"
 				>
 					<div class="exec-item-row1">
 						<span :class="['badge', exec.status]" data-testid="exec-status">{{ exec.status }}</span>
@@ -126,8 +130,13 @@
 						v-for="task in selectedExec.tasks"
 						:key="task.id"
 						class="task-row"
+						role="button"
+						tabindex="0"
+						:aria-expanded="expandedTaskId === task.id"
 						:class="{ 'task-row--selected': expandedTaskId === task.id }"
-						@click="expandedTaskId = expandedTaskId === task.id ? null : task.id"
+						@click="toggleTask(task.id)"
+						@keydown.enter.self.prevent="toggleTask(task.id)"
+						@keydown.space.self.prevent="toggleTask(task.id)"
 					>
 						<span :class="['badge', task.status]" data-testid="task-status">{{ task.status }}</span>
 						<span class="task-name">{{ task.task_name }}</span>
@@ -378,6 +387,10 @@
 			if (updated) store.selectedExecution = updated
 		},
 	)
+
+	function toggleTask(id: string) {
+		expandedTaskId.value = expandedTaskId.value === id ? null : id
+	}
 
 	function artifactDownloadUrl(taskId: string, path: string): string {
 		const segments = path.split('/').map(encodeURIComponent).join('/')
