@@ -646,6 +646,35 @@ func (o *Orchestrator) completeWorkflow(ctx context.Context, execCtx *ExecutionC
 	return nil
 }
 
+// ResumeExecution reopens a failed or cancelled execution and dispatches the
+// tasks that did not complete, under the definition the run started with
+// (R23's snapshot). Completed tasks keep their results and do not run again.
+// It returns persistence.ErrConflict when id is missing or not resumable.
+func (o *Orchestrator) ResumeExecution(ctx context.Context, id string) (*models.WorkflowExecution, error) {
+	if _, _, err := o.store.ResumeExecution(ctx, id); err != nil {
+		return nil, err
+	}
+	// The finished execution left the active map; this loads the reopened
+	// rows and registers them, as for a result that reaches an unloaded run.
+	execCtx, err := o.activeExecution(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if execCtx == nil {
+		return nil, fmt.Errorf("%w: execution %s was finished again before it was loaded", persistence.ErrConflict, id)
+	}
+	execCtx.mu.Lock()
+	snap := execCtx.snapshot()
+	execCtx.mu.Unlock()
+
+	o.broadcaster.Broadcast(models.WebSocketEvent{Type: models.WSEventWorkflowStarted, Payload: snap})
+	log.Info().Str("exec_id", id).Msg("workflow execution resumed")
+
+	dispatchCtx := context.WithoutCancel(ctx)
+	runSafe("dispatch", id, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
+	return snap, nil
+}
+
 // CancelExecution moves execution id to cancelled and cancels its open tasks,
 // so no further task of it is dispatched and late results are dropped. It
 // returns persistence.ErrConflict when the execution is missing or already

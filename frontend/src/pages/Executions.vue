@@ -82,6 +82,7 @@
 						<button
 							v-if="selectedExec.status === 'failed' || selectedExec.status === 'completed'"
 							class="btn-action retry"
+							title="Start a new run of this workflow"
 							@click="retryExec(selectedExec.id)"
 						>
 							↺ Retry
@@ -93,6 +94,15 @@
 							@click="cancelExec(selectedExec.id)"
 						>
 							◼ Cancel
+						</button>
+						<button
+							v-if="selectedExec.status === 'failed' || selectedExec.status === 'cancelled'"
+							class="btn-action"
+							title="Re-run the tasks that did not complete, in this run"
+							data-testid="resume-exec"
+							@click="resumeExec(selectedExec.id)"
+						>
+							⏵ Resume
 						</button>
 						<button class="btn-action" @click="goToLogs(selectedExec.id)">≡ Logs</button>
 						<span class="detail-elapsed">{{
@@ -319,6 +329,16 @@
 			showToast?.('↺ Re-queued', 'info')
 		} catch {
 			showToast?.('Retry failed', 'error')
+		}
+	}
+
+	async function resumeExec(id: string) {
+		try {
+			await store.resumeExecution(id)
+			wsStore.subscribe(id)
+			showToast?.('⏵ Run resumed', 'success')
+		} catch {
+			showToast?.('Resume failed', 'error')
 		}
 	}
 

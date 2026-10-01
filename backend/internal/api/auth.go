@@ -68,6 +68,7 @@ var routePolicy = map[string]Role{
 	"POST /api/workflows/{id}/trigger": RoleOperator,
 	"POST /api/executions/{id}/cancel": RoleOperator,
 	"POST /api/executions/{id}/retry":  RoleOperator,
+	"POST /api/executions/{id}/resume": RoleOperator,
 
 	"GET /api/audit":        RoleAdmin,
 	"GET /api/keys":         RoleAdmin,

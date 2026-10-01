@@ -164,6 +164,16 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		}
 	}
 
+	async function resumeExecution(execId: string) {
+		try {
+			// Same run, reopened: the response shows its reset tasks without a refetch.
+			applyExecution(await api.post<WorkflowExecution>(`/api/executions/${execId}/resume`, {}))
+		} catch (err) {
+			error.value = 'Failed to resume execution'
+			throw err
+		}
+	}
+
 	async function fetchMetrics() {
 		try {
 			metrics.value = await api.get<PlatformMetrics>('/api/metrics')
@@ -254,6 +264,7 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		triggerWorkflow,
 		retryExecution,
 		cancelExecution,
+		resumeExecution,
 		fetchMetrics,
 		updateFromWsEvent,
 	}

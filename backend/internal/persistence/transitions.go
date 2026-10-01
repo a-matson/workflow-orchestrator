@@ -178,6 +178,56 @@ func (s *Store) FinishExecution(ctx context.Context, id string, to models.Workfl
 	return exec, tasks, nil
 }
 
+// ResumeExecution reopens execution id, which must be failed or cancelled:
+// it moves back to running and every task that did not complete moves back to
+// pending at attempt 0, in one transaction. It returns the execution and the
+// reopened tasks, or ErrConflict when id is missing or not resumable.
+func (s *Store) ResumeExecution(ctx context.Context, id string) (*models.WorkflowExecution, []*models.TaskExecution, error) {
+	var (
+		exec  *models.WorkflowExecution
+		tasks []*models.TaskExecution
+	)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `
+			UPDATE workflow_executions SET status = $2, completed_at = NULL, error = NULL
+			WHERE id = $1 AND status = ANY($3)
+			RETURNING `+execColumns,
+			id, string(models.WorkflowStatusRunning), statusText(models.ExecResumeFrom()))
+		var err error
+		exec, err = scanWorkflowExecution(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: execution %s cannot be resumed", ErrConflict, id)
+		}
+		if err != nil {
+			return fmt.Errorf("resuming execution %s: %w", id, err)
+		}
+		// Attempt 0 again: the reopened task gets its full retry budget, and
+		// the pickup and result guards compare against the new attempts.
+		rows, err := tx.Query(ctx, `
+			UPDATE task_executions SET status = $2, retry_count = 0, worker_id = NULL, queued_at = NULL,
+				started_at = NULL, completed_at = NULL, next_retry_at = NULL, timeout_at = NULL, error = NULL
+			WHERE workflow_exec_id = $1 AND status = ANY($3)
+			RETURNING `+taskColumns,
+			id, string(models.TaskStatusPending), statusText(models.TaskResumeFrom()))
+		if err != nil {
+			return fmt.Errorf("reopening tasks of %s: %w", id, err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			task, err := scanTaskExecution(rows)
+			if err != nil {
+				return fmt.Errorf("reopening tasks of %s: %w", id, err)
+			}
+			tasks = append(tasks, task)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return exec, tasks, nil
+}
+
 func transitionExecution(ctx context.Context, db querier, id string, to models.WorkflowStatus, errMsg string) (*models.WorkflowExecution, error) {
 	from := models.ExecFrom(to)
 	if from == nil {
