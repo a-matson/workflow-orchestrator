@@ -25,10 +25,10 @@ Note: Postgres applies `POSTGRES_PASSWORD` only when its volume is first created
 
 ## Security status
 
-- The API and WebSocket require an API key (see [Authentication](#authentication)); the UI has no login yet, so it cannot reach the API.
+- The API and WebSocket require an API key or a browser session from the UI's login page (see [Authentication](#authentication)).
 - The backend reaches Docker only through a filtering proxy (see [Docker socket access](#docker-socket-access)). Container creation is still allowed, so a compromised backend can still take the host.
-- `docker-compose.yml` currently publishes every port on all interfaces (0.0.0.0).
-- Bind every port to 127.0.0.1 and never expose the stack to a network.
+- `docker-compose.yml` binds every published port to 127.0.0.1. The stack serves plain HTTP; put a TLS-terminating proxy in front before exposing it to a network.
+- [SECURITY.md](SECURITY.md) has the threat model: what is trusted, the residual risks, and upgrade paths.
 
 ## Architecture
 
