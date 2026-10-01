@@ -25,6 +25,21 @@ var execFrom = map[WorkflowStatus][]WorkflowStatus{
 	WorkflowStatusCancelled: {WorkflowStatusPending, WorkflowStatusRunning},
 }
 
+// Resume reopens a finished execution, the only way out of a terminal status,
+// and only Store.ResumeExecution takes it: the execution goes back to running
+// and every task that did not complete goes back to pending, while completed
+// tasks keep their results.
+var (
+	execResumeFrom = []WorkflowStatus{WorkflowStatusFailed, WorkflowStatusCancelled}
+	taskResumeFrom = []TaskStatus{TaskStatusDeadLetter, TaskStatusCancelled, TaskStatusFailed}
+)
+
+// ExecResumeFrom returns the execution statuses resume accepts. The slice is a copy.
+func ExecResumeFrom() []WorkflowStatus { return slices.Clone(execResumeFrom) }
+
+// TaskResumeFrom returns the task statuses resume moves back to pending. The slice is a copy.
+func TaskResumeFrom() []TaskStatus { return slices.Clone(taskResumeFrom) }
+
 // TaskFrom returns the statuses a task may move to `to` from, or nil when
 // `to` is not a valid transition target. The slice is a copy.
 func TaskFrom(to TaskStatus) []TaskStatus {

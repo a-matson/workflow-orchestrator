@@ -95,6 +95,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"GET /api/executions/{id}":         h.GetExecution,
 		"POST /api/executions/{id}/cancel": h.CancelExecution,
 		"POST /api/executions/{id}/retry":  h.RetryExecution,
+		"POST /api/executions/{id}/resume": h.ResumeExecution,
 
 		// Task executions
 		"GET /api/executions/{execID}/tasks": h.ListTasks,
@@ -299,6 +300,35 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "execution.cancel", "execution", id, auditSuccess)
+	writeJSON(w, http.StatusOK, exec)
+}
+
+// ResumeExecution reopens a failed or cancelled execution: the tasks that
+// did not complete, including dead-lettered ones, run again, and completed
+// tasks keep their results. POST /api/executions/{id}/resume
+func (h *Handler) ResumeExecution(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.store.GetWorkflowExecution(r.Context(), id); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, r, http.StatusNotFound, "execution not found", err)
+		return
+	} else if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load execution", err)
+		return
+	}
+	// Detached for the same reason as cancel: the reopen commits first.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+	defer cancel()
+	exec, err := h.orchestrator.ResumeExecution(ctx, id)
+	if errors.Is(err, persistence.ErrConflict) {
+		writeError(w, r, http.StatusConflict, "only a failed or cancelled execution can be resumed", err)
+		return
+	}
+	if err != nil {
+		h.audit(r, "execution.resume", "execution", id, auditError)
+		writeError(w, r, http.StatusInternalServerError, "failed to resume execution", err)
+		return
+	}
+	h.audit(r, "execution.resume", "execution", id, auditSuccess)
 	writeJSON(w, http.StatusOK, exec)
 }
 

@@ -224,6 +224,7 @@ GET    /api/executions                 List executions
 GET    /api/executions/{id}            Get execution with tasks
 POST   /api/executions/{id}/cancel     Cancel running execution
 POST   /api/executions/{id}/retry      Retry failed execution
+POST   /api/executions/{id}/resume     Resume a failed or cancelled run: re-run tasks that did not complete
 GET    /api/executions/{execID}/tasks  List tasks for execution
 GET    /api/tasks/{id}                 Get task execution
 GET    /api/tasks/{id}/logs            Get task logs

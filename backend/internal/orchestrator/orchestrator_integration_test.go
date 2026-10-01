@@ -751,6 +751,70 @@ func TestTaskMaxRetriesMatchesPolicy(t *testing.T) {
 	}
 }
 
+// F5: resuming a failed run re-runs the task that dead-lettered and the ones
+// downstream of it; the completed task keeps its result and does not run again.
+func TestResumeReplaysDeadLetteredTask(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	noRetry := &models.RetryPolicy{MaxRetries: 0}
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Resume", MaxParallel: 1,
+		Tasks: []models.TaskDefinition{
+			{ID: "a", Name: "A", Type: "generic", Dependencies: []string{}},
+			{ID: "b", Name: "B", Type: "generic", Dependencies: []string{"a"}, RetryPolicy: noRetry},
+			{ID: "c", Name: "C", Type: "generic", Dependencies: []string{"b"}},
+		},
+	})
+	a := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, a, testutil.Ok(a))
+	b := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, b, testutil.Fail(b, "boom"))
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusFailed })
+	aDone := testutil.TaskRow(t, store, exec.ID, "a").CompletedAt
+
+	if _, err := orch.ResumeExecution(ctx, exec.ID); err != nil {
+		t.Fatalf("ResumeExecution: %v", err)
+	}
+	if got := execStatus(t, store, exec.ID); got != models.WorkflowStatusRunning {
+		t.Fatalf("execution after resume = %s, want running", got)
+	}
+	b2 := testutil.Drain(t, redis, 1)[0]
+	if b2.TaskDefinitionID != "b" || b2.RetryCount != 0 {
+		t.Fatalf("first message after resume = %s at attempt %d, want b at 0", b2.TaskDefinitionID, b2.RetryCount)
+	}
+	runTask(t, orch, b2, testutil.Ok(b2))
+	c := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, c, testutil.Ok(c))
+
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+	if row := testutil.TaskRow(t, store, exec.ID, "a"); !row.CompletedAt.Equal(*aDone) {
+		t.Errorf("task a completed again at %s, want its first completion %s kept", row.CompletedAt, aDone)
+	}
+
+	if _, err := orch.ResumeExecution(ctx, exec.ID); !errors.Is(err, persistence.ErrConflict) {
+		t.Errorf("resuming a completed execution = %v, want ErrConflict", err)
+	}
+}
+
+// A cancelled run resumes too: its cancelled tasks go back to pending.
+func TestResumeCancelledExecution(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Resume cancelled", MaxParallel: 1, Tasks: independentTasks("a"),
+	})
+	testutil.Drain(t, redis, 1)
+	if _, err := orch.CancelExecution(ctx, exec.ID); err != nil {
+		t.Fatalf("CancelExecution: %v", err)
+	}
+	if _, err := orch.ResumeExecution(ctx, exec.ID); err != nil {
+		t.Fatalf("ResumeExecution: %v", err)
+	}
+	m := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, m, testutil.Ok(m))
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.
