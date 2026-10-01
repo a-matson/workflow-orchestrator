@@ -111,3 +111,33 @@ func TestValidateDefinition_When(t *testing.T) {
 		t.Errorf("broken when template: %v, want an error naming when", err)
 	}
 }
+
+func TestValidateDefinitionAlerts(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"https", "https://hooks.example.com/T0/abc", false},
+		{"http", "http://alerts.internal:8080/fluxor", false},
+		{"no scheme", "hooks.example.com/abc", true},
+		{"other scheme", "file:///etc/passwd", true},
+		{"no host", "https:///abc", true},
+		{"empty", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			def := &models.WorkflowDefinition{
+				Tasks:  []models.TaskDefinition{task("a")},
+				Alerts: &models.WorkflowAlerts{OnFailure: &models.AlertTarget{URL: tc.url}},
+			}
+			err := validateDefinition(def)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil && tc.url != "" && strings.Contains(err.Error(), tc.url) {
+				t.Errorf("error %q echoes the URL, which may carry a token", err)
+			}
+		})
+	}
+}

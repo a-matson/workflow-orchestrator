@@ -154,6 +154,16 @@ A missing key fails the task instead of rendering an empty string, and a templat
 
 A workflow's `schedule` is a cron expression, evaluated in UTC: five fields (`0 2 * * *` is 02:00 every day) or a descriptor such as `@hourly`. Each time it fires, the backend starts a run whose trigger payload is `{"scheduled_at": "<RFC3339 time>"}`. The response's `next_run_at` shows the next firing; saving the workflow restarts the schedule from now. A firing missed while the backend was down runs once at startup, not once per missed time. Clear `schedule` to stop it.
 
+### Alerts
+
+A workflow's `alerts` posts a run's outcome as JSON to a URL when the run finishes: `on_success` when it completes, `on_failure` when it fails. A cancelled run posts nothing.
+
+```json
+{"alerts": {"on_failure": {"url": "https://hooks.example.com/fluxor"}}}
+```
+
+The body is `{"event": "workflow.failed", "workflow_id", "workflow_name", "execution_id", "status", "started_at", "completed_at", "failed_tasks": ["load"]}`. Alerts go out through the egress guard, so a private or loopback host needs `FLUXOR_EGRESS_ALLOW`. Each alert is one attempt with a 10-second timeout: a receiver that is down or answers outside 2xx misses it, and the backend logs a warning. Anyone who can read the workflow can see the URL, so prefer a URL that does not embed a long-lived credential.
+
 ## Development Setup
 
 ```bash

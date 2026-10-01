@@ -132,8 +132,23 @@ export interface WorkflowDefinition {
 	 * NextRunAt is when Schedule next fires. The server sets it; input is ignored.
 	 */
 	next_run_at?: string /* RFC3339 */;
+	alerts?: WorkflowAlerts;
 	created_at: string /* RFC3339 */;
 	updated_at: string /* RFC3339 */;
+}
+/**
+ * WorkflowAlerts names where a finished run's outcome is posted. A cancelled
+ * run posts nothing: someone chose to stop it.
+ */
+export interface WorkflowAlerts {
+	on_success?: AlertTarget;
+	on_failure?: AlertTarget;
+}
+/**
+ * AlertTarget is an http or https URL that receives the alert as a JSON POST.
+ */
+export interface AlertTarget {
+	url: string;
 }
 /**
  * ResolvedArtifact is an ArtifactRef with its fully-qualified MinIO key resolved.

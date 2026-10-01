@@ -136,9 +136,22 @@ type WorkflowDefinition struct {
 	// starts a run each time it fires; empty means none.
 	Schedule string `json:"schedule,omitempty"`
 	// NextRunAt is when Schedule next fires. The server sets it; input is ignored.
-	NextRunAt *time.Time `json:"next_run_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	NextRunAt *time.Time      `json:"next_run_at,omitempty"`
+	Alerts    *WorkflowAlerts `json:"alerts,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// WorkflowAlerts names where a finished run's outcome is posted. A cancelled
+// run posts nothing: someone chose to stop it.
+type WorkflowAlerts struct {
+	OnSuccess *AlertTarget `json:"on_success,omitempty"`
+	OnFailure *AlertTarget `json:"on_failure,omitempty"`
+}
+
+// AlertTarget is an http or https URL that receives the alert as a JSON POST.
+type AlertTarget struct {
+	URL string `json:"url"`
 }
 
 // ResolvedArtifact is an ArtifactRef with its fully-qualified MinIO key resolved.

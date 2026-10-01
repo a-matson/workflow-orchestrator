@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -58,6 +59,9 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 			}
 		}
 	}
+	if err := validateAlerts(def.Alerts); err != nil {
+		return err
+	}
 	if _, err := dag.Parse(def); err != nil {
 		return err
 	}
@@ -75,4 +79,23 @@ func planSchedule(def *models.WorkflowDefinition, now time.Time) {
 	if next, err := schedule.Next(def.Schedule, now); err == nil {
 		def.NextRunAt = &next
 	}
+}
+
+// validateAlerts rejects alert URLs that could never be posted to. Whether
+// the host is reachable is the egress guard's call, made when the alert is sent.
+func validateAlerts(a *models.WorkflowAlerts) error {
+	if a == nil {
+		return nil
+	}
+	for name, t := range map[string]*models.AlertTarget{"on_success": a.OnSuccess, "on_failure": a.OnFailure} {
+		if t == nil {
+			continue
+		}
+		u, err := url.Parse(t.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			// The URL is not echoed: it may carry a token.
+			return fmt.Errorf("alerts.%s.url must be an absolute http or https URL", name)
+		}
+	}
+	return nil
 }
