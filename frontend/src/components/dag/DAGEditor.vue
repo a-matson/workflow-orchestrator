@@ -320,6 +320,7 @@
 	} from '../../types'
 	import TaskNode from './TaskNode.vue'
 	import TaskConfigFields from './TaskConfigFields.vue'
+	import { freeNodePosition } from '../../composables/useDAGLayout'
 
 	const emit = defineEmits<{
 		(e: 'triggered', execId: string): void
@@ -422,7 +423,7 @@
 		const node: DAGNode = {
 			id,
 			type: 'taskNode',
-			position: { x: 120 + Math.random() * 500, y: 80 + nodes.value.length * 130 },
+			position: freeNodePosition(nodes.value.map((n) => n.position)),
 			data: {
 				taskDef: {
 					id,
