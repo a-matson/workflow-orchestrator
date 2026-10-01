@@ -3,6 +3,8 @@ import { expect, test } from './fixtures'
 const viewports = [
 	{ width: 1440, height: 900 },
 	{ width: 1024, height: 768 },
+	// UI-16: a phone-sized window clipped the toolbar, so Save was off-screen.
+	{ width: 390, height: 844 },
 ]
 
 for (const viewport of viewports) {
