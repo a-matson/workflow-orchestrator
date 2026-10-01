@@ -173,19 +173,6 @@ export const STATUS_COLORS: Record<TaskStatus | WorkflowStatus, string> = {
 	paused: '#F59E0B',
 }
 
-export const STATUS_BG: Record<TaskStatus | WorkflowStatus, string> = {
-	pending: '#F3F4F6',
-	queued: '#EDE9FE',
-	running: '#DBEAFE',
-	completed: '#D1FAE5',
-	failed: '#FEE2E2',
-	retrying: '#FEF3C7',
-	skipped: '#E5E7EB',
-	dead_letter: '#FEE2E2',
-	cancelled: '#FEE2E2',
-	paused: '#FEF3C7',
-}
-
 // Mirrors runsUserCode in backend/internal/worker/worker.go: unknown types run as code too.
 export const runsUserCode = (type: string) =>
 	!['http_request', 'database_query', 'notification'].includes(type)
