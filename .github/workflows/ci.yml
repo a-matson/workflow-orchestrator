@@ -48,6 +48,7 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/check-compose.sh
+      - run: scripts/check-observability.sh
 
   # ── Detect Changes ────────────────────────────────────────────
   changes:

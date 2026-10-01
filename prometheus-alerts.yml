@@ -1,0 +1,25 @@
+groups:
+  - name: fluxor
+    rules:
+      - alert: FluxorBackendDown
+        expr: up{job="fluxor-backend"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Prometheus cannot scrape the backend"
+          description: "The backend's /metrics has been unreachable for 2 minutes; check /api/ready and the container."
+      - alert: FluxorTaskQueueBacklog
+        # A threshold for a single node running WORKER_COUNT x WORKER_CONCURRENCY
+        # (15 by default) tasks at once; tune it to the deployment.
+        expr: task_queue_depth > 100
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} task messages have waited in the queue for 10 minutes"
+          description: "Workers are not keeping up; check worker errors and the container runtime."
+      - alert: FluxorTasksDeadLettered
+        expr: increase(tasks_dead_lettered_total[15m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Tasks exhausted their retries in the last 15 minutes"
+          description: "See the dead-letter queue (workflow:tasks:dead_letter) and the failed executions in the UI."

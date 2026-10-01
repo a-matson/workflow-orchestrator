@@ -162,6 +162,10 @@ npm run lint
 npm run format
 ```
 
+### Observability
+
+`docker compose --profile observability up -d` adds Prometheus (http://localhost:9090) and Grafana (http://localhost:3001). Prometheus scrapes the backend's `:9091/metrics` and loads the alert rules in `prometheus-alerts.yml`: backend unreachable for 2 minutes, more than 100 queued task messages for 10 minutes, and any task dead-lettered in the last 15 minutes. Nothing routes the alerts anywhere yet; they show under Alerts in Prometheus. Grafana provisions the "Fluxor Orchestrator" dashboard, viewable without logging in; set `GRAFANA_ADMIN_PASSWORD` in `.env` to edit it.
+
 ### Environment variables
 
 | Variable | Default | Description |
