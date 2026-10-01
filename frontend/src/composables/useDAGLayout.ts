@@ -162,3 +162,14 @@ export function tasksToFlowEdges(
 		}),
 	)
 }
+
+export interface Point {
+	x: number
+	y: number
+}
+
+// freeNodePosition is where the builder puts a new node. Stub for the red
+// test: the placement addNode used so far.
+export function freeNodePosition(occupied: Point[]): Point {
+	return { x: 120 + Math.random() * 500, y: 80 + occupied.length * 130 }
+}
