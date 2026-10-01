@@ -61,7 +61,51 @@
 				@pane-click="onPaneClick"
 			>
 				<Background pattern-color="#2a2a40" :gap="20" />
-				<Controls :show-fit-view="false" />
+				<!-- Same icons as the library's, with names: its buttons have neither text nor a label. -->
+				<Controls :show-fit-view="false">
+					<template #icon-zoom-in
+						><svg
+							role="img"
+							aria-label="Zoom in"
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 32 32"
+						>
+							<path
+								d="M32 18.133H18.133V32h-4.266V18.133H0v-4.266h13.867V0h4.266v13.867H32z"
+							/></svg
+					></template>
+					<template #icon-zoom-out
+						><svg
+							role="img"
+							aria-label="Zoom out"
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 32 5"
+						>
+							<path d="M0 0h32v4.2H0z" /></svg
+					></template>
+					<template #icon-lock
+						><svg
+							role="img"
+							aria-label="Unlock the canvas"
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 25 32"
+						>
+							<path
+								d="M21.333 10.667H19.81V7.619C19.81 3.429 16.38 0 12.19 0 8 0 4.571 3.429 4.571 7.619v3.048H3.048A3.056 3.056 0 0 0 0 13.714v15.238A3.056 3.056 0 0 0 3.048 32h18.285a3.056 3.056 0 0 0 3.048-3.048V13.714a3.056 3.056 0 0 0-3.048-3.047zM12.19 24.533a3.056 3.056 0 0 1-3.047-3.047 3.056 3.056 0 0 1 3.047-3.048 3.056 3.056 0 0 1 3.048 3.048 3.056 3.056 0 0 1-3.048 3.047zm4.724-13.866H7.467V7.619c0-2.59 2.133-4.724 4.723-4.724 2.591 0 4.724 2.133 4.724 4.724v3.048z"
+							/></svg
+					></template>
+					<template #icon-unlock
+						><svg
+							role="img"
+							aria-label="Lock the canvas"
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 25 32"
+						>
+							<path
+								d="M21.333 10.667H19.81V7.619C19.81 3.429 16.38 0 12.19 0c-4.114 1.828-1.37 2.133.305 2.438 1.676.305 4.42 2.59 4.42 5.181v3.048H3.047A3.056 3.056 0 0 0 0 13.714v15.238A3.056 3.056 0 0 0 3.048 32h18.285a3.056 3.056 0 0 0 3.048-3.048V13.714a3.056 3.056 0 0 0-3.048-3.047zM12.19 24.533a3.056 3.056 0 0 1-3.047-3.047 3.056 3.056 0 0 1 3.047-3.048 3.056 3.056 0 0 1 3.048 3.048 3.056 3.056 0 0 1-3.048 3.047z"
+							/></svg
+					></template>
+				</Controls>
 				<MiniMap
 					node-color="#3a3a5a"
 					mask-color="rgba(12,12,20,0.7)"
