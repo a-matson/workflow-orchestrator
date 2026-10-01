@@ -1,4 +1,5 @@
-FROM node:24-alpine AS build
+# dist/ is platform-independent, so build it natively instead of under QEMU per arch.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 
 WORKDIR /app
 

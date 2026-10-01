@@ -1,13 +1,15 @@
 # ── Stage 1: Build ────────────────────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
 ARG TARGETOS TARGETARCH
+# CI passes the release tag; local builds keep "dev".
+ARG VERSION=dev
 WORKDIR /app
 RUN apk add --no-cache git ca-certificates tzdata
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
-    -ldflags="-w -s" \
+    -ldflags="-w -s -X main.version=${VERSION}" \
     -trimpath \
     -o /workflow-server \
     ./cmd/server

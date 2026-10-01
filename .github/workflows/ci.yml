@@ -3,6 +3,7 @@ name: CI/CD
 on:
   push:
     branches: [main, develop]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -11,8 +12,8 @@ permissions:
 
 concurrency:
   group: "ci-${{ github.ref }}"
-  # Don't cancel runs on main—they publish images and must complete.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Don't cancel runs on main or tags—they publish images and must complete.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   REGISTRY: ghcr.io
@@ -319,11 +320,15 @@ jobs:
           platforms: linux/amd64,linux/arm64
           outputs: type=local,dest=out
           cache-from: type=gha,scope=backend
+          build-args: VERSION=v0.0.0-ci
 
       - name: Check binary architectures
         run: |
           scripts/check-image-arch.sh linux/amd64 out/linux_amd64/workflow-server
           scripts/check-image-arch.sh linux/arm64 out/linux_arm64/workflow-server
+
+      - name: Check release wiring
+        run: scripts/check-release.sh out/linux_amd64/workflow-server v0.0.0-ci
 
       - name: Build runtime image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -340,10 +345,11 @@ jobs:
     needs: [changes, backend, frontend]
     if: |
       always() &&
-      github.ref == 'refs/heads/main' &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled') &&
-      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+      (startsWith(github.ref, 'refs/tags/v') ||
+       (github.ref == 'refs/heads/main' &&
+        (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')))
 
     permissions:
       contents: read
@@ -370,6 +376,20 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Docker meta (frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
@@ -387,6 +407,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # "1.2.3" on a v1.2.3 tag, the branch name on main.
+          build-args: VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
           platforms: linux/amd64,linux/arm64
@@ -399,3 +421,41 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      - name: Build and push frontend
+        id: push-frontend
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: mode=max
+
+      - name: Attest frontend build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend
+          subject-digest: ${{ steps.push-frontend.outputs.digest }}
+          push-to-registry: true
+
+  # ── Release: GitHub Release for a v* tag, after both images are published ──
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: docker
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.docker.result == 'success' }}
+    permissions:
+      contents: write
+    steps:
+      # Notes are built from the merged PR titles, which follow conventional commits.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
