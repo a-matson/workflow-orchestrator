@@ -157,6 +157,20 @@
 								</option>
 							</select>
 						</div>
+						<div class="field">
+							<label for="cf-trigger-rule">Runs when</label>
+							<!-- Empty is the server's default, all_success. -->
+							<select
+								id="cf-trigger-rule"
+								v-model="selectedNode.data.taskDef.trigger_rule"
+								class="cf-input"
+								data-testid="trigger-rule"
+							>
+								<option :value="undefined">all dependencies succeeded</option>
+								<option value="all_done">all dependencies finished</option>
+								<option value="one_failed">a dependency failed</option>
+							</select>
+						</div>
 
 						<!-- Per-type configuration -->
 						<div class="section-label">Task Config</div>

@@ -50,6 +50,7 @@ input, select, textarea { font-family: var(--sans); }
 .badge.retrying   { background: rgba(245,166,35,.1);  color: var(--amber); }
 .badge.dead_letter{ background: rgba(197,48,48,.08);  color: #c53030; }
 .badge.cancelled  { background: rgba(255,95,87,.08);  color: var(--red); }
+.badge.skipped    { background: rgba(255,255,255,.05); color: var(--text2); }
 .badge.paused     { background: rgba(245,166,35,.08); color: var(--amber); }
 
 @keyframes badgePulse { 0%,100%{opacity:1} 50%{opacity:.6} }

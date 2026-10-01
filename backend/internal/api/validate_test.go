@@ -20,6 +20,10 @@ func TestValidateDefinition(t *testing.T) {
 	withOut.ArtifactsOut = []models.ArtifactRef{{Path: "../../etc/passwd"}}
 	emptyPath := task("a")
 	emptyPath.ArtifactsOut = []models.ArtifactRef{{Path: ""}}
+	badRule := task("a")
+	badRule.TriggerRule = "sometimes"
+	okRule := task("b", "a")
+	okRule.TriggerRule = models.TriggerRuleOneFailed
 	okPath := task("a")
 	okPath.ArtifactsOut = []models.ArtifactRef{{Path: "results/data.csv"}}
 	// Not canonical: a consumer's "./out.txt" never matches a producer's
@@ -37,6 +41,8 @@ func TestValidateDefinition(t *testing.T) {
 		wantErr string // substring; empty means valid
 	}{
 		{"valid dag", []models.TaskDefinition{task("a"), task("b", "a")}, ""},
+		{"valid trigger rule", []models.TaskDefinition{task("a"), okRule}, ""},
+		{"unknown trigger rule", []models.TaskDefinition{badRule}, "trigger_rule \"sometimes\""},
 		{"valid artifact path", []models.TaskDefinition{okPath}, ""},
 		{"cycle", []models.TaskDefinition{task("a", "b"), task("b", "a")}, "cycle"},
 		{"unknown dependency", []models.TaskDefinition{task("a", "ghost")}, "depends on unknown task ghost"},

@@ -34,6 +34,20 @@ const (
 	WorkflowStatusPaused    WorkflowStatus = "paused"
 )
 
+// TriggerRule decides when a task runs, from how its dependencies ended.
+type TriggerRule string
+
+const (
+	// TriggerRuleAllSuccess, the default, runs once every dependency
+	// completed, and skips the task if any dependency failed or was skipped.
+	TriggerRuleAllSuccess TriggerRule = "all_success"
+	// TriggerRuleAllDone runs once every dependency has finished, however.
+	TriggerRuleAllDone TriggerRule = "all_done"
+	// TriggerRuleOneFailed runs once any dependency failed, and skips the task
+	// if every dependency finished without failing.
+	TriggerRuleOneFailed TriggerRule = "one_failed"
+)
+
 // ArtifactRef describes a file artifact stored in MinIO.
 // Path is always relative to the task's artifact directory.
 //
@@ -89,6 +103,19 @@ type TaskDefinition struct {
 	Container    *ContainerSpec    `json:"container,omitempty"`
 	ArtifactsIn  []ArtifactRef     `json:"artifacts_in,omitempty"`
 	ArtifactsOut []ArtifactRef     `json:"artifacts_out,omitempty"`
+	TriggerRule  TriggerRule       `json:"trigger_rule,omitempty"`
+}
+
+// UsesTriggerRules reports whether any task sets a rule other than the
+// default. Such a workflow lets failures propagate through the rules instead
+// of failing fast.
+func (d *WorkflowDefinition) UsesTriggerRules() bool {
+	for _, t := range d.Tasks {
+		if t.TriggerRule != "" && t.TriggerRule != TriggerRuleAllSuccess {
+			return true
+		}
+	}
+	return false
 }
 
 // WorkflowDefinition is the DAG specification
@@ -225,6 +252,7 @@ const (
 	WSEventTaskCompleted     = "task.completed"
 	WSEventTaskFailed        = "task.failed"
 	WSEventTaskRetrying      = "task.retrying"
+	WSEventTaskSkipped       = "task.skipped"
 	WSEventTaskLog           = "task.log"
 	WSEventMetrics           = "metrics.update"
 )

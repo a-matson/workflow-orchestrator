@@ -13,7 +13,7 @@ import (
 func TestTransition_InvalidTarget(t *testing.T) {
 	s := new(persistence.Store)
 	ctx := context.Background()
-	for _, to := range []models.TaskStatus{models.TaskStatusFailed, models.TaskStatusSkipped} {
+	for _, to := range []models.TaskStatus{models.TaskStatusFailed} {
 		if _, err := s.TransitionTask(ctx, "t", 0, to, persistence.TaskPatch{}); !errors.Is(err, persistence.ErrInvalidTransition) {
 			t.Errorf("TransitionTask(%s) error = %v, want ErrInvalidTransition", to, err)
 		}

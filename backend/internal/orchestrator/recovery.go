@@ -78,6 +78,14 @@ func (o *Orchestrator) recoverExecution(ctx context.Context, exec *models.Workfl
 		Msg("execution recovered — resuming dispatch")
 
 	dispatchCtx := context.WithoutCancel(ctx)
+	if execCtx.Definition.UsesTriggerRules() {
+		goSafe("advance", execCtx.Execution.ID, func() {
+			if err := o.advance(dispatchCtx, execCtx); err != nil {
+				log.Error().Err(err).Str("exec_id", execCtx.Execution.ID).Msg("could not advance recovered execution")
+			}
+		})
+		return nil
+	}
 	goSafe("dispatch", execCtx.Execution.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 	return nil
 }
@@ -105,6 +113,7 @@ func (o *Orchestrator) loadExecution(ctx context.Context, id string) (*Execution
 		TaskMap:    make(map[string]*models.TaskExecution, len(exec.Tasks)),
 		Completed:  make(map[string]bool),
 		Failed:     make(map[string]bool),
+		Skipped:    make(map[string]bool),
 	}
 	for _, task := range exec.Tasks {
 		execCtx.TaskMap[task.TaskDefinitionID] = task
@@ -113,8 +122,10 @@ func (o *Orchestrator) loadExecution(ctx context.Context, id string) (*Execution
 			execCtx.Completed[task.TaskDefinitionID] = true
 		case models.TaskStatusFailed, models.TaskStatusDeadLetter, models.TaskStatusCancelled:
 			execCtx.Failed[task.TaskDefinitionID] = true
+		case models.TaskStatusSkipped:
+			execCtx.Skipped[task.TaskDefinitionID] = true
 		case models.TaskStatusPending, models.TaskStatusQueued, models.TaskStatusRunning,
-			models.TaskStatusRetrying, models.TaskStatusSkipped:
+			models.TaskStatusRetrying:
 			// Dispatch reads these statuses from the rows in TaskMap.
 		}
 	}
