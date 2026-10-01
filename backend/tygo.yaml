@@ -5,8 +5,10 @@ packages:
     output_path: ../frontend/src/types/generated.ts
     indent: "\t"
     enum_style: union
+    # Files without exported types; listed so tygo emits no empty section for them.
     exclude_files:
       - transitions.go
+      - duration.go
     type_mappings:
       time.Time: "string /* RFC3339 */"
       time.Duration: "number /* nanoseconds */"
