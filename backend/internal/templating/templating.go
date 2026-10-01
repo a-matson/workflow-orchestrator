@@ -62,6 +62,16 @@ func Check(v any) error {
 	return err
 }
 
+// CheckOutsideWorker is Check for templates rendered outside the worker, such
+// as a when condition, where secret is not defined.
+func CheckOutsideWorker(v any) error {
+	_, err := walk(v, func(s string) (string, error) {
+		_, err := parse(s, nil)
+		return s, err
+	})
+	return err
+}
+
 // Render returns a copy of v with every template string executed against
 // data, with funcs (which may be nil) available to the templates.
 func Render(v any, data map[string]any, funcs template.FuncMap) (any, error) {

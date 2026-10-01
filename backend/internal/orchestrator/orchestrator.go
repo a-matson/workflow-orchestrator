@@ -466,7 +466,8 @@ func (o *Orchestrator) skipLost(ctx context.Context, c *ExecutionContext) {
 // whenHolds evaluates a task's when condition. It returns false, with the
 // reason to record on the skipped task, unless the template renders "true".
 func whenHolds(when string, data map[string]any) (bool, string) {
-	out, err := templating.Render(when, data)
+	// No funcs: secrets resolve only in the worker, and validation rejects them here.
+	out, err := templating.Render(when, data, nil)
 	if err != nil {
 		return false, "when: " + err.Error()
 	}

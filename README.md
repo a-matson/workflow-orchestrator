@@ -142,7 +142,7 @@ Add file paths under **Artifact Outputs** (files this task writes) and **Artifac
 
 ### Secrets
 
-Admins store secrets with `PUT /api/secrets/{name}` (`{"value": "..."}`), list their names with `GET /api/secrets` and remove them with `DELETE /api/secrets/{name}`; a value is never returned. Task config uses them as `{{ secret "name" }}`. Secrets are sealed with AES-256-GCM under `FLUXOR_SECRETS_KEY` and decrypted only by the worker, just before the task runs; the run's logs, error and output show resolved values as `***`. A value a task transforms (base64, split) is not recognised and is not masked. Changing the key makes stored secrets unreadable.
+Admins store secrets with `PUT /api/secrets/{name}` (`{"value": "..."}`), list their names with `GET /api/secrets` and remove them with `DELETE /api/secrets/{name}`; a value is never returned. Task config uses them as `{{ secret "name" }}`; a `when` condition cannot, since it is evaluated outside the worker. Secrets are sealed with AES-256-GCM under `FLUXOR_SECRETS_KEY` and decrypted only by the worker, just before the task runs; the run's logs, error and output show resolved values as `***`. A value a task transforms (base64, split) is not recognised and is not masked. Changing the key makes stored secrets unreadable.
 
 ### Templating task config
 
