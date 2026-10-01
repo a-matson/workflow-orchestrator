@@ -230,6 +230,7 @@ GET    /api/tasks/{id}/logs            Get task logs
 GET    /api/tasks/{id}/artifacts       Get task artifact metadata
 GET    /api/tasks/{id}/artifacts/{path} Download one artifact the task produced
 GET    /api/metrics                    Platform metrics
+POST   /api/client-errors              Log an error the UI could not handle (sent by the UI, rate-limited)
 GET    /api/health                     Liveness (process up, no dependency checks)
 GET    /api/ready                      Readiness (Postgres, Redis, MinIO; 503 if any is down)
 GET    /ws                             WebSocket (real-time events)

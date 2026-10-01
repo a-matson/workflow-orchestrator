@@ -55,9 +55,11 @@ var routePolicy = map[string]Role{
 	"GET /api/tasks/{id}/artifacts":           RoleViewer,
 	"GET /api/tasks/{id}/artifacts/{path...}": RoleViewer,
 	"GET /api/metrics":                        RoleViewer,
-	"GET /ws":                                 RoleViewer,
-	"GET /api/session":                        RoleViewer,
-	"DELETE /api/session":                     RoleViewer,
+	// Any signed-in user's page can fail; a viewer reporting it changes no state.
+	"POST /api/client-errors": RoleViewer,
+	"GET /ws":                 RoleViewer,
+	"GET /api/session":        RoleViewer,
+	"DELETE /api/session":     RoleViewer,
 
 	"POST /api/workflows":              RoleOperator,
 	"PUT /api/workflows/{id}":          RoleOperator,
