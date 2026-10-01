@@ -20,13 +20,9 @@ func (r *RedisClient) EvictionPolicy(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Reply is a flat [name, value] list.
-	if len(vals) != 2 {
-		return "", fmt.Errorf("unexpected CONFIG GET reply: %v", vals)
-	}
-	policy, ok := vals[1].(string)
+	policy, ok := vals["maxmemory-policy"]
 	if !ok {
-		return "", fmt.Errorf("unexpected CONFIG GET value type %T", vals[1])
+		return "", fmt.Errorf("unexpected CONFIG GET reply: %v", vals)
 	}
 	return policy, nil
 }
