@@ -55,6 +55,8 @@ type ExecutionContext struct {
 	TaskMap    map[string]*models.TaskExecution // taskDefID -> TaskExecution
 	Completed  map[string]bool
 	Failed     map[string]bool
+	// Skipped holds tasks whose trigger rule could no longer be met.
+	Skipped map[string]bool
 	// done is set once the execution's terminal status is committed; a late
 	// result must not change the rows its final event reported.
 	done bool
@@ -180,6 +182,7 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 		TaskMap:    taskMap,
 		Completed:  make(map[string]bool),
 		Failed:     make(map[string]bool),
+		Skipped:    make(map[string]bool),
 	}
 
 	// Taken before the context is shared: dispatch starts writing the live
@@ -339,7 +342,7 @@ func (c *ExecutionContext) readyTasks(now time.Time) []string {
 				ready = append(ready, id)
 			}
 		case models.TaskStatusPending:
-			if !slices.ContainsFunc(node.Dependencies, func(dep *dag.Node) bool { return !c.Completed[dep.Task.ID] }) {
+			if c.ruleMet(def.TriggerRule, node.Dependencies) {
 				ready = append(ready, id)
 			}
 		default:
@@ -347,6 +350,92 @@ func (c *ExecutionContext) readyTasks(now time.Time) []string {
 		}
 	}
 	return ready
+}
+
+// ruleMet reports whether a pending task with rule and deps may run now.
+// Callers hold c.mu.
+func (c *ExecutionContext) ruleMet(rule models.TriggerRule, deps []*dag.Node) bool {
+	switch rule {
+	case models.TriggerRuleAllDone:
+		return !slices.ContainsFunc(deps, func(d *dag.Node) bool { return !c.finished(d.Task.ID) })
+	case models.TriggerRuleOneFailed:
+		return slices.ContainsFunc(deps, func(d *dag.Node) bool { return c.Failed[d.Task.ID] })
+	default:
+		return !slices.ContainsFunc(deps, func(d *dag.Node) bool { return !c.Completed[d.Task.ID] })
+	}
+}
+
+// ruleLost reports whether a pending task with rule and deps can no longer
+// run, so it is skipped rather than left pending. Callers hold c.mu.
+func (c *ExecutionContext) ruleLost(rule models.TriggerRule, deps []*dag.Node) bool {
+	switch rule {
+	case models.TriggerRuleAllDone:
+		return false // runs whenever its dependencies end
+	case models.TriggerRuleOneFailed:
+		allDone := !slices.ContainsFunc(deps, func(d *dag.Node) bool { return !c.finished(d.Task.ID) })
+		return allDone && !slices.ContainsFunc(deps, func(d *dag.Node) bool { return c.Failed[d.Task.ID] })
+	default:
+		return slices.ContainsFunc(deps, func(d *dag.Node) bool { return c.Failed[d.Task.ID] || c.Skipped[d.Task.ID] })
+	}
+}
+
+func (c *ExecutionContext) finished(id string) bool {
+	return c.Completed[id] || c.Failed[id] || c.Skipped[id]
+}
+
+// allFinished reports whether every task ended. Callers hold c.mu.
+func (c *ExecutionContext) allFinished() bool {
+	for _, def := range c.Definition.Tasks {
+		if !c.finished(def.ID) {
+			return false
+		}
+	}
+	return true
+}
+
+// skipLost moves every pending task whose trigger rule can no longer be met
+// to skipped, repeating until none is left, since a skip can doom the tasks
+// after it. Callers hold c.mu.
+func (o *Orchestrator) skipLost(ctx context.Context, c *ExecutionContext) {
+	for changed := true; changed; {
+		changed = false
+		for _, def := range c.Definition.Tasks {
+			task := c.TaskMap[def.ID]
+			if task.Status != models.TaskStatusPending || !c.ruleLost(def.TriggerRule, c.Graph.Nodes[def.ID].Dependencies) {
+				continue
+			}
+			now := time.Now()
+			row, err := o.store.TransitionTask(ctx, task.ID, task.RetryCount, models.TaskStatusSkipped, persistence.TaskPatch{CompletedAt: &now})
+			if err != nil {
+				log.Error().Err(err).Str("task_exec_id", task.ID).Msg("could not skip task whose trigger rule can no longer be met")
+				continue
+			}
+			c.cacheTask(row)
+			c.Skipped[def.ID] = true
+			changed = true
+			o.broadcaster.Broadcast(taskEvent(models.WSEventTaskSkipped, row))
+		}
+	}
+}
+
+// advance is how a workflow with trigger rules moves on after a task ends:
+// skip what can no longer run, dispatch what can, and finish the execution
+// once every task has ended, failed if any task did.
+func (o *Orchestrator) advance(ctx context.Context, execCtx *ExecutionContext) error {
+	execCtx.mu.Lock()
+	if execCtx.done {
+		execCtx.mu.Unlock()
+		return nil
+	}
+	o.skipLost(ctx, execCtx)
+	done, failed := execCtx.allFinished(), len(execCtx.Failed) > 0
+	execCtx.mu.Unlock()
+	if done {
+		return o.completeWorkflow(ctx, execCtx, failed)
+	}
+	dispatchCtx := context.WithoutCancel(ctx)
+	runSafe("dispatch", execCtx.Execution.ID, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
+	return nil
 }
 
 // DispatchDue runs dispatch for every active execution. Retries become due
@@ -406,6 +495,16 @@ func (o *Orchestrator) DispatchDue(ctx context.Context) {
 	}
 	o.activeMu.RUnlock()
 	for _, ec := range execs {
+		if ec.Definition.UsesTriggerRules() {
+			// Also skips and finishes, which a crash between a task ending and
+			// its advance would otherwise leave undone.
+			runSafe("advance", ec.Execution.ID, func() {
+				if err := o.advance(ctx, ec); err != nil {
+					log.Error().Err(err).Str("exec_id", ec.Execution.ID).Msg("could not advance execution")
+				}
+			})
+			continue
+		}
 		runSafe("dispatch", ec.Execution.ID, func() { o.dispatchReadyTasks(ctx, ec) })
 	}
 }
@@ -517,6 +616,9 @@ func (o *Orchestrator) handleTaskSuccess(ctx context.Context, execCtx *Execution
 	o.broadcaster.Broadcast(taskEvent(models.WSEventTaskCompleted, taskExec))
 	log.Info().Str("task_exec_id", taskExec.ID).Str("task_name", taskExec.TaskName).Msg("task completed")
 
+	if execCtx.Definition.UsesTriggerRules() {
+		return o.advance(ctx, execCtx)
+	}
 	// Check completion and dispatch next wave without holding any lock
 	if completedCount == totalTasks {
 		return o.completeWorkflow(ctx, execCtx, false)
@@ -602,7 +704,11 @@ func (o *Orchestrator) handleTaskFailure(ctx context.Context, execCtx *Execution
 
 		o.broadcaster.Broadcast(taskEvent(models.WSEventTaskFailed, taskExec))
 
-		// Fail the entire workflow
+		// With trigger rules the failure flows through them (all_done and
+		// one_failed tasks may still run); otherwise the workflow fails fast.
+		if execCtx.Definition.UsesTriggerRules() {
+			return o.advance(ctx, execCtx)
+		}
 		return o.completeWorkflow(ctx, execCtx, true)
 	}
 
@@ -671,6 +777,12 @@ func (o *Orchestrator) ResumeExecution(ctx context.Context, id string) (*models.
 	log.Info().Str("exec_id", id).Msg("workflow execution resumed")
 
 	dispatchCtx := context.WithoutCancel(ctx)
+	if execCtx.Definition.UsesTriggerRules() {
+		if err := o.advance(dispatchCtx, execCtx); err != nil {
+			return nil, err
+		}
+		return snap, nil
+	}
 	runSafe("dispatch", id, func() { o.dispatchReadyTasks(dispatchCtx, execCtx) })
 	return snap, nil
 }

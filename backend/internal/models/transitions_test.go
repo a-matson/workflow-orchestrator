@@ -6,7 +6,7 @@ import (
 )
 
 func TestTaskFrom_TerminalHasNoExits(t *testing.T) {
-	terminal := []TaskStatus{TaskStatusCompleted, TaskStatusDeadLetter, TaskStatusCancelled}
+	terminal := []TaskStatus{TaskStatusCompleted, TaskStatusDeadLetter, TaskStatusCancelled, TaskStatusSkipped}
 	// Ranges over the table itself so a newly added target is checked too.
 	for to, from := range taskFrom {
 		if len(from) == 0 {
@@ -21,7 +21,7 @@ func TestTaskFrom_TerminalHasNoExits(t *testing.T) {
 			}
 		}
 	}
-	for _, to := range []TaskStatus{TaskStatusFailed, TaskStatusSkipped} {
+	for _, to := range []TaskStatus{TaskStatusFailed} {
 		if from := TaskFrom(to); from != nil {
 			t.Errorf("TaskFrom(%s) = %v, want nil", to, from)
 		}

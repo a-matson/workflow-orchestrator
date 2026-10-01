@@ -12,6 +12,7 @@ var taskFrom = map[TaskStatus][]TaskStatus{
 	TaskStatusDeadLetter: {TaskStatusRunning},
 	TaskStatusPending:    {TaskStatusQueued, TaskStatusRunning}, // enqueue rollback; startup requeue (single node)
 	TaskStatusCancelled:  {TaskStatusPending, TaskStatusQueued, TaskStatusRetrying, TaskStatusRunning},
+	TaskStatusSkipped:    {TaskStatusPending}, // its trigger rule can no longer be met
 }
 
 var execFrom = map[WorkflowStatus][]WorkflowStatus{
@@ -27,7 +28,7 @@ var execFrom = map[WorkflowStatus][]WorkflowStatus{
 // tasks keep their results.
 var (
 	execResumeFrom = []WorkflowStatus{WorkflowStatusFailed, WorkflowStatusCancelled}
-	taskResumeFrom = []TaskStatus{TaskStatusDeadLetter, TaskStatusCancelled, TaskStatusFailed}
+	taskResumeFrom = []TaskStatus{TaskStatusDeadLetter, TaskStatusCancelled, TaskStatusFailed, TaskStatusSkipped}
 )
 
 // ExecResumeFrom returns the execution statuses resume accepts. The slice is a copy.

@@ -32,6 +32,24 @@ export const WorkflowStatusCancelled = "cancelled";
 export const WorkflowStatusPaused = "paused";
 export type WorkflowStatus = typeof WorkflowStatusPending | typeof WorkflowStatusRunning | typeof WorkflowStatusCompleted | typeof WorkflowStatusFailed | typeof WorkflowStatusCancelled | typeof WorkflowStatusPaused;
 /**
+ * TriggerRule decides when a task runs, from how its dependencies ended.
+ */
+/**
+ * TriggerRuleAllSuccess, the default, runs once every dependency
+ * completed, and skips the task if any dependency failed or was skipped.
+ */
+export const TriggerRuleAllSuccess = "all_success";
+/**
+ * TriggerRuleAllDone runs once every dependency has finished, however.
+ */
+export const TriggerRuleAllDone = "all_done";
+/**
+ * TriggerRuleOneFailed runs once any dependency failed, and skips the task
+ * if every dependency finished without failing.
+ */
+export const TriggerRuleOneFailed = "one_failed";
+export type TriggerRule = typeof TriggerRuleAllSuccess | typeof TriggerRuleAllDone | typeof TriggerRuleOneFailed;
+/**
  * ArtifactRef describes a file artifact stored in MinIO.
  * Path is always relative to the task's artifact directory.
  * 	MinIO key: artifacts/{workflow_exec_id}/{task_def_id}/{Path}
@@ -85,6 +103,7 @@ export interface TaskDefinition {
 	container?: ContainerSpec;
 	artifacts_in?: ArtifactRef[];
 	artifacts_out?: ArtifactRef[];
+	trigger_rule?: TriggerRule;
 }
 /**
  * WorkflowDefinition is the DAG specification
@@ -221,6 +240,7 @@ export const WSEventTaskStarted = "task.started";
 export const WSEventTaskCompleted = "task.completed";
 export const WSEventTaskFailed = "task.failed";
 export const WSEventTaskRetrying = "task.retrying";
+export const WSEventTaskSkipped = "task.skipped";
 export const WSEventTaskLog = "task.log";
 export const WSEventMetrics = "metrics.update";
-export type WSEvent = typeof WSEventWorkflowStarted | typeof WSEventWorkflowCompleted | typeof WSEventWorkflowFailed | typeof WSEventWorkflowCancelled | typeof WSEventTaskQueued | typeof WSEventTaskStarted | typeof WSEventTaskCompleted | typeof WSEventTaskFailed | typeof WSEventTaskRetrying | typeof WSEventTaskLog | typeof WSEventMetrics;
+export type WSEvent = typeof WSEventWorkflowStarted | typeof WSEventWorkflowCompleted | typeof WSEventWorkflowFailed | typeof WSEventWorkflowCancelled | typeof WSEventTaskQueued | typeof WSEventTaskStarted | typeof WSEventTaskCompleted | typeof WSEventTaskFailed | typeof WSEventTaskRetrying | typeof WSEventTaskSkipped | typeof WSEventTaskLog | typeof WSEventMetrics;

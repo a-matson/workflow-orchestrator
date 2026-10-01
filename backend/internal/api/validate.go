@@ -29,6 +29,11 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 		if !taskIDPattern.MatchString(t.ID) {
 			return fmt.Errorf("task %q: id must be non-empty and match [A-Za-z0-9_-]", t.ID)
 		}
+		switch t.TriggerRule {
+		case "", models.TriggerRuleAllSuccess, models.TriggerRuleAllDone, models.TriggerRuleOneFailed:
+		default:
+			return fmt.Errorf("task %q: trigger_rule %q must be all_success, all_done or one_failed", t.ID, t.TriggerRule)
+		}
 		for _, refs := range [][]models.ArtifactRef{t.ArtifactsIn, t.ArtifactsOut} {
 			for _, a := range refs {
 				// Canonical, because artifacts are matched by path string: a

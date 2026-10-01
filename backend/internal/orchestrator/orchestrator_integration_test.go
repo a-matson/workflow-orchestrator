@@ -815,6 +815,135 @@ func TestResumeCancelledExecution(t *testing.T) {
 	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
 }
 
+func ruleTask(id string, rule models.TriggerRule, deps ...string) models.TaskDefinition {
+	return models.TaskDefinition{ID: id, Name: id, Type: "generic", Dependencies: deps, TriggerRule: rule,
+		RetryPolicy: &models.RetryPolicy{MaxRetries: 0}}
+}
+
+// F7: with trigger rules, a failure flows through them instead of failing
+// the run at once: all_done and one_failed tasks still run, all_success tasks
+// downstream are skipped (transitively), and the run ends failed.
+func TestTriggerRules_FailureFlows(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Rules", MaxParallel: 5,
+		Tasks: []models.TaskDefinition{
+			ruleTask("a", ""),
+			ruleTask("next", models.TriggerRuleAllSuccess, "a"),
+			ruleTask("after_next", "", "next"),
+			ruleTask("cleanup", models.TriggerRuleAllDone, "a"),
+			ruleTask("alert", models.TriggerRuleOneFailed, "a"),
+		},
+	})
+	a := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, a, testutil.Fail(a, "boom"))
+
+	ran := map[string]bool{}
+	for _, m := range testutil.Drain(t, redis, 2) {
+		ran[m.TaskDefinitionID] = true
+		runTask(t, orch, m, testutil.Ok(m))
+	}
+	if !ran["cleanup"] || !ran["alert"] {
+		t.Fatalf("ran %v after a failed, want cleanup and alert", ran)
+	}
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusFailed })
+	for id, want := range map[string]models.TaskStatus{
+		"a": models.TaskStatusDeadLetter, "next": models.TaskStatusSkipped, "after_next": models.TaskStatusSkipped,
+		"cleanup": models.TaskStatusCompleted, "alert": models.TaskStatusCompleted,
+	} {
+		if got := testutil.TaskRow(t, store, exec.ID, id).Status; got != want {
+			t.Errorf("task %s = %s, want %s", id, got, want)
+		}
+	}
+	if n := testutil.Queued(t, redis, exec.ID); n != 0 {
+		t.Errorf("%d messages left queued, want 0", n)
+	}
+}
+
+// A crash between a task dead-lettering and the run advancing must not stall
+// the run: recovery skips and dispatches by the rules.
+func TestTriggerRules_RecoveryAdvances(t *testing.T) {
+	orch, store, redis, rec := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Rules recovery", MaxParallel: 5,
+		Tasks: []models.TaskDefinition{
+			ruleTask("a", ""), ruleTask("next", "", "a"), ruleTask("cleanup", models.TriggerRuleAllDone, "a"),
+		},
+	})
+	a := testutil.Drain(t, redis, 1)[0]
+	if err := orch.MarkTaskRunning(ctx, a.TaskExecID, "worker-dead", a.RetryCount, a.Timeout); err != nil {
+		t.Fatalf("MarkTaskRunning: %v", err)
+	}
+	// The failure is stored, but the process dies before it advances the run.
+	if _, err := store.TransitionTask(ctx, a.TaskExecID, a.RetryCount, models.TaskStatusDeadLetter, persistence.TaskPatch{}); err != nil {
+		t.Fatalf("dead-letter a: %v", err)
+	}
+
+	restarted := orchestrator.NewOrchestrator(store, redis, rec)
+	if err := restarted.RecoverInFlightExecutions(ctx); err != nil {
+		t.Fatalf("RecoverInFlightExecutions: %v", err)
+	}
+	c := testutil.Drain(t, redis, 1)[0]
+	if c.TaskDefinitionID != "cleanup" {
+		t.Fatalf("dispatched %s after recovery, want cleanup", c.TaskDefinitionID)
+	}
+	runTask(t, restarted, c, testutil.Ok(c))
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusFailed })
+	if got := testutil.TaskRow(t, store, exec.ID, "next").Status; got != models.TaskStatusSkipped {
+		t.Errorf("next = %s, want skipped", got)
+	}
+}
+
+// Resuming a run with trigger rules reopens its skipped tasks too, so they
+// run once the failed task succeeds.
+func TestTriggerRules_ResumeReopensSkipped(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	ctx := context.Background()
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Rules resume", MaxParallel: 5,
+		Tasks: []models.TaskDefinition{
+			ruleTask("a", ""), ruleTask("next", "", "a"), ruleTask("cleanup", models.TriggerRuleAllDone, "a"),
+		},
+	})
+	a := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, a, testutil.Fail(a, "boom"))
+	c := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, c, testutil.Ok(c))
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusFailed })
+
+	if _, err := orch.ResumeExecution(ctx, exec.ID); err != nil {
+		t.Fatalf("ResumeExecution: %v", err)
+	}
+	a2 := testutil.Drain(t, redis, 1)[0]
+	if a2.TaskDefinitionID != "a" {
+		t.Fatalf("first message after resume = %s, want a", a2.TaskDefinitionID)
+	}
+	runTask(t, orch, a2, testutil.Ok(a2))
+	n := testutil.Drain(t, redis, 1)[0]
+	if n.TaskDefinitionID != "next" {
+		t.Fatalf("after a succeeded, dispatched %s, want the reopened next", n.TaskDefinitionID)
+	}
+	runTask(t, orch, n, testutil.Ok(n))
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+}
+
+// A one_failed task whose dependencies all succeed is skipped, and the run
+// still completes.
+func TestTriggerRules_OneFailedSkippedOnSuccess(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "Rules ok", MaxParallel: 5,
+		Tasks: []models.TaskDefinition{ruleTask("a", ""), ruleTask("alert", models.TriggerRuleOneFailed, "a")},
+	})
+	a := testutil.Drain(t, redis, 1)[0]
+	runTask(t, orch, a, testutil.Ok(a))
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+	if got := testutil.TaskRow(t, store, exec.ID, "alert").Status; got != models.TaskStatusSkipped {
+		t.Errorf("alert = %s, want skipped", got)
+	}
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.
