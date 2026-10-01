@@ -154,6 +154,13 @@ type AlertTarget struct {
 	URL string `json:"url"`
 }
 
+// WorkflowRevision is one saved state of a workflow definition. Revisions
+// count up from 1 per workflow and are never changed.
+type WorkflowRevision struct {
+	Revision  int       `json:"revision"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ResolvedArtifact is an ArtifactRef with its fully-qualified MinIO key resolved.
 type ResolvedArtifact struct {
 	Path     string `json:"path"`      // relative path inside container workspace
