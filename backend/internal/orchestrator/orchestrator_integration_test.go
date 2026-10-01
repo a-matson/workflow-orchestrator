@@ -978,6 +978,74 @@ func TestTemplateDataReachesMessage(t *testing.T) {
 	}
 }
 
+// F7/F4: a when condition gates a task on the payload: false skips it (and
+// what needs it) with the reason recorded, and the run still completes.
+func TestWhenCondition_Payload(t *testing.T) {
+	for _, tc := range []struct {
+		env string
+		run bool
+	}{{"prod", true}, {"dev", false}} {
+		t.Run(tc.env, func(t *testing.T) {
+			orch, store, redis, _ := setupOrchestrator(t)
+			ctx := context.Background()
+			def := &models.WorkflowDefinition{
+				ID: uuid.NewString(), Name: "When", MaxParallel: 5,
+				Tasks: []models.TaskDefinition{
+					{ID: "deploy", Name: "Deploy", Type: "generic", Dependencies: []string{}, When: `{{ eq .payload.env "prod" }}`},
+					{ID: "notify", Name: "Notify", Type: "generic", Dependencies: []string{"deploy"}},
+				},
+			}
+			testutil.SaveDef(t, store, def)
+			exec, err := orch.StartWorkflow(ctx, def, map[string]any{"env": tc.env})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.run {
+				d := testutil.Drain(t, redis, 1)[0]
+				runTask(t, orch, d, testutil.Ok(d))
+				n := testutil.Drain(t, redis, 1)[0]
+				runTask(t, orch, n, testutil.Ok(n))
+			}
+			testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+			deploy := testutil.TaskRow(t, store, exec.ID, "deploy")
+			if tc.run && deploy.Status != models.TaskStatusCompleted {
+				t.Errorf("deploy = %s, want completed", deploy.Status)
+			}
+			if !tc.run {
+				if deploy.Status != models.TaskStatusSkipped || !strings.Contains(deploy.Error, "was not true") {
+					t.Errorf("deploy = %s (%q), want skipped with the reason", deploy.Status, deploy.Error)
+				}
+				if got := testutil.TaskRow(t, store, exec.ID, "notify").Status; got != models.TaskStatusSkipped {
+					t.Errorf("notify = %s, want skipped", got)
+				}
+				if n := testutil.Queued(t, redis, exec.ID); n != 0 {
+					t.Errorf("%d messages queued for a skipped run, want 0", n)
+				}
+			}
+		})
+	}
+}
+
+// A when condition can read an upstream output.
+func TestWhenCondition_UpstreamOutput(t *testing.T) {
+	orch, store, redis, _ := setupOrchestrator(t)
+	exec := startWorkflow(t, orch, store, &models.WorkflowDefinition{
+		ID: uuid.NewString(), Name: "When output", MaxParallel: 5,
+		Tasks: []models.TaskDefinition{
+			{ID: "check", Name: "Check", Type: "generic", Dependencies: []string{}},
+			{ID: "act", Name: "Act", Type: "generic", Dependencies: []string{"check"}, When: "{{ .tasks.check.output.changed }}"},
+		},
+	})
+	c := testutil.Drain(t, redis, 1)[0]
+	res := testutil.Ok(c)
+	res.Output = json.RawMessage(`{"changed": false}`)
+	runTask(t, orch, c, res)
+	testutil.Eventually(t, eventWait, func() bool { return execStatus(t, store, exec.ID) == models.WorkflowStatusCompleted })
+	if got := testutil.TaskRow(t, store, exec.ID, "act").Status; got != models.TaskStatusSkipped {
+		t.Errorf("act = %s, want skipped", got)
+	}
+}
+
 // REL-9: a result for an execution this process has not loaded, as when
 // recovery skipped it (listing cap, failed recoverExecution), must be applied and
 // advance the DAG, not leave its row running forever.

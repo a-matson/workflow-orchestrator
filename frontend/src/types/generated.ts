@@ -104,6 +104,12 @@ export interface TaskDefinition {
 	artifacts_in?: ArtifactRef[];
 	artifacts_out?: ArtifactRef[];
 	trigger_rule?: TriggerRule;
+	/**
+	 * When is a template that must render to "true" for the task to run, as
+	 * in {{ eq .payload.env "prod" }}; anything else skips it. It sees what
+	 * config templates see and is checked once TriggerRule is met.
+	 */
+	when?: string;
 }
 /**
  * WorkflowDefinition is the DAG specification

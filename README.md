@@ -341,7 +341,7 @@ make migrate
 | Jitter | ±25% randomisation — prevents thundering herd |
 | Retry scheduling | A retry waits in its task row (`retrying`, `next_retry_at`); a 5s poller dispatches it once due |
 | Dead-letter | After `max_retries`, task → `workflow:tasks:dead_letter` |
-| Trigger rules | A task's `trigger_rule` decides when it runs: `all_success` (default; skipped if a dependency failed or was skipped), `all_done` (once every dependency ended), `one_failed` (once a dependency failed; skipped if none did). A workflow that uses `all_done` or `one_failed` lets a failure flow through the rules and ends failed once every task has ended; one that uses only the default fails fast, cancelling open tasks |
+| Trigger rules | A task's `trigger_rule` decides when it runs: `all_success` (default; skipped if a dependency failed or was skipped), `all_done` (once every dependency ended), `one_failed` (once a dependency failed; skipped if none did). A task's `when` (a template such as `{{ eq .payload.env "prod" }}`, checked once its rule is met) skips it unless it renders `true`, recording why. A workflow that uses `all_done`, `one_failed` or `when` lets a failure flow through the rules and ends failed once every task has ended; one that uses only the default fails fast, cancelling open tasks |
 | Task timeouts | A task's `timeout` (integer nanoseconds or a string like `"30s"`; 1 h when unset) kills its run; a running task with no result 1 min past its timeout is failed by the same 5s poller, and its retry policy applies |
 | Replay | `POST /api/executions/:id/retry` resets and re-runs |
 | Concurrency control | `max_parallel` counted from the execution's queued and running task rows |

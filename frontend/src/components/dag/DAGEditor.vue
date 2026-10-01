@@ -179,6 +179,16 @@
 								<option value="one_failed">a dependency failed</option>
 							</select>
 						</div>
+						<div class="field">
+							<label for="cf-when">Run only if</label>
+							<input
+								id="cf-when"
+								v-model="selectedNode.data.taskDef.when"
+								class="cf-input"
+								placeholder='{{ eq .payload.env "prod" }}'
+								data-testid="task-when"
+							/>
+						</div>
 
 						<!-- Per-type configuration -->
 						<div class="section-label">Task Config</div>
