@@ -165,6 +165,7 @@
 										v-for="art in expandedTask.artifacts_out"
 										:key="art.minio_key"
 										class="artifact-chip"
+										data-testid="artifact-link"
 										:href="artifactDownloadUrl(expandedTask.id, art.path)"
 										download
 										:title="art.path"
