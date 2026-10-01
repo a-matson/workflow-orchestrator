@@ -319,11 +319,15 @@ jobs:
           platforms: linux/amd64,linux/arm64
           outputs: type=local,dest=out
           cache-from: type=gha,scope=backend
+          build-args: VERSION=v0.0.0-ci
 
       - name: Check binary architectures
         run: |
           scripts/check-image-arch.sh linux/amd64 out/linux_amd64/workflow-server
           scripts/check-image-arch.sh linux/arm64 out/linux_arm64/workflow-server
+
+      - name: Check release wiring
+        run: scripts/check-release.sh out/linux_amd64/workflow-server v0.0.0-ci
 
       - name: Build runtime image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
