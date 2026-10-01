@@ -139,7 +139,7 @@
 
 					<!-- Expanded task detail -->
 					<Transition name="expand">
-						<div v-if="expandedTask" class="task-detail">
+						<div v-if="expandedTask" class="task-detail" data-testid="task-detail">
 							<div v-if="expandedTask.error" class="task-error">{{ expandedTask.error }}</div>
 							<div class="task-detail-grid">
 								<span class="td-key">Worker</span>
