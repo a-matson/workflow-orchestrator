@@ -23,7 +23,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m,
+		// go-redis retries a failing pool's dial in the background, sleeping 1s
+		// between tries; TestFailedEnqueueRollsBackToPending points a client at a
+		// dead port, and the goroutine exits at its first check after Close.
+		goleak.IgnoreAnyFunction("github.com/redis/go-redis/v9/internal/pool.(*ConnPool).tryDial"))
 }
 
 const eventWait = 2 * time.Second
