@@ -605,7 +605,10 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 		}
 	}()
 
-	cols, _ := rows.Columns()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("database_query: columns: %w", err)
+	}
 	var results []map[string]any
 	truncated := false
 	for rows.Next() {
@@ -619,8 +622,9 @@ func (w *Worker) execDBQuery(ctx context.Context, msg *models.TaskMessage, addLo
 		for i := range ptrs {
 			ptrs[i] = &vals[i]
 		}
+		// A skipped row would hand dependents a silently partial result.
 		if err := rows.Scan(ptrs...); err != nil {
-			continue
+			return nil, fmt.Errorf("database_query: scan row %d: %w", len(results)+1, err)
 		}
 		row := make(map[string]any, len(cols))
 		for i, col := range cols {

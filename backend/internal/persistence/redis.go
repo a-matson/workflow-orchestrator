@@ -114,7 +114,10 @@ func (r *RedisClient) SendToDeadLetter(ctx context.Context, msg *models.TaskMess
 		"reason":    reason,
 		"timestamp": time.Now(),
 	}
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling dead letter for %s: %w", msg.TaskExecID, err)
+	}
 	return r.client.LPush(ctx, DeadLetterKey, data).Err()
 }
 
