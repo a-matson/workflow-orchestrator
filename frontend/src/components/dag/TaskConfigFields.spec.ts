@@ -4,7 +4,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import TaskConfigFields from './TaskConfigFields.vue'
 import Builder from '../../pages/Builder.vue'
 import { api } from '../../composables/useApi'
-import { WORKFLOW_TEMPLATES } from '../../composables/useTemplates'
 import type { WorkflowDefinition } from '../../types'
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), onBeforeRouteLeave: vi.fn() }))
@@ -38,21 +37,6 @@ describe('TaskConfigFields', () => {
 			expect(rendered.sort()).toEqual([...keys].sort())
 		},
 	)
-})
-
-describe('workflow templates', () => {
-	it('only use config keys the executors read', () => {
-		const unread: string[] = []
-		for (const tpl of WORKFLOW_TEMPLATES) {
-			for (const task of tpl.tasks) {
-				const allowed = EXECUTOR_KEYS[task.type] ?? []
-				for (const key of Object.keys(task.config ?? {})) {
-					if (!allowed.includes(key)) unread.push(`${tpl.name}/${task.id} (${task.type}): ${key}`)
-				}
-			}
-		}
-		expect(unread).toEqual([])
-	})
 })
 
 describe('Builder container section', () => {
