@@ -4,9 +4,27 @@
 		<aside class="wf-sidebar">
 			<div class="sidebar-header">
 				<span class="sidebar-title">Workflows</span>
-				<button class="btn-new" title="New workflow" data-testid="new-workflow" @click="createNew">
-					+
-				</button>
+				<div class="sidebar-actions">
+					<label class="btn-new" title="Import a YAML workflow" data-testid="import-workflow">
+						⇪
+						<input
+							type="file"
+							accept=".yaml,.yml,application/yaml"
+							class="sr-only"
+							aria-label="Import a YAML workflow"
+							data-testid="import-workflow-file"
+							@change="importWorkflow"
+						/>
+					</label>
+					<button
+						class="btn-new"
+						title="New workflow"
+						data-testid="new-workflow"
+						@click="createNew"
+					>
+						+
+					</button>
+				</div>
 			</div>
 
 			<div v-if="store.loading" class="sidebar-loading">Loading…</div>
@@ -102,6 +120,20 @@
 		}
 	}
 
+	async function importWorkflow(e: Event) {
+		const input = e.target as HTMLInputElement
+		const file = input.files?.[0]
+		input.value = '' // the same file can be picked again after a fix
+		if (!file) return
+		try {
+			const created = await store.importDefinition(await file.text())
+			showToast?.(`Imported "${created.name}"`, 'success')
+			await loadWorkflow(created)
+		} catch (err) {
+			showToast?.(err instanceof Error ? err.message : 'Import failed', 'error')
+		}
+	}
+
 	async function runWorkflow(wfId: string) {
 		try {
 			const exec = await store.triggerWorkflow(wfId, {})
@@ -152,6 +184,17 @@
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--text3);
+	}
+	.sidebar-actions {
+		display: flex;
+		gap: 6px;
+	}
+	label.btn-new {
+		cursor: pointer;
+	}
+	label.btn-new:focus-within {
+		outline: 2px solid var(--accent);
+		outline-offset: 1px;
 	}
 	.btn-new {
 		width: 22px;

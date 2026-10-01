@@ -17,6 +17,7 @@ const (
 // it to record denied attempts; handlers use the same names for their own.
 var auditActions = map[string]string{
 	"POST /api/workflows":              "workflow.create",
+	"POST /api/workflows/import":       "workflow.import",
 	"PUT /api/workflows/{id}":          "workflow.update",
 	"POST /api/workflows/{id}/trigger": "workflow.trigger",
 	"POST /api/executions/{id}/cancel": "execution.cancel",

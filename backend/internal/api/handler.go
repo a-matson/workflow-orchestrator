@@ -21,6 +21,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/orchestrator"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/workflowyaml"
 )
 
 // Handler provides HTTP API endpoints for the workflow platform
@@ -84,10 +85,12 @@ func (h *Handler) Routes() *http.ServeMux {
 func (h *Handler) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		// Workflow definitions
-		"POST /api/workflows":     h.CreateWorkflow,
-		"GET /api/workflows":      h.ListWorkflows,
-		"GET /api/workflows/{id}": h.GetWorkflow,
-		"PUT /api/workflows/{id}": h.UpdateWorkflow,
+		"POST /api/workflows":            h.CreateWorkflow,
+		"POST /api/workflows/import":     h.ImportWorkflow,
+		"GET /api/workflows/{id}/export": h.ExportWorkflow,
+		"GET /api/workflows":             h.ListWorkflows,
+		"GET /api/workflows/{id}":        h.GetWorkflow,
+		"PUT /api/workflows/{id}":        h.UpdateWorkflow,
 
 		// Workflow executions
 		"POST /api/workflows/{id}/trigger": h.TriggerWorkflow,
@@ -135,7 +138,12 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &def) {
 		return
 	}
-	if err := validateDefinition(&def); err != nil {
+	h.createWorkflow(w, r, &def, "workflow.create")
+}
+
+// createWorkflow validates and saves def as a new workflow, auditing it as action.
+func (h *Handler) createWorkflow(w http.ResponseWriter, r *http.Request, def *models.WorkflowDefinition, action string) {
+	if err := validateDefinition(def); err != nil {
 		writeError(w, r, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -147,15 +155,57 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	def.CreatedAt = now
 	def.UpdatedAt = now
 
-	if err := h.store.SaveWorkflowDefinition(r.Context(), &def); err != nil {
+	if err := h.store.SaveWorkflowDefinition(r.Context(), def); err != nil {
 		logFrom(r).Error().Err(err).Msg("failed to save workflow definition")
-		h.audit(r, "workflow.create", "workflow", def.ID, auditError)
+		h.audit(r, action, "workflow", def.ID, auditError)
 		writeError(w, r, http.StatusInternalServerError, "failed to save workflow", err)
 		return
 	}
-	h.audit(r, "workflow.create", "workflow", def.ID, auditSuccess)
+	h.audit(r, action, "workflow", def.ID, auditSuccess)
 
 	writeJSON(w, http.StatusCreated, def)
+}
+
+// ImportWorkflow creates a workflow from YAML. The YAML travels inside a JSON
+// body, {"yaml": "..."}, because mutating requests must be application/json.
+// POST /api/workflows/import
+func (h *Handler) ImportWorkflow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		YAML string `json:"yaml"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	def, err := workflowyaml.Parse([]byte(body.YAML))
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	def.ID = "" // an import is always a new workflow
+	h.createWorkflow(w, r, def, "workflow.import")
+}
+
+// ExportWorkflow downloads a workflow as YAML that ImportWorkflow accepts.
+// GET /api/workflows/{id}/export
+func (h *Handler) ExportWorkflow(w http.ResponseWriter, r *http.Request) {
+	def, err := h.store.GetWorkflowDefinition(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "workflow not found", err)
+		return
+	}
+	out, err := workflowyaml.Render(def)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not render workflow", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": def.Name + ".yaml"}))
+	w.WriteHeader(http.StatusOK)
+	// #nosec G705 -- a YAML attachment with nosniff is downloaded, never rendered as HTML
+	if _, err := w.Write(out); err != nil {
+		logFrom(r).Warn().Err(err).Msg("workflow export interrupted")
+	}
 }
 
 func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {

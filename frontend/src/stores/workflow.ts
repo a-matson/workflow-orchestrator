@@ -43,6 +43,13 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		}
 	}
 
+	// The YAML goes inside a JSON body: mutating API requests must be application/json.
+	async function importDefinition(yaml: string) {
+		const created = await api.post<WorkflowDefinition>('/api/workflows/import', { yaml })
+		definitions.value.unshift(created)
+		return created
+	}
+
 	async function createDefinition(
 		def: Omit<WorkflowDefinition, 'id' | 'created_at' | 'updated_at'>,
 	) {
@@ -239,6 +246,7 @@ export const useWorkflowStore = defineStore('workflows', () => {
 		error,
 		fetchDefinitions,
 		createDefinition,
+		importDefinition,
 		updateDefinition,
 		fetchDefinition,
 		fetchExecutions,

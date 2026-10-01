@@ -47,6 +47,7 @@ var routePolicy = map[string]Role{
 
 	"GET /api/workflows":                      RoleViewer,
 	"GET /api/workflows/{id}":                 RoleViewer,
+	"GET /api/workflows/{id}/export":          RoleViewer,
 	"GET /api/executions":                     RoleViewer,
 	"GET /api/executions/{id}":                RoleViewer,
 	"GET /api/executions/{execID}/tasks":      RoleViewer,
@@ -62,6 +63,7 @@ var routePolicy = map[string]Role{
 	"DELETE /api/session":     RoleViewer,
 
 	"POST /api/workflows":              RoleOperator,
+	"POST /api/workflows/import":       RoleOperator,
 	"PUT /api/workflows/{id}":          RoleOperator,
 	"POST /api/workflows/{id}/trigger": RoleOperator,
 	"POST /api/executions/{id}/cancel": RoleOperator,
