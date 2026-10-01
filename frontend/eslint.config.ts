@@ -65,7 +65,8 @@ export default defineConfig([
 		},
 	},
 
-	{ ignores: ['dist/**', 'node_modules/**', '*.d.ts'] },
+	// generated.ts is tygo output (backend/tygo.yaml); CI checks it against the Go models instead.
+	{ ignores: ['dist/**', 'node_modules/**', '*.d.ts', 'src/types/generated.ts'] },
 
 	{
 		files: ['**/*.{js,ts,jsx,tsx,vue}'],

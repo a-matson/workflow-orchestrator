@@ -1,0 +1,15 @@
+# Generates the frontend's API types from the Go models; CI fails if the
+# committed file differs from a fresh run (go run github.com/gzuidhof/tygo generate).
+packages:
+  - path: github.com/a-matson/workflow-orchestrator/backend/internal/models
+    output_path: ../frontend/src/types/generated.ts
+    indent: "\t"
+    enum_style: union
+    exclude_files:
+      - transitions.go
+    type_mappings:
+      time.Time: "string /* RFC3339 */"
+      time.Duration: "number /* nanoseconds */"
+      json.RawMessage: "unknown"
+    frontmatter: |
+      // Source: backend/internal/models. Regenerate: cd backend && go run github.com/gzuidhof/tygo@v0.2.21 generate

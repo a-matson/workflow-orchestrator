@@ -17,6 +17,9 @@ const (
 	TaskStatusRetrying   TaskStatus = "retrying"
 	TaskStatusSkipped    TaskStatus = "skipped"
 	TaskStatusDeadLetter TaskStatus = "dead_letter"
+	// TaskStatusCancelled is terminal: a task stopped because its execution
+	// was cancelled, as opposed to one that failed on its own.
+	TaskStatusCancelled TaskStatus = "cancelled"
 )
 
 // WorkflowStatus represents the lifecycle state of a workflow execution
@@ -36,17 +39,17 @@ const (
 //
 //	MinIO key: artifacts/{workflow_exec_id}/{task_def_id}/{Path}
 type ArtifactRef struct {
-	Path        string `json:"path"`        // e.g. "output.json" or "results/data.csv"
-	Description string `json:"description"` // human-readable label shown in UI
+	Path        string `json:"path"`                  // e.g. "output.json" or "results/data.csv"
+	Description string `json:"description,omitempty"` // human-readable label shown in UI
 }
 
 // ContainerSpec holds security and resource settings for the isolated container.
 type ContainerSpec struct {
-	Image     string            `json:"image"`      // e.g. "python:3.12-slim"
-	MemoryMB  int64             `json:"memory_mb"`  // hard memory limit (default 256)
-	CPUMillis int64             `json:"cpu_millis"` // CPU quota in milli-CPUs (default 500)
-	Env       map[string]string `json:"env"`        // extra env vars injected into container
-	WorkDir   string            `json:"work_dir"`   // working directory inside container (default /workspace)
+	Image     string            `json:"image"`                // e.g. "python:3.12-slim"
+	MemoryMB  int64             `json:"memory_mb,omitempty"`  // hard memory limit (default 256)
+	CPUMillis int64             `json:"cpu_millis,omitempty"` // CPU quota in milli-CPUs (default 500)
+	Env       map[string]string `json:"env,omitempty"`        // extra env vars injected into container
+	WorkDir   string            `json:"work_dir,omitempty"`   // working directory inside container (default /workspace)
 }
 
 // RetryPolicy defines retry behavior for tasks
@@ -115,7 +118,7 @@ type WorkflowExecution struct {
 	WorkflowID     string            `json:"workflow_id"`
 	WorkflowName   string            `json:"workflow_name"`
 	Status         WorkflowStatus    `json:"status"`
-	Tasks          []*TaskExecution  `json:"tasks"`
+	Tasks          []*TaskExecution  `json:"tasks" tstype:"TaskExecution[]"`
 	StartedAt      *time.Time        `json:"started_at,omitempty"`
 	CompletedAt    *time.Time        `json:"completed_at,omitempty"`
 	TriggerPayload map[string]any    `json:"trigger_payload,omitempty"`
@@ -154,7 +157,7 @@ type TaskExecution struct {
 // LogEntry represents a single log line from a task execution
 type LogEntry struct {
 	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`
+	Level     string    `json:"level" tstype:"'info' | 'warn' | 'error' | 'debug'"`
 	// Attempt is the retry_count that produced the entry: the row's logs span every attempt.
 	Attempt int            `json:"attempt"`
 	Message string         `json:"message"`
