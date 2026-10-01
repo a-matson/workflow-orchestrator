@@ -55,7 +55,7 @@ Handle or return every error. A discarded error (`_ = f()`) carries a why-commen
 - Workers run inside the backend process. A restart kills them all, so recovery re-queues every open task.
 - The backend drives the host's Docker daemon through a mounted socket, so paths inside the
   backend container are not visible to the daemon. The shared workspace root is the only exception.
-- `time.Duration` fields cross the API as integer nanoseconds.
+- `time.Duration` fields cross the API as integer nanoseconds. Workflow definitions also accept a Go duration string (`"30s"`) for `timeout`, `initial_delay` and `max_delay` on input.
 
 ## Dependencies
 Prefer the standard library. A new dependency needs one sentence in the PR explaining why the

@@ -56,6 +56,12 @@ func TestDefinitionDurations_AcceptStrings(t *testing.T) {
 		t.Errorf("marshal = %s, want timeout as integer nanoseconds", out)
 	}
 
+	// A field absent from the input keeps its value, as with plain encoding/json.
+	kept := TaskDefinition{Timeout: time.Minute}
+	if err := json.Unmarshal([]byte(`{"id":"b"}`), &kept); err != nil || kept.Timeout != time.Minute {
+		t.Errorf("absent timeout = %s (err %v), want 1m kept", kept.Timeout, err)
+	}
+
 	for _, bad := range []string{`{"timeout":"soon"}`, `{"retry_policy":{"initial_delay":true}}`} {
 		if err := json.Unmarshal([]byte(bad), &TaskDefinition{}); err == nil {
 			t.Errorf("unmarshal %s: want an error", bad)
