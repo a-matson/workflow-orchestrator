@@ -9,15 +9,22 @@ const baselineFile = new URL('../a11y-baseline.json', import.meta.url)
 // rise. `A11Y_RECORD=1 make e2e-ui` rewrites the baseline from the current UI.
 export async function expectA11yBaseline(page: Page, name: string) {
 	// color-contrast reads computed opacity, so a page still fading in would
-	// count differently from run to run. Looping animations never finish.
-	await page.evaluate(() =>
-		Promise.all(
-			document
-				.getAnimations()
-				.filter((a) => a.effect?.getTiming().iterations !== Infinity)
-				.map((a) => a.finished.catch(() => undefined)),
-		),
-	)
+	// count differently from run to run. Polled, because a route's enter
+	// transition can start after the first check; looping animations never finish.
+	// App.vue's route <Transition name="fade"> marks the entering page from its
+	// first frame, before the CSS transition (and so getAnimations) starts.
+	await expect(page.locator('.fade-enter-active, .fade-leave-active')).toHaveCount(0)
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					document
+						.getAnimations()
+						.filter((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)
+						.length,
+			),
+		)
+		.toBe(0)
 	const { violations } = await new AxeBuilder({ page }).analyze()
 	const counts: Counts = Object.fromEntries(
 		violations.map((v) => [v.id, v.nodes.length] as const).sort(([a], [b]) => a.localeCompare(b)),

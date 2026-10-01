@@ -521,7 +521,7 @@
 	}
 	.editor-hint {
 		font-size: 9px;
-		color: #333;
+		color: var(--text3);
 		font-style: italic;
 	}
 
@@ -577,14 +577,14 @@
 	}
 	.footer-hint {
 		font-size: 9.5px;
-		color: #333;
+		color: var(--text3);
 	}
 	.footer-hint code {
 		font-family: var(--mono);
 		background: rgba(255, 255, 255, 0.04);
 		padding: 0 3px;
 		border-radius: 2px;
-		color: #666;
+		color: var(--text2);
 	}
 
 	/* ── Notification type selector ──────────────────────────── */
