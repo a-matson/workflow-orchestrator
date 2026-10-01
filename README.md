@@ -224,6 +224,8 @@ npm run format
 
 `docker compose --profile observability up -d` adds Prometheus (http://localhost:9090) and Grafana (http://localhost:3001). Prometheus scrapes the backend's `:9091/metrics` and loads the alert rules in `prometheus-alerts.yml`: backend unreachable for 2 minutes, more than 100 queued task messages for 10 minutes, and any task dead-lettered in the last 15 minutes. Nothing routes the alerts anywhere yet; they show under Alerts in Prometheus. Grafana provisions the "Fluxor Orchestrator" dashboard, viewable without logging in; set `GRAFANA_ADMIN_PASSWORD` in `.env` to edit it.
 
+Tracing is off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set. The observability profile (or `--profile tracing` alone) includes Jaeger at http://localhost:16686; set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317` in `.env` to send it traces. One trigger is one trace: the API request, `start workflow`, a `dispatch task` per task, the worker's `run task` and `process result`, linked across Redis by a W3C `traceparent` in the task message and result. The standard `OTEL_*` variables (`OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER`, ...) apply. A run resumed after a restart continues in a new trace.
+
 ### Environment variables
 
 | Variable | Default | Description |

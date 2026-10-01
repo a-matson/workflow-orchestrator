@@ -108,6 +108,7 @@ test-integration:
 E2E_COMPOSE = FLUXOR_WORKSPACE_VOLUME=fluxor-e2e-task-workspaces \
 	FLUXOR_INTERNAL_SUBNET=172.29.251.0/24 FLUXOR_PROXY_IP=172.29.251.10 \
 	FLUXOR_RATE_LIMIT_PER_MIN=5000 \
+	COMPOSE_PROFILES=tracing OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 OTEL_BSP_SCHEDULE_DELAY=200 \
 	docker compose --env-file .env.example -p fluxor-e2e
 # Runs $(1) against a fresh e2e stack. Each run mints its own admin key, so no
 # credential is committed or reused.

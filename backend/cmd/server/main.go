@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/api"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
@@ -24,6 +25,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/scheduler"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/secrets"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/tracing"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/worker"
 	"github.com/a-matson/workflow-orchestrator/backend/migrations"
 )
@@ -71,6 +73,20 @@ func main() {
 	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin")
 	minioBucket := getEnv("MINIO_BUCKET", "fluxor-artifacts")
 	minioSSL := getEnv("MINIO_USE_SSL", "false") == "true"
+
+	shutdownTracing, err := tracing.Setup(ctx, "fluxor-backend")
+	if err != nil {
+		log.Fatal().Err(err).Msg("tracing setup failed")
+	}
+	defer func() {
+		// Detached: ctx is cancelled by the shutdown that runs this, and the
+		// flush would then drop the last batch of spans.
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(flushCtx); err != nil {
+			log.Warn().Err(err).Msg("flushing traces failed")
+		}
+	}()
 
 	// Redis
 	log.Info().Str("addr", redisAddr).Msg("connecting to Redis")
@@ -224,8 +240,12 @@ func main() {
 	handler := api.NewHandler(store, redisClient, orch, hub, minioClient).WithSecrets(vault).WithSession(session).WithTrustedProxies(trustedProxies).WithRateLimits(generalLimit, loginLimit).WithMaxBody(maxBody)
 
 	httpSrv := &http.Server{
-		Addr:         httpAddr,
-		Handler:      handler.Server(allowedOrigins),
+		Addr: httpAddr,
+		Handler: otelhttp.NewHandler(handler.Server(allowedOrigins), "fluxor-api",
+			// Probes would bury the traces that matter; a WebSocket is one span for its whole life.
+			otelhttp.WithFilter(func(r *http.Request) bool {
+				return r.URL.Path != "/ws" && r.URL.Path != "/api/health" && r.URL.Path != "/api/ready"
+			})),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,

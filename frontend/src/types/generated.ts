@@ -255,6 +255,11 @@ export interface TaskMessage {
 	 * templates.
 	 */
 	template_data?: { [key: string]: any};
+	/**
+	 * TraceParent is the W3C traceparent of the dispatch span, so the
+	 * worker's span joins the run's trace.
+	 */
+	traceparent?: string;
 }
 /**
  * TaskResult is what workers publish back
@@ -275,6 +280,11 @@ export interface TaskResult {
 	started_at: string /* RFC3339 */;
 	completed_at: string /* RFC3339 */;
 	artifacts_out?: ResolvedArtifact[];
+	/**
+	 * TraceParent is the W3C traceparent of the worker's span, so processing
+	 * the result joins the run's trace.
+	 */
+	traceparent?: string;
 }
 /**
  * WebSocketEvent is sent to connected UI clients

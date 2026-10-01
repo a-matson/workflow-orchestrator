@@ -247,6 +247,9 @@ type TaskMessage struct {
 	// trigger payload and the dependencies' outputs. Set only when Config has
 	// templates.
 	TemplateData map[string]any `json:"template_data,omitempty"`
+	// TraceParent is the W3C traceparent of the dispatch span, so the
+	// worker's span joins the run's trace.
+	TraceParent string `json:"traceparent,omitempty"`
 }
 
 // TaskResult is what workers publish back
@@ -264,6 +267,9 @@ type TaskResult struct {
 	StartedAt    time.Time          `json:"started_at"`
 	CompletedAt  time.Time          `json:"completed_at"`
 	ArtifactsOut []ResolvedArtifact `json:"artifacts_out,omitempty"`
+	// TraceParent is the W3C traceparent of the worker's span, so processing
+	// the result joins the run's trace.
+	TraceParent string `json:"traceparent,omitempty"`
 }
 
 // Attempt returns the attempt r reports, or -1 when r predates the field.
