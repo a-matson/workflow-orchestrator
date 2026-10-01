@@ -146,3 +146,12 @@ func TestValidateDefinitionAlerts(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateDefinitionWebhook(t *testing.T) {
+	for secret, wantErr := range map[string]bool{"github_hook": false, "": true, "bad name": true, strings.Repeat("a", 65): true} {
+		def := &models.WorkflowDefinition{Tasks: []models.TaskDefinition{task("a")}, Webhook: &models.WebhookTrigger{Secret: secret}}
+		if err := validateDefinition(def); (err != nil) != wantErr {
+			t.Errorf("webhook.secret %q: err = %v, want error %v", secret, err, wantErr)
+		}
+	}
+}

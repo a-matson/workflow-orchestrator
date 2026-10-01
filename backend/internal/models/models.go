@@ -138,6 +138,7 @@ type WorkflowDefinition struct {
 	// NextRunAt is when Schedule next fires. The server sets it; input is ignored.
 	NextRunAt *time.Time      `json:"next_run_at,omitempty"`
 	Alerts    *WorkflowAlerts `json:"alerts,omitempty"`
+	Webhook   *WebhookTrigger `json:"webhook,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
 }
@@ -147,6 +148,12 @@ type WorkflowDefinition struct {
 type WorkflowAlerts struct {
 	OnSuccess *AlertTarget `json:"on_success,omitempty"`
 	OnFailure *AlertTarget `json:"on_failure,omitempty"`
+}
+
+// WebhookTrigger lets POST /api/hooks/{id} start a run when the request is
+// signed with the named secret (HMAC-SHA256 over "<timestamp>.<body>").
+type WebhookTrigger struct {
+	Secret string `json:"secret"`
 }
 
 // AlertTarget is an http or https URL that receives the alert as a JSON POST.

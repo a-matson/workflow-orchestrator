@@ -127,3 +127,9 @@ func (r *RedisClient) SendToDeadLetter(ctx context.Context, msg *models.TaskMess
 func (r *RedisClient) QueueDepth(ctx context.Context) (int64, error) {
 	return r.client.LLen(ctx, TaskQueueKey).Result()
 }
+
+// ClaimOnce reports whether key was unclaimed, claiming it for ttl. Only the
+// first caller for a key gets true until it expires.
+func (r *RedisClient) ClaimOnce(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	return r.client.SetNX(ctx, key, 1, ttl).Result()
+}

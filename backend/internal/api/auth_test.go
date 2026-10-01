@@ -31,7 +31,12 @@ var publicRoutes = map[string]bool{
 	// Login: it takes the key in its body and exchanges it for a cookie, so
 	// requiring a credential first would make browser sign-in impossible.
 	"POST /api/session": true,
+	// Webhooks: the sender proves itself with an HMAC signature, not a key.
+	"POST /api/hooks/{id}": true,
 }
+
+// signedRoutes authenticate by request signature in their handler instead of by role.
+var signedRoutes = map[string]bool{"POST /api/hooks/{id}": true}
 
 // ownSessionRoutes mutate only the caller's own browser session, never shared
 // state, so they are open to every role, and to anyone for login.
@@ -48,7 +53,7 @@ func TestRoutePolicy_Levels(t *testing.T) {
 		if publicRoutes[pattern] != (role == RolePublic) {
 			t.Errorf("%s: role %q, but public = %v", pattern, role, publicRoutes[pattern])
 		}
-		if method != http.MethodGet && method != http.MethodHead && !ownSessionRoutes[pattern] && !logOnlyRoutes[pattern] && !role.allows(RoleOperator) {
+		if method != http.MethodGet && method != http.MethodHead && !ownSessionRoutes[pattern] && !logOnlyRoutes[pattern] && !signedRoutes[pattern] && !role.allows(RoleOperator) {
 			t.Errorf("%s mutates but requires only %q", pattern, role)
 		}
 		if strings.HasPrefix(path, "/api/keys") && role != RoleAdmin {

@@ -11,6 +11,7 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/schedule"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/secrets"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
 )
 
@@ -58,6 +59,9 @@ func validateDefinition(def *models.WorkflowDefinition) error {
 				}
 			}
 		}
+	}
+	if def.Webhook != nil && !secrets.ValidName(def.Webhook.Secret) {
+		return fmt.Errorf("webhook.secret %q must be a secret name matching [A-Za-z0-9_.-], up to 64 characters", def.Webhook.Secret)
 	}
 	if err := validateAlerts(def.Alerts); err != nil {
 		return err

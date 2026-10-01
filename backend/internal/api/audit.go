@@ -20,6 +20,7 @@ var auditActions = map[string]string{
 	"POST /api/workflows/import":       "workflow.import",
 	"PUT /api/workflows/{id}":          "workflow.update",
 	"POST /api/workflows/{id}/trigger": "workflow.trigger",
+	"POST /api/hooks/{id}":             "workflow.webhook",
 	"POST /api/executions/{id}/cancel": "execution.cancel",
 	"POST /api/executions/{id}/retry":  "execution.retry",
 	"POST /api/executions/{id}/resume": "execution.resume",

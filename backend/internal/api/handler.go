@@ -98,6 +98,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 
 		// Workflow executions
 		"POST /api/workflows/{id}/trigger": h.TriggerWorkflow,
+		"POST /api/hooks/{id}":             h.TriggerWebhook,
 		"GET /api/executions":              h.ListExecutions,
 		"GET /api/executions/{id}":         h.GetExecution,
 		"POST /api/executions/{id}/cancel": h.CancelExecution,
