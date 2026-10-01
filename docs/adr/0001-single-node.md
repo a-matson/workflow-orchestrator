@@ -1,7 +1,8 @@
 # 0001. Single-node deployment
 
 ## Status
-Accepted, 2026-09-29
+Accepted, 2026-09-29. Superseded by [0005](0005-leader-orchestration-scale-out.md) on 2026-10-01;
+still in effect until 0005's steps land.
 
 ## Context
 Workers run inside the backend process and execution state is held in memory as a cache.
