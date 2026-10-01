@@ -54,3 +54,12 @@ func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]AuditEntry,
 	}
 	return entries, nil
 }
+
+// DeleteAuditBefore deletes audit entries older than cutoff and returns how many.
+func (s *Store) DeleteAuditBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM audit_log WHERE at < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("deleting old audit entries: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

@@ -357,7 +357,7 @@ func (s *Store) attachTasks(ctx context.Context, execs []*models.WorkflowExecuti
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, NULL, error, NULL, metadata, created_at, updated_at,
+		       next_retry_at, NULL, error, metadata, created_at, updated_at,
 		       artifacts_in, artifacts_out
 		FROM task_executions WHERE workflow_exec_id = ANY($1) ORDER BY created_at ASC, id ASC
 	`, ids)
@@ -375,6 +375,20 @@ func (s *Store) attachTasks(ctx context.Context, execs []*models.WorkflowExecuti
 		e.Tasks = append(e.Tasks, task)
 	}
 	return rows.Err()
+}
+
+// DeleteFinishedExecutionsBefore deletes the executions that finished before
+// cutoff, with their tasks and log lines (ON DELETE CASCADE), and returns how
+// many executions it deleted. Open executions are never deleted.
+func (s *Store) DeleteFinishedExecutionsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM workflow_executions
+		WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < $1
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("deleting old executions: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ==================== Task Executions ====================
@@ -401,11 +415,11 @@ func insertTask(ctx context.Context, db execer, task *models.TaskExecution) erro
 }
 
 func (s *Store) UpdateTaskExecution(ctx context.Context, task *models.TaskExecution) error {
-	var outputJSON, logsJSON, artifactsInJSON, artifactsOutJSON []byte
+	var outputJSON, artifactsInJSON, artifactsOutJSON []byte
 	for _, f := range []struct {
 		dst *[]byte
 		v   any
-	}{{&outputJSON, task.Output}, {&logsJSON, task.Logs}, {&artifactsInJSON, task.ArtifactsIn}, {&artifactsOutJSON, task.ArtifactsOut}} {
+	}{{&outputJSON, task.Output}, {&artifactsInJSON, task.ArtifactsIn}, {&artifactsOutJSON, task.ArtifactsOut}} {
 		b, err := json.Marshal(f.v)
 		if err != nil {
 			return fmt.Errorf("marshaling task %s: %w", task.ID, err)
@@ -417,22 +431,73 @@ func (s *Store) UpdateTaskExecution(ctx context.Context, task *models.TaskExecut
 		UPDATE task_executions SET
 			status = $2, retry_count = $3, worker_id = $4, queued_at = $5,
 			started_at = $6, completed_at = $7, next_retry_at = $8,
-			output = $9, error = $10, logs = $11, updated_at = $12,
-			artifacts_in = $13, artifacts_out = $14
+			output = $9, error = $10, updated_at = $11,
+			artifacts_in = $12, artifacts_out = $13
 		WHERE id = $1
 	`, task.ID, task.Status, task.RetryCount, task.WorkerID,
 		task.QueuedAt, task.StartedAt, task.CompletedAt, task.NextRetryAt,
-		outputJSON, task.Error, logsJSON, task.UpdatedAt,
+		outputJSON, task.Error, task.UpdatedAt,
 		artifactsInJSON, artifactsOutJSON)
+	if err != nil {
+		return err
+	}
+	return s.AppendTaskLogs(ctx, task.ID, task.Logs)
+}
 
+// AppendTaskLogs stores entries after task id's existing log lines.
+func (s *Store) AppendTaskLogs(ctx context.Context, id string, entries []models.LogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(entries)
+	if err != nil {
+		return fmt.Errorf("marshaling logs of %s: %w", id, err)
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO task_logs (task_exec_id, attempt, logged_at, level, message, fields)
+		SELECT $1, COALESCE((x.e->>'attempt')::int, 0), (x.e->>'timestamp')::timestamptz,
+			x.e->>'level', x.e->>'message', x.e->'fields'
+		FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY AS x(e, n)
+		ORDER BY x.n
+	`, id, b)
 	return err
+}
+
+// TaskLogs returns the log lines of each task in ids, oldest first.
+func (s *Store) TaskLogs(ctx context.Context, ids ...string) (map[string][]models.LogEntry, error) {
+	out := make(map[string][]models.LogEntry, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT task_exec_id, attempt, logged_at, level, message, fields
+		FROM task_logs WHERE task_exec_id = ANY($1) ORDER BY id
+	`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("reading task logs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var e models.LogEntry
+		var fields []byte
+		if err := rows.Scan(&id, &e.Attempt, &e.Timestamp, &e.Level, &e.Message, &fields); err != nil {
+			return nil, fmt.Errorf("reading task logs: %w", err)
+		}
+		if fields != nil {
+			// Best effort: a malformed fields blob must not hide the line itself.
+			_ = json.Unmarshal(fields, &e.Fields)
+		}
+		out[id] = append(out[id], e)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetTaskExecution(ctx context.Context, id string) (*models.TaskExecution, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at,
+		       next_retry_at, output, error, metadata, created_at, updated_at,
 		       artifacts_in, artifacts_out
 		FROM task_executions WHERE id = $1
 	`, id)
@@ -444,7 +509,7 @@ func (s *Store) ListTaskExecutions(ctx context.Context, workflowExecID string) (
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_exec_id, task_definition_id, task_name, task_type, status,
 		       retry_count, max_retries, worker_id, queued_at, started_at, completed_at,
-		       next_retry_at, output, error, logs, metadata, created_at, updated_at,
+		       next_retry_at, output, error, metadata, created_at, updated_at,
 		       artifacts_in, artifacts_out
 		FROM task_executions WHERE workflow_exec_id = $1 ORDER BY created_at ASC
 	`, workflowExecID)
@@ -461,8 +526,22 @@ func (s *Store) ListTaskExecutions(ctx context.Context, workflowExecID string) (
 		}
 		tasks = append(tasks, task)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-	return tasks, rows.Err()
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.ID
+	}
+	logs, err := s.TaskLogs(ctx, ids...)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tasks {
+		t.Logs = logs[t.ID]
+	}
+	return tasks, nil
 }
 
 // ==================== Scanner helpers ====================
@@ -496,14 +575,14 @@ func scanWorkflowExecution(row scannable) (*models.WorkflowExecution, error) {
 
 func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 	task := &models.TaskExecution{}
-	var outputJSON, logsJSON, metaJSON []byte
+	var outputJSON, metaJSON []byte
 	var workerID, errorStr *string
 	var artifactsInJSON, artifactsOutJSON []byte
 
 	err := row.Scan(
 		&task.ID, &task.WorkflowExecID, &task.TaskDefinitionID, &task.TaskName, &task.TaskType, &task.Status,
 		&task.RetryCount, &task.MaxRetries, &workerID, &task.QueuedAt, &task.StartedAt, &task.CompletedAt,
-		&task.NextRetryAt, &outputJSON, &errorStr, &logsJSON, &metaJSON, &task.CreatedAt, &task.UpdatedAt,
+		&task.NextRetryAt, &outputJSON, &errorStr, &metaJSON, &task.CreatedAt, &task.UpdatedAt,
 		&artifactsInJSON, &artifactsOutJSON,
 	)
 	if err != nil {
@@ -518,11 +597,8 @@ func scanTaskExecution(row scannable) (*models.TaskExecution, error) {
 	if outputJSON != nil {
 		task.Output = outputJSON
 	}
-	// Best effort, as for executions: a malformed logs, metadata or artifacts
-	// blob must not hide the task's status from callers.
-	if logsJSON != nil {
-		_ = json.Unmarshal(logsJSON, &task.Logs)
-	}
+	// Best effort, as for executions: a malformed metadata or artifacts blob
+	// must not hide the task's status from callers.
 	if metaJSON != nil {
 		_ = json.Unmarshal(metaJSON, &task.Metadata)
 	}
