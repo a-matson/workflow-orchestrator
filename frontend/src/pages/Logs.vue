@@ -63,7 +63,18 @@
 							selectedExec.status === 'running' ? 'Waiting for logs…' : 'No logs match your filter'
 						}}
 					</div>
-					<div v-for="(entry, i) in displayLogs" :key="i" class="log-line" :class="entry.level">
+					<button
+						v-if="displayLogs.length > visibleLogs.length"
+						class="log-btn log-earlier"
+						data-testid="logs-show-earlier"
+						@click="shown += WINDOW"
+					>
+						Show {{ Math.min(WINDOW, displayLogs.length - visibleLogs.length) }} earlier lines ({{
+							displayLogs.length - visibleLogs.length
+						}}
+						hidden)
+					</button>
+					<div v-for="entry in visibleLogs" :key="entry._key" class="log-line" :class="entry.level">
 						<span class="ll-ts">{{ fmtTs(entry.timestamp) }}</span>
 						<span class="ll-lvl" :class="entry.level">{{ entry.level?.toUpperCase() }}</span>
 						<span class="ll-task">{{ entry._taskName }}</span>
@@ -105,7 +116,14 @@
 	interface EnrichedLog extends LogEntry {
 		_taskId: string
 		_taskName: string
+		// Stable across appends, so the keyed list only patches new lines.
+		_key: string
+		_t: number
 	}
+
+	// Lines rendered at once. A run can log thousands; rendering them all made
+	// every streamed line re-render the whole list.
+	const WINDOW = 500
 
 	const store = useWorkflowStore()
 	const wsStore = useWebSocketStore()
@@ -128,12 +146,21 @@
 	const allLogs = computed((): EnrichedLog[] => {
 		if (cleared.value || !selectedExec.value) return []
 		const logs: EnrichedLog[] = []
-		for (const task of selectedExec.value.tasks ?? []) {
-			for (const log of task.logs ?? []) {
-				logs.push({ ...log, _taskId: task.id, _taskName: task.task_name })
-			}
+		const tasks = selectedExec.value.tasks ?? []
+		for (const task of tasks) {
+			;(task.logs ?? []).forEach((log, i) => {
+				logs.push({
+					...log,
+					_taskId: task.id,
+					_taskName: task.task_name,
+					_key: `${task.id}:${i}`,
+					_t: Date.parse(log.timestamp),
+				})
+			})
 		}
-		return logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+		// Each task's lines arrive in order, so only interleaving tasks need a sort,
+		// on timestamps parsed once rather than per comparison.
+		return tasks.length > 1 ? logs.sort((a, b) => a._t - b._t) : logs
 	})
 
 	const displayLogs = computed(() => {
@@ -145,6 +172,16 @@
 			return true
 		})
 	})
+
+	const shown = ref(WINDOW)
+	const visibleLogs = computed(() => displayLogs.value.slice(-shown.value))
+	// Scrolled up to read: grow the window with new lines so the ones on screen stay put.
+	watch(
+		() => displayLogs.value.length,
+		(n, old) => {
+			if (!autoScroll.value && n > old) shown.value += n - old
+		},
+	)
 
 	watch(displayLogs, async () => {
 		if (!autoScroll.value) return
@@ -165,6 +202,7 @@
 		selectedId.value = id
 		cleared.value = false
 		taskFilter.value = ''
+		shown.value = WINDOW
 		await store.fetchExecution(id)
 		wsStore.subscribe(id)
 	}
@@ -396,7 +434,14 @@
 		color: var(--text3);
 		font-size: 12px;
 	}
+	.log-earlier {
+		display: block;
+		margin: 6px auto;
+	}
 	.log-line {
+		/* Off-screen lines skip layout and paint. */
+		content-visibility: auto;
+		contain-intrinsic-size: auto 22px;
 		display: flex;
 		align-items: baseline;
 		gap: 8px;
