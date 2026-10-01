@@ -4,7 +4,12 @@
 		<div class="dag-toolbar">
 			<div class="toolbar-left">
 				<input v-model="workflowName" placeholder="Workflow name…" class="name-input" />
-				<select v-model="selectedTaskType" class="type-select" data-testid="task-type-select">
+				<select
+					v-model="selectedTaskType"
+					class="type-select"
+					aria-label="Task type to add"
+					data-testid="task-type-select"
+				>
 					<option value="">Add task…</option>
 					<option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">
 						{{ t.label }}
@@ -86,12 +91,12 @@
 					<div class="config-body">
 						<!-- Basic fields -->
 						<div class="field">
-							<label>Task Name</label>
-							<input v-model="selectedNode.data.taskDef.name" class="cf-input" />
+							<label for="cf-name">Task Name</label>
+							<input id="cf-name" v-model="selectedNode.data.taskDef.name" class="cf-input" />
 						</div>
 						<div class="field">
-							<label>Type</label>
-							<select v-model="selectedNode.data.taskDef.type" class="cf-input">
+							<label for="cf-type">Type</label>
+							<select id="cf-type" v-model="selectedNode.data.taskDef.type" class="cf-input">
 								<option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">
 									{{ t.label }}
 								</option>
@@ -109,8 +114,9 @@
 						<!-- Retry policy -->
 						<div class="section-label">Retry Policy</div>
 						<div class="field">
-							<label>Max Retries</label>
+							<label for="cf-max-retries">Max Retries</label>
 							<input
+								id="cf-max-retries"
 								type="number"
 								min="0"
 								max="20"
@@ -120,8 +126,9 @@
 							/>
 						</div>
 						<div class="field">
-							<label>Initial Delay (s)</label>
+							<label for="cf-initial-delay">Initial Delay (s)</label>
 							<input
+								id="cf-initial-delay"
 								type="number"
 								min="0"
 								step="0.5"
@@ -137,8 +144,9 @@
 							/>
 						</div>
 						<div class="field">
-							<label>Backoff Multiplier</label>
+							<label for="cf-backoff">Backoff Multiplier</label>
 							<input
+								id="cf-backoff"
 								type="number"
 								min="1"
 								max="10"
@@ -151,8 +159,9 @@
 							/>
 						</div>
 						<div class="field">
-							<label>Timeout (s)</label>
+							<label for="cf-timeout">Timeout (s)</label>
 							<input
+								id="cf-timeout"
 								type="number"
 								min="0"
 								class="cf-input"
