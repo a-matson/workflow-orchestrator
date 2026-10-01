@@ -110,4 +110,9 @@ func TestValidateDefinition_When(t *testing.T) {
 	if err := validateDefinition(&models.WorkflowDefinition{Tasks: []models.TaskDefinition{bad}}); err == nil || !strings.Contains(err.Error(), "when:") {
 		t.Errorf("broken when template: %v, want an error naming when", err)
 	}
+	withSecret := task("a")
+	withSecret.When = `{{ eq (secret "flag") "on" }}`
+	if err := validateDefinition(&models.WorkflowDefinition{Tasks: []models.TaskDefinition{withSecret}}); err == nil || !strings.Contains(err.Error(), "when:") {
+		t.Errorf("when calling secret: %v, want it rejected (when renders outside the worker)", err)
+	}
 }
