@@ -43,12 +43,15 @@
 			</div>
 		</div>
 
-		<!-- Validation banner -->
-		<Transition name="banner">
-			<div v-if="banner" class="banner" :class="banner.type">
-				{{ banner.text }}
-			</div>
-		</Transition>
+		<!-- Validation banner. The live region stays mounted: a screen reader only
+		     announces text that changes inside a region it already knows. -->
+		<div class="banner-region" role="status">
+			<Transition name="banner">
+				<div v-if="banner" class="banner" :class="banner.type">
+					{{ banner.text }}
+				</div>
+			</Transition>
+		</div>
 
 		<!-- Flow canvas -->
 		<div class="flow-wrap">
@@ -940,6 +943,9 @@
 	}
 
 	/* Banner */
+	.banner-region {
+		flex-shrink: 0;
+	}
 	.banner {
 		padding: 7px 16px;
 		font-size: 12px;
