@@ -39,6 +39,14 @@
 				>
 					{{ saving ? 'Saving…' : 'Save' }}
 				</button>
+				<a
+					v-if="savedWorkflowId"
+					class="btn-secondary"
+					:href="`/api/workflows/${encodeURIComponent(savedWorkflowId)}/export`"
+					download
+					data-testid="export-workflow"
+					>Export YAML</a
+				>
 				<button v-if="savedWorkflowId" class="btn-run" @click="triggerRun">▶ Run</button>
 			</div>
 		</div>

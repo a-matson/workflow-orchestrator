@@ -217,6 +217,8 @@ printf 'Authorization: Bearer %s\n' "$FLUXOR_API_KEY" |
 
 ```
 POST   /api/workflows                  Create workflow definition
+POST   /api/workflows/import           Create a workflow from YAML ({"yaml": "..."})
+GET    /api/workflows/{id}/export      Download a workflow as YAML
 GET    /api/workflows                  List all definitions
 GET    /api/workflows/{id}             Get definition
 POST   /api/workflows/{id}/trigger     Start execution
