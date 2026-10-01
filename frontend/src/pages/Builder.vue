@@ -12,23 +12,33 @@
 			<div v-if="store.loading" class="sidebar-loading">Loading…</div>
 
 			<div class="wf-list">
-				<div
-					v-for="wf in store.definitions"
-					:key="wf.id"
-					class="wf-item"
-					data-testid="wf-item"
-					:class="{ active: activeWorkflowId === wf.id }"
-					@click="loadWorkflow(wf)"
-				>
-					<div class="wf-item-name">
-						{{ wf.name }}
-					</div>
-					<div class="wf-item-meta">
-						<span>{{ wf.tasks?.length || 0 }} tasks</span>
-						<span class="wf-item-ver">v{{ wf.version }}</span>
+				<!-- The run button sits beside the row, not in it: a button inside a role=button is unreachable for assistive tech. -->
+				<div v-for="wf in store.definitions" :key="wf.id" class="wf-row">
+					<div
+						class="wf-item"
+						data-testid="wf-item"
+						role="button"
+						tabindex="0"
+						:class="{ active: activeWorkflowId === wf.id }"
+						@click="loadWorkflow(wf)"
+						@keydown.enter.self.prevent="loadWorkflow(wf)"
+						@keydown.space.self.prevent="loadWorkflow(wf)"
+					>
+						<div class="wf-item-name">
+							{{ wf.name }}
+						</div>
+						<div class="wf-item-meta">
+							<span>{{ wf.tasks?.length || 0 }} tasks</span>
+							<span class="wf-item-ver">v{{ wf.version }}</span>
+						</div>
 					</div>
 					<div class="wf-item-actions">
-						<button class="wf-run-btn" title="Run this workflow" @click.stop="runWorkflow(wf.id)">
+						<button
+							class="wf-run-btn"
+							title="Run this workflow"
+							:aria-label="`Run ${wf.name}`"
+							@click="runWorkflow(wf.id)"
+						>
 							▶
 						</button>
 					</div>
@@ -200,7 +210,11 @@
 		background: rgba(124, 106, 255, 0.08);
 		border-left-color: var(--accent);
 	}
-	.wf-item:hover .wf-item-actions {
+	.wf-row {
+		position: relative;
+	}
+	.wf-row:hover .wf-item-actions,
+	.wf-row:focus-within .wf-item-actions {
 		opacity: 1;
 	}
 
