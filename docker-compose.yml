@@ -128,6 +128,10 @@ services:
       FLUXOR_TRUSTED_PROXIES: ${FLUXOR_TRUSTED_PROXIES:-${FLUXOR_PROXY_IP:-172.29.250.10}/32}
       FLUXOR_RATE_LIMIT_PER_MIN: ${FLUXOR_RATE_LIMIT_PER_MIN:-200}
       FLUXOR_LOGIN_RATE_LIMIT_PER_MIN: ${FLUXOR_LOGIN_RATE_LIMIT_PER_MIN:-10}
+      # Tracing is off unless set; with the tracing or observability profile,
+      # http://jaeger:4317 sends traces to the bundled Jaeger.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_BSP_SCHEDULE_DELAY: ${OTEL_BSP_SCHEDULE_DELAY:-5000}
     volumes:
       - task_workspaces:/workspaces
     depends_on:
@@ -218,6 +222,14 @@ services:
     ports: ["127.0.0.1:3001:3000"]
     depends_on: [prometheus]
     profiles: [observability]
+
+  # Traces UI on :16686; OTLP/gRPC on jaeger:4317 inside the network only.
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3
+    restart: unless-stopped
+    networks: [fluxor-internal]
+    ports: ["127.0.0.1:16686:16686"]
+    profiles: [observability, tracing]
 
   redis-commander:
     image: rediscommander/redis-commander:latest

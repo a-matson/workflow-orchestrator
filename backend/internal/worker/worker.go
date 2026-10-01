@@ -20,12 +20,15 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/storage"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/tracing"
 )
 
 // TaskNotifier is implemented by the orchestrator to receive worker lifecycle events.
@@ -228,6 +231,10 @@ func (w *Worker) run(ctx, taskCtx context.Context, tasks *sync.WaitGroup) {
 // per attempt.
 func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 	startedAt := time.Now()
+	ctx, span := tracing.Start(ctx, msg.TraceParent, "run task",
+		attribute.String("task.execution_id", msg.TaskExecID), attribute.String("task.type", msg.TaskType),
+		attribute.Int("task.attempt", msg.RetryCount))
+	defer span.End()
 
 	taskLogger := log.With().
 		Str("worker_id", w.id).
@@ -304,9 +311,12 @@ func (w *Worker) executeTask(ctx context.Context, msg *models.TaskMessage) {
 		StartedAt:      startedAt,
 		CompletedAt:    completedAt,
 		ArtifactsOut:   artifactsOut,
+		TraceParent:    tracing.TraceParent(ctx),
 	}
 
 	if execErr != nil {
+		// The redacted text: span attributes leave the process.
+		span.SetStatus(codes.Error, red.redact(execErr.Error()))
 		result.Success = false
 		result.Error = red.redact(execErr.Error())
 		addLog("error", "Task failed", map[string]any{

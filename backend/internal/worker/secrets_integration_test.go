@@ -11,11 +11,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/egress"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/testutil"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/tracing"
 )
 
 type fakeSecrets map[string]string
@@ -62,5 +67,50 @@ func TestExecuteTask_SecretRendersAndIsRedacted(t *testing.T) {
 	}
 	if !strings.Contains(string(logs), "***") {
 		t.Errorf("logs carry no redaction marker: %s", logs)
+	}
+}
+
+// O5: the worker's span continues the trace the dispatch sent in the
+// message, and the result carries it on.
+func TestExecuteTask_ContinuesTrace(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)))
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	_, redis := testutil.Env(t)
+	srv, _ := countingServer(t, func(w http.ResponseWriter, _ *http.Request) {})
+	g, err := egress.New(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{id: "worker-test", redis: redis, notifier: pickupNotifier{}, httpClient: g.HTTPClient(5 * time.Second),
+		running: newRunningTasks()}
+	dispatchCtx, dispatch := tracing.Start(context.Background(), "", "dispatch task")
+	dispatch.End()
+	w.executeTask(context.Background(), &models.TaskMessage{
+		TaskExecID: uuid.NewString(), WorkflowExecID: uuid.NewString(), TaskType: "http_request",
+		Config: map[string]any{"url": srv.URL}, TraceParent: tracing.TraceParent(dispatchCtx),
+	})
+
+	res, err := redis.DequeueResult(context.Background(), 2*time.Second)
+	if err != nil || res == nil {
+		t.Fatalf("DequeueResult = %v, %v", res, err)
+	}
+	spans := rec.Ended()
+	var run sdktrace.ReadOnlySpan
+	for _, s := range spans {
+		if s.Name() == "run task" {
+			run = s
+		}
+	}
+	if run == nil {
+		t.Fatalf("no run task span among %d", len(spans))
+	}
+	if run.SpanContext().TraceID() != dispatch.SpanContext().TraceID() || run.Parent().SpanID() != dispatch.SpanContext().SpanID() {
+		t.Errorf("run span is not a child of the dispatch span")
+	}
+	if want := tracing.TraceParent(trace.ContextWithSpanContext(context.Background(), run.SpanContext())); res.TraceParent != want {
+		t.Errorf("result traceparent = %q, want the run span's %q", res.TraceParent, want)
 	}
 }

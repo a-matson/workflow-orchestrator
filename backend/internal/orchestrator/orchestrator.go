@@ -14,12 +14,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/a-matson/workflow-orchestrator/backend/internal/dag"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/persistence"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/retry"
 	"github.com/a-matson/workflow-orchestrator/backend/internal/templating"
+	"github.com/a-matson/workflow-orchestrator/backend/internal/tracing"
 )
 
 // Orchestrator is the central coordinator that:
@@ -65,7 +67,12 @@ type ExecutionContext struct {
 	// done is set once the execution's terminal status is committed; a late
 	// result must not change the rows its final event reported.
 	done bool
-	mu   sync.Mutex
+	// traceParent is the run's root span, the parent of dispatches that have
+	// no span of their own. Shortcut: kept in memory only, so a run loaded
+	// after a restart starts new traces; a column on workflow_executions
+	// would keep one trace per run across restarts.
+	traceParent string
+	mu          sync.Mutex
 }
 
 // EventBroadcaster sends real-time updates to connected WebSocket clients
@@ -136,6 +143,10 @@ func NewOrchestrator(store *persistence.Store, redis *persistence.RedisClient, b
 
 // StartWorkflow validates the DAG, creates an execution record, and begins dispatching
 func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDefinition, payload map[string]any) (*models.WorkflowExecution, error) {
+	// The run's root span: a child of the API request when there is one, a
+	// new trace for a schedule or recovery.
+	ctx, span := tracing.Start(ctx, "", "start workflow", attribute.String("workflow.id", def.ID))
+	defer span.End()
 	// Parse and validate the DAG
 	graph, err := dag.Parse(def)
 	if err != nil {
@@ -181,13 +192,14 @@ func (o *Orchestrator) StartWorkflow(ctx context.Context, def *models.WorkflowDe
 	}
 
 	execCtx := &ExecutionContext{
-		Execution:  exec,
-		Definition: def,
-		Graph:      graph,
-		TaskMap:    taskMap,
-		Completed:  make(map[string]bool),
-		Failed:     make(map[string]bool),
-		Skipped:    make(map[string]bool),
+		traceParent: tracing.TraceParent(ctx),
+		Execution:   exec,
+		Definition:  def,
+		Graph:       graph,
+		TaskMap:     taskMap,
+		Completed:   make(map[string]bool),
+		Failed:      make(map[string]bool),
+		Skipped:     make(map[string]bool),
 	}
 
 	// Taken before the context is shared: dispatch starts writing the live
@@ -275,6 +287,9 @@ func (c *ExecutionContext) openTasks() int {
 
 // dispatchTask queues and enqueues one ready task. Callers hold execCtx.mu.
 func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionContext, taskDefID string) {
+	ctx, span := tracing.Start(ctx, execCtx.traceParent, "dispatch task",
+		attribute.String("workflow.execution_id", execCtx.Execution.ID), attribute.String("task.id", taskDefID))
+	defer span.End()
 	taskDef := execCtx.Graph.Nodes[taskDefID].Task
 	cached := execCtx.TaskMap[taskDefID]
 	queuedAt := time.Now()
@@ -314,6 +329,7 @@ func (o *Orchestrator) dispatchTask(ctx context.Context, execCtx *ExecutionConte
 		Container:        taskDef.Container,
 		ArtifactsIn:      o.resolveArtifactsIn(execCtx, taskDefID, taskDef.ArtifactsIn),
 		ArtifactsOut:     taskDef.ArtifactsOut,
+		TraceParent:      tracing.TraceParent(ctx),
 	}
 	if templating.HasTemplates(taskDef.Config) {
 		msg.TemplateData = templateData(execCtx, taskDefID)
@@ -616,6 +632,9 @@ func (o *Orchestrator) MarkTaskRunning(ctx context.Context, taskExecID, workerID
 }
 
 func (o *Orchestrator) ProcessResult(ctx context.Context, result *models.TaskResult) error {
+	ctx, span := tracing.Start(ctx, result.TraceParent, "process result",
+		attribute.String("task.execution_id", result.TaskExecID), attribute.Bool("task.success", result.Success))
+	defer span.End()
 	execCtx, err := o.activeExecution(ctx, result.WorkflowExecID)
 	if err != nil {
 		return err
