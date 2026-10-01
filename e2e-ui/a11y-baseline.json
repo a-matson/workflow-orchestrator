@@ -1,22 +1,17 @@
 {
   "/builder": {
-    "color-contrast": 3,
     "page-has-heading-one": 1
   },
   "/executions": {
-    "color-contrast": 4,
     "page-has-heading-one": 1
   },
   "/logs": {
-    "color-contrast": 5,
     "page-has-heading-one": 1
   },
   "/metrics": {
-    "color-contrast": 25,
     "page-has-heading-one": 1
   },
   "/builder (panel open)": {
-    "color-contrast": 21,
     "page-has-heading-one": 1
   },
   "/login": {}
