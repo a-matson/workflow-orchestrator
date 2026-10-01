@@ -1124,4 +1124,17 @@
 	.vue-flow__controls-button {
 		width: 16px !important;
 	}
+
+	/* Narrow windows: wrap the toolbar instead of clipping its buttons, and keep
+	   the task panel within the canvas. */
+	@media (max-width: 640px) {
+		.toolbar-left,
+		.toolbar-right {
+			flex-wrap: wrap;
+			overflow: visible;
+		}
+		.config-panel {
+			width: 100%;
+		}
+	}
 </style>

@@ -251,4 +251,17 @@
 		flex: 1;
 		overflow: hidden;
 	}
+
+	/* A phone leaves no room beside a 220px sidebar: stack it above the editor. */
+	@media (max-width: 640px) {
+		.builder-page {
+			flex-direction: column;
+		}
+		.wf-sidebar {
+			width: auto;
+			max-height: 30vh;
+			border-right: none;
+			border-bottom: 1px solid var(--border);
+		}
+	}
 </style>
