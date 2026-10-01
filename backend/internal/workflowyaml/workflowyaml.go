@@ -14,16 +14,21 @@ import (
 	"github.com/a-matson/workflow-orchestrator/backend/internal/models"
 )
 
-// Parse decodes a workflow definition. Unknown fields are an error, so a
-// misspelled key fails instead of being silently dropped. It does not
-// validate the DAG; callers run the same validation as the JSON API.
+// Parse decodes a workflow definition, native or a GitHub Actions workflow
+// (see parseGitHubActions). Unknown fields are an error, so a misspelled key
+// fails instead of being silently dropped. It does not validate the DAG;
+// callers run the same validation as the JSON API.
 func Parse(src []byte) (*models.WorkflowDefinition, error) {
 	var doc any
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return nil, fmt.Errorf("yaml: %w", err)
 	}
-	if _, ok := doc.(map[string]any); !ok {
+	m, ok := doc.(map[string]any)
+	if !ok {
 		return nil, fmt.Errorf("yaml: the document must be a mapping of workflow fields")
+	}
+	if isGitHubActions(m) {
+		return parseGitHubActions(src)
 	}
 	// Through JSON so the model's json tags, and its duration-string
 	// decoding, apply unchanged.

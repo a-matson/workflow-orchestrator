@@ -185,6 +185,19 @@ curl -X POST "$FLUXOR/api/hooks/$WORKFLOW_ID" -H 'Content-Type: application/json
 
 A timestamp more than five minutes from the server's clock is refused, as is the same signed request sent twice. Every refusal is the same `401`, whether the workflow is unknown, has no webhook or the signature is wrong. The request must be `application/json` and reach the API on a host it serves (`FLUXOR_ALLOWED_ORIGINS`).
 
+### Importing GitHub Actions workflows
+
+`POST /api/workflows/import` also accepts a GitHub Actions workflow (a document with `jobs:` and no `tasks:`). Each job becomes a container task:
+
+- `needs:` becomes dependencies, `timeout-minutes` the timeout, and `on.schedule` (one cron) the workflow's schedule. Other `on:` triggers are ignored; start those runs with a webhook or the API.
+- `container:` is the task's image. Without it, `runs-on: ubuntu-latest`/`ubuntu-24.04` uses `ubuntu:24.04` and `ubuntu-22.04` uses `ubuntu:22.04`; other runners are refused.
+- The `run:` steps run in order as one script, each in its own subshell with its `env:` and `working-directory:`. The first failing step fails the task. `shell:` may be `bash` or `sh`.
+- `env:` at workflow, job and container level becomes the task's environment.
+- `${{ secrets.NAME }}` resolves a Fluxor secret, and `${{ env.NAME }}` reads an environment variable. In scripts both are passed as variables, so a secret's value is never parsed as shell code.
+- A job's `if: always()` and `if: failure()` become the `all_done` and `one_failed` trigger rules.
+
+Task containers have no network, so `uses:` steps (actions cannot be fetched), `services:`, `strategy:` and any other expression are refused with an error naming them, rather than imported as tasks that cannot work. There is no checkout: files come from the image or from `artifacts_in`.
+
 ## Development Setup
 
 ```bash
