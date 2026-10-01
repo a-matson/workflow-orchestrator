@@ -914,7 +914,8 @@
 
 	.btn-primary {
 		padding: 6px 15px;
-		background: var(--accent);
+		/* Darker than --accent: white on the accent itself is 3.9:1, under WCAG AA's 4.5. */
+		background: #6450e8;
 		color: #fff;
 		border: none;
 		border-radius: var(--r-sm);
@@ -922,7 +923,7 @@
 		font-weight: 500;
 	}
 	.btn-primary:hover {
-		background: #5b4bd4;
+		background: #5340c8;
 	}
 	.btn-primary:disabled {
 		opacity: 0.6;

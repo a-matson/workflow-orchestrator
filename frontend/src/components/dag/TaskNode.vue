@@ -120,7 +120,7 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: #9ca3af;
+		color: #6b7280;
 	}
 
 	.status-dot {
