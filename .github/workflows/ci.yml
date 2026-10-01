@@ -69,6 +69,8 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              # Checked against the Go models below, so a hand edit runs that check too.
+              - 'frontend/src/types/generated.ts'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
@@ -208,6 +210,11 @@ jobs:
 
       - name: Verify modules
         run: go mod verify
+
+      - name: Generated TS types match the Go models
+        run: |
+          go run github.com/gzuidhof/tygo@v0.2.21 generate
+          git diff --exit-code -- ../frontend/src/types/generated.ts
 
       # Runs the untagged unit tests too; testutil migrates each test database itself.
       - name: Run integration tests

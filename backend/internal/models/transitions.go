@@ -2,10 +2,6 @@ package models
 
 import "slices"
 
-// TaskStatusCancelled is terminal: a task stopped because its execution was
-// cancelled, as opposed to one that failed on its own.
-const TaskStatusCancelled TaskStatus = "cancelled"
-
 // taskFrom maps each reachable task status to the statuses it may be entered
 // from. A status missing as a key cannot be transitioned to.
 var taskFrom = map[TaskStatus][]TaskStatus{

@@ -1,126 +1,18 @@
-// Core domain types matching the Go backend models
-
-export type TaskStatus =
-	| 'pending'
-	| 'queued'
-	| 'running'
-	| 'completed'
-	| 'failed'
-	| 'retrying'
-	| 'skipped'
-	| 'dead_letter'
-	| 'cancelled'
-export type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
-
-export interface RetryPolicy {
-	max_retries: number
-	initial_delay: number // nanoseconds
-	max_delay: number
-	backoff_multiplier: number
-	jitter: boolean
-}
-
-// Describes a file artifact stored in MinIO.
-export interface ArtifactRef {
-	path: string // relative workspace path, e.g. "output.json"
-	description?: string // optional label shown in UI
-}
-
-// Resolved artifact with full MinIO key (populated after upload).
-export interface ResolvedArtifact {
-	path: string // relative workspace path
-	minio_key: string // full MinIO object key
-	size: number // bytes
-}
-
-// Docker container spec for isolated task execution.
-export interface ContainerSpec {
-	image: string // e.g. "python:3.12-slim"
-	memory_mb?: number // MB, default 256
-	cpu_millis?: number // milli-CPUs, default 500
-	env?: Record<string, string>
-	work_dir?: string
-}
-
-export interface TaskDefinition {
-	id: string
-	name: string
-	type: string
-	dependencies: string[]
-	config: Record<string, unknown>
-	retry_policy?: RetryPolicy
-	timeout?: number
-	max_parallel?: number
-	metadata?: Record<string, string>
-	container?: ContainerSpec
-	artifacts_in?: ArtifactRef[]
-	artifacts_out?: ArtifactRef[]
-}
-
-export interface WorkflowDefinition {
-	id: string
-	name: string
-	description: string
-	version: string
-	tasks: TaskDefinition[]
-	global_retry?: RetryPolicy
-	max_parallel: number
-	tags?: Record<string, string>
-	created_at: string
-	updated_at: string
-}
-
-export interface LogEntry {
-	timestamp: string
-	level: 'info' | 'warn' | 'error' | 'debug'
-	message: string
-	fields?: Record<string, unknown>
-}
-
-export interface TaskExecution {
-	id: string
-	workflow_exec_id: string
-	task_definition_id: string
-	task_name: string
-	task_type: string
-	status: TaskStatus
-	retry_count: number
-	max_retries: number
-	worker_id?: string
-	queued_at?: string
-	started_at?: string
-	completed_at?: string
-	next_retry_at?: string
-	output?: unknown
-	error?: string
-	logs?: LogEntry[]
-	metadata?: Record<string, string>
-	duration?: number
-	created_at: string
-	updated_at: string
-	artifacts_in?: ResolvedArtifact[]
-	artifacts_out?: ResolvedArtifact[]
-}
-
-export interface WorkflowExecution {
-	id: string
-	workflow_id: string
-	workflow_name: string
-	status: WorkflowStatus
-	tasks: TaskExecution[]
-	started_at?: string
-	completed_at?: string
-	trigger_payload?: Record<string, unknown>
-	error?: string
-	metadata?: Record<string, string>
-	created_at: string
-	updated_at: string
-}
-
-export interface WebSocketEvent {
-	type: string
-	payload: unknown
-}
+// API types are generated from backend/internal/models (see backend/tygo.yaml);
+// this file adds the UI's own types on top.
+export type {
+	ArtifactRef,
+	ContainerSpec,
+	LogEntry,
+	TaskDefinition,
+	TaskExecution,
+	TaskStatus,
+	WebSocketEvent,
+	WorkflowDefinition,
+	WorkflowExecution,
+	WorkflowStatus,
+} from './generated'
+import type { TaskDefinition, TaskExecution, TaskStatus, WorkflowStatus } from './generated'
 
 export interface PlatformMetrics {
 	workflows_started: number
